@@ -1,0 +1,100 @@
+'use server'
+
+import { db } from '@/lib/db'
+import { projects } from '@/lib/schema'
+import { eq, isNull } from 'drizzle-orm'
+import { getSession } from '@/lib/session'
+import { randomUUID } from 'crypto'
+import { revalidatePath } from 'next/cache'
+
+type State = { error?: string; success?: string } | null
+
+function slugify(name: string): string {
+  return name.trim().toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '')
+}
+
+export async function createProject(_prev: State, formData: FormData): Promise<State> {
+  const session = await getSession()
+  if (!session || session.role !== 'admin') return { error: 'Unauthorized.' }
+
+  const rawName = (formData.get('name') as string | null)?.trim() ?? ''
+  const description = (formData.get('description') as string | null)?.trim() || null
+  const timezone = (formData.get('timezone') as string | null)?.trim() || 'UTC'
+  const name = slugify(rawName)
+
+  if (!name) return { error: 'Project name is required.' }
+
+  try {
+    Intl.DateTimeFormat(undefined, { timeZone: timezone })
+  } catch {
+    return { error: 'Invalid timezone.' }
+  }
+
+  const [existing] = await db.select().from(projects).where(eq(projects.name, name))
+  if (existing) return { error: `A project named "${name}" already exists.` }
+
+  await db.insert(projects).values({
+    id: randomUUID(),
+    name,
+    description,
+    timezone,
+    createdBy: session.userId,
+    createdAt: new Date(),
+    deletedAt: null,
+  })
+
+  revalidatePath('/projects')
+  return { success: `Project "${name}" created.` }
+}
+
+export async function updateProject(_prev: State, formData: FormData): Promise<State> {
+  const session = await getSession()
+  if (!session || session.role !== 'admin') return { error: 'Unauthorized.' }
+
+  const id = (formData.get('id') as string | null)?.trim() ?? ''
+  const description = (formData.get('description') as string | null)?.trim() || null
+  const timezone = (formData.get('timezone') as string | null)?.trim() || null
+
+  if (!id) return { error: 'Project ID is required.' }
+
+  const patch: { description: string | null; timezone?: string } = { description }
+  if (timezone) {
+    try {
+      Intl.DateTimeFormat(undefined, { timeZone: timezone })
+      patch.timezone = timezone
+    } catch {
+      return { error: 'Invalid timezone.' }
+    }
+  }
+
+  await db.update(projects).set(patch).where(eq(projects.id, id))
+
+  revalidatePath('/projects')
+  return { success: 'Project updated.' }
+}
+
+export async function deleteProject(_prev: State, formData: FormData): Promise<State> {
+  const session = await getSession()
+  if (!session || session.role !== 'admin') return { error: 'Unauthorized.' }
+
+  const id = (formData.get('id') as string | null)?.trim() ?? ''
+  if (!id) return { error: 'Project ID is required.' }
+
+  await db.update(projects).set({ deletedAt: new Date() }).where(eq(projects.id, id))
+
+  revalidatePath('/projects')
+  return { success: 'Project deleted.' }
+}
+
+export async function restoreProject(_prev: State, formData: FormData): Promise<State> {
+  const session = await getSession()
+  if (!session || session.role !== 'admin') return { error: 'Unauthorized.' }
+
+  const id = (formData.get('id') as string | null)?.trim() ?? ''
+  if (!id) return { error: 'Project ID is required.' }
+
+  await db.update(projects).set({ deletedAt: null }).where(eq(projects.id, id))
+
+  revalidatePath('/projects')
+  return { success: 'Project restored.' }
+}

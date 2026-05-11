@@ -1,0 +1,93 @@
+'use server'
+
+import { db } from '@/lib/db'
+import { flightPlans } from '@/lib/schema'
+import { eq, and } from 'drizzle-orm'
+import { getSession } from '@/lib/session'
+import { randomUUID } from 'crypto'
+import { revalidatePath } from 'next/cache'
+
+type State = { error?: string; success?: string } | null
+
+function slugify(name: string): string {
+  return name.trim().toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '')
+}
+
+export async function createFlightPlan(_prev: State, formData: FormData): Promise<State> {
+  const session = await getSession()
+  if (!session || session.role !== 'admin') return { error: 'Unauthorized.' }
+
+  const projectId = (formData.get('projectId') as string | null)?.trim() ?? ''
+  const rawName = (formData.get('name') as string | null)?.trim() ?? ''
+  const description = (formData.get('description') as string | null)?.trim() || null
+  const name = slugify(rawName)
+
+  if (!projectId) return { error: 'Project is required.' }
+  if (!name) return { error: 'Flight plan name is required.' }
+
+  const [existing] = await db
+    .select()
+    .from(flightPlans)
+    .where(and(eq(flightPlans.projectId, projectId), eq(flightPlans.name, name)))
+
+  if (existing) return { error: `A flight plan named "${name}" already exists in this project.` }
+
+  await db.insert(flightPlans).values({
+    id: randomUUID(),
+    projectId,
+    name,
+    description,
+    createdBy: session.userId,
+    createdAt: new Date(),
+    deletedAt: null,
+  })
+
+  revalidatePath(`/projects/${projectId}/flight-plans`)
+  return { success: `Flight plan "${name}" created.` }
+}
+
+export async function updateFlightPlan(_prev: State, formData: FormData): Promise<State> {
+  const session = await getSession()
+  if (!session || session.role !== 'admin') return { error: 'Unauthorized.' }
+
+  const id = (formData.get('id') as string | null)?.trim() ?? ''
+  const projectId = (formData.get('projectId') as string | null)?.trim() ?? ''
+  const name = (formData.get('name') as string | null)?.trim() ?? ''
+  const description = (formData.get('description') as string | null)?.trim() || null
+
+  if (!id) return { error: 'Flight plan ID is required.' }
+  if (!name) return { error: 'Name is required.' }
+
+  await db.update(flightPlans).set({ name, description }).where(eq(flightPlans.id, id))
+
+  revalidatePath(`/projects/${projectId}/flight-plans`)
+  return { success: 'Flight plan updated.' }
+}
+
+export async function deleteFlightPlan(_prev: State, formData: FormData): Promise<State> {
+  const session = await getSession()
+  if (!session || session.role !== 'admin') return { error: 'Unauthorized.' }
+
+  const id = (formData.get('id') as string | null)?.trim() ?? ''
+  const projectId = (formData.get('projectId') as string | null)?.trim() ?? ''
+  if (!id) return { error: 'Flight plan ID is required.' }
+
+  await db.update(flightPlans).set({ deletedAt: new Date() }).where(eq(flightPlans.id, id))
+
+  revalidatePath(`/projects/${projectId}/flight-plans`)
+  return { success: 'Flight plan deleted.' }
+}
+
+export async function restoreFlightPlan(_prev: State, formData: FormData): Promise<State> {
+  const session = await getSession()
+  if (!session || session.role !== 'admin') return { error: 'Unauthorized.' }
+
+  const id = (formData.get('id') as string | null)?.trim() ?? ''
+  const projectId = (formData.get('projectId') as string | null)?.trim() ?? ''
+  if (!id) return { error: 'Flight plan ID is required.' }
+
+  await db.update(flightPlans).set({ deletedAt: null }).where(eq(flightPlans.id, id))
+
+  revalidatePath(`/projects/${projectId}/flight-plans`)
+  return { success: 'Flight plan restored.' }
+}
