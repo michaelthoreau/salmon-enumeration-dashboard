@@ -3,21 +3,9 @@ import { db } from '@/lib/db'
 import { users, invites } from '@/lib/schema'
 import { desc } from 'drizzle-orm'
 import { getSession } from '@/lib/session'
-import { logout } from '@/app/actions/auth'
 import InviteForm from './invite-form'
-import type { Role } from '@/lib/schema'
-
-const roleLabels: Record<Role, string> = {
-  read: 'Viewer',
-  'read-write': 'Editor',
-  admin: 'Admin',
-}
-
-const roleBadgeClass: Record<Role, string> = {
-  read: 'bg-gray-100 text-gray-700',
-  'read-write': 'bg-blue-100 text-blue-700',
-  admin: 'bg-purple-100 text-purple-700',
-}
+import UserRow from './user-row'
+import InviteRow from './invite-row'
 
 export default async function AdminPage() {
   const session = await getSession()
@@ -25,25 +13,7 @@ export default async function AdminPage() {
   const allUsers = await db.select().from(users).orderBy(desc(users.createdAt))
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      <header className="bg-white border-b border-gray-200">
-        <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex items-center justify-between">
-          <Link href="/projects" className="text-xl font-semibold text-gray-900 hover:text-blue-600 transition-colors">Admin Dashboard</Link>
-          <div className="flex items-center gap-4">
-            <span className="text-sm text-gray-500">{session?.email}</span>
-            <form action={logout}>
-              <button
-                type="submit"
-                className="text-sm text-gray-500 hover:text-gray-900 transition-colors"
-              >
-                Sign out
-              </button>
-            </form>
-          </div>
-        </div>
-      </header>
-
-      <main className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-10">
+    <main className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-10">
         {/* Send invite */}
         <section>
           <h2 className="text-lg font-semibold text-gray-900 mb-4">Send an invitation</h2>
@@ -68,23 +38,16 @@ export default async function AdminPage() {
                     <th className="text-left px-6 py-3 font-medium text-gray-600">Email</th>
                     <th className="text-left px-6 py-3 font-medium text-gray-600">Role</th>
                     <th className="text-left px-6 py-3 font-medium text-gray-600">Joined</th>
+                    <th className="px-6 py-3" />
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
                   {allUsers.map((user) => (
-                    <tr key={user.id}>
-                      <td className="px-6 py-3 text-gray-900">{user.email}</td>
-                      <td className="px-6 py-3">
-                        <span
-                          className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${roleBadgeClass[user.role]}`}
-                        >
-                          {roleLabels[user.role]}
-                        </span>
-                      </td>
-                      <td className="px-6 py-3 text-gray-500">
-                        {user.createdAt.toLocaleDateString()}
-                      </td>
-                    </tr>
+                    <UserRow
+                      key={user.id}
+                      user={user}
+                      isSelf={user.id === session?.userId}
+                    />
                   ))}
                 </tbody>
               </table>
@@ -109,34 +72,12 @@ export default async function AdminPage() {
                     <th className="text-left px-6 py-3 font-medium text-gray-600">Role</th>
                     <th className="text-left px-6 py-3 font-medium text-gray-600">Sent</th>
                     <th className="text-left px-6 py-3 font-medium text-gray-600">Status</th>
+                    <th className="px-6 py-3" />
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
                   {allInvites.map((invite) => (
-                    <tr key={invite.id}>
-                      <td className="px-6 py-3 text-gray-900">{invite.email}</td>
-                      <td className="px-6 py-3">
-                        <span
-                          className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${roleBadgeClass[invite.role]}`}
-                        >
-                          {roleLabels[invite.role]}
-                        </span>
-                      </td>
-                      <td className="px-6 py-3 text-gray-500">
-                        {invite.sentAt.toLocaleDateString()}
-                      </td>
-                      <td className="px-6 py-3">
-                        {invite.acceptedAt ? (
-                          <span className="inline-flex items-center rounded-full bg-green-100 px-2.5 py-0.5 text-xs font-medium text-green-700">
-                            Accepted
-                          </span>
-                        ) : (
-                          <span className="inline-flex items-center rounded-full bg-yellow-100 px-2.5 py-0.5 text-xs font-medium text-yellow-700">
-                            Pending
-                          </span>
-                        )}
-                      </td>
-                    </tr>
+                    <InviteRow key={invite.id} invite={invite} />
                   ))}
                 </tbody>
               </table>
@@ -158,7 +99,6 @@ export default async function AdminPage() {
             </div>
           </div>
         </section>
-      </main>
-    </div>
+    </main>
   )
 }

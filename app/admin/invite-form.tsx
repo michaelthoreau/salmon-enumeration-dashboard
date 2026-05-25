@@ -42,7 +42,7 @@ export default function InviteForm() {
             </SelectContent>
           </Select>
         </div>
-        <div className="flex items-end">
+        <div className="flex items-end pb-0.5">
           <Button type="submit" disabled={pending}>
             {pending ? 'Sending…' : 'Send invite'}
           </Button>

@@ -1,5 +1,6 @@
 import { redirect } from 'next/navigation'
 import { getSession } from '@/lib/session'
+import { AppNavBar } from '@/app/app-navbar'
 
 export default async function ProjectsLayout({ children }: { children: React.ReactNode }) {
   const session = await getSession()
@@ -7,6 +8,7 @@ export default async function ProjectsLayout({ children }: { children: React.Rea
 
   return (
     <div className="min-h-screen bg-gray-50">
+      <AppNavBar />
       {children}
     </div>
   )

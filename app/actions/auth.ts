@@ -8,6 +8,7 @@ import { eq } from 'drizzle-orm'
 import { createOtp, verifyOtp } from '@/lib/otp'
 import { sendOtpEmail } from '@/lib/email'
 import { createSession, deleteSession } from '@/lib/session'
+import { normalizeEmail } from '@/lib/utils'
 import { randomUUID } from 'crypto'
 
 type ActionState = { error: string } | null
@@ -17,7 +18,7 @@ export async function requestOtp(
   formData: FormData,
 ): Promise<ActionState> {
   const raw = formData.get('email')
-  const email = typeof raw === 'string' ? raw.toLowerCase().trim() : ''
+  const email = typeof raw === 'string' ? normalizeEmail(raw) : ''
 
   if (!email || !email.includes('@')) {
     return { error: 'Please enter a valid email address.' }
@@ -49,7 +50,7 @@ export async function verifyOtpAction(
   _prevState: ActionState,
   formData: FormData,
 ): Promise<ActionState> {
-  const email = (formData.get('email') as string | null)?.toLowerCase().trim() ?? ''
+  const email = normalizeEmail((formData.get('email') as string | null) ?? '')
   const code = (formData.get('code') as string | null)?.trim() ?? ''
 
   if (!email || !code) {

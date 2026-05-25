@@ -1,12 +1,13 @@
 import * as React from 'react'
-import { Html, Head, Body, Container, Heading, Text, Section, Hr } from 'react-email'
+import { Html, Head, Body, Container, Heading, Text, Section, Button, Hr } from 'react-email'
 import type { Role } from '@/lib/schema'
 
 interface InviteEmailProps {
   toEmail: string
   role: Role
   invitedByEmail: string
-  loginUrl: string
+  magicLink: string
+  appUrl: string
   appName?: string
 }
 
@@ -14,7 +15,8 @@ export default function InviteEmail({
   toEmail,
   role,
   invitedByEmail,
-  loginUrl,
+  magicLink,
+  appUrl,
   appName = 'Salmon Enumeration Dashboard',
 }: InviteEmailProps) {
   const roleLabel: Record<Role, string> = {
@@ -22,6 +24,8 @@ export default function InviteEmail({
     'read-write': 'Editor (read & write)',
     admin: 'Administrator',
   }
+
+  const loginUrl = `${appUrl}/login?email=${encodeURIComponent(toEmail)}`
 
   return (
     <Html lang="en">
@@ -35,18 +39,21 @@ export default function InviteEmail({
           </Text>
           <Section style={ctaSection}>
             <Text style={ctaText}>
-              Visit the link below to sign in — no password required.
+              Click the button below to sign in — no password required. This link expires in{' '}
+              <strong>10 minutes</strong>.
             </Text>
-            <Text style={linkText}>
-              <a href={loginUrl} style={link}>
-                {loginUrl}
-              </a>
-            </Text>
+            <Button href={magicLink} style={button}>
+              Sign in to {appName}
+            </Button>
           </Section>
           <Hr style={hr} />
           <Text style={footer}>
-            This invitation does not expire. If you believe this was sent in error, you can
-            ignore this email.
+            If the link has expired, you can{' '}
+            <a href={loginUrl} style={footerLink}>
+              request a new code
+            </a>{' '}
+            from the sign-in page. If you believe this was sent in error, you can ignore this
+            email.
           </Text>
         </Container>
       </Body>
@@ -92,17 +99,18 @@ const ctaSection: React.CSSProperties = {
 const ctaText: React.CSSProperties = {
   color: '#4a4a4a',
   fontSize: '14px',
-  margin: '0 0 8px',
+  margin: '0 0 16px',
 }
 
-const linkText: React.CSSProperties = {
-  margin: '0',
-}
-
-const link: React.CSSProperties = {
-  color: '#3b82f6',
-  fontSize: '14px',
-  wordBreak: 'break-all',
+const button: React.CSSProperties = {
+  backgroundColor: '#2563eb',
+  borderRadius: '6px',
+  color: '#ffffff',
+  display: 'inline-block',
+  fontSize: '15px',
+  fontWeight: '600',
+  padding: '12px 24px',
+  textDecoration: 'none',
 }
 
 const hr: React.CSSProperties = {
@@ -115,4 +123,9 @@ const footer: React.CSSProperties = {
   fontSize: '13px',
   lineHeight: '20px',
   margin: '0',
+}
+
+const footerLink: React.CSSProperties = {
+  color: '#6b7280',
+  textDecoration: 'underline',
 }

@@ -1,5 +1,16 @@
 import type { NextConfig } from 'next'
 
+const isProd = process.env.NODE_ENV === 'production'
+
+const cspScriptSrc = isProd
+  ? "script-src 'self' 'unsafe-inline'"
+  : "script-src 'self' 'unsafe-inline' 'unsafe-eval'"
+
+// Build the exact S3 hostname so CSP wildcards are not needed
+const s3Host = process.env.S3_BUCKET_NAME && process.env.AWS_REGION
+  ? `https://${process.env.S3_BUCKET_NAME}.s3.${process.env.AWS_REGION}.amazonaws.com`
+  : 'https://*.amazonaws.com'
+
 const nextConfig: NextConfig = {
   // sharp must run in the Node.js runtime, not the Edge runtime
   serverExternalPackages: ['sharp'],
@@ -17,11 +28,12 @@ const nextConfig: NextConfig = {
             key: 'Content-Security-Policy',
             value: [
               "default-src 'self'",
-              "script-src 'self' 'unsafe-inline'",
+              cspScriptSrc,
               "style-src 'self' 'unsafe-inline'",
-              "img-src 'self' data: blob:",
+              `img-src 'self' data: blob: ${s3Host}`,
               "font-src 'self'",
-              "connect-src 'self'",
+              `connect-src 'self' ${s3Host}`,
+
               "frame-ancestors 'none'",
             ].join('; '),
           },

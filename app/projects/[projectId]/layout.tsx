@@ -26,7 +26,6 @@ export default async function ProjectLayout({ children, params }: LayoutProps) {
         projectDescription={project.description ?? null}
         isAdmin={isAdmin}
         project={project}
-        userEmail={session?.email ?? null}
       />
       <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         {children}
