@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import sharp from 'sharp'
 import { getSession } from '@/lib/session'
 import { createPresignedGetUrl } from '@/lib/s3'
 
@@ -16,7 +17,31 @@ export async function GET(request: NextRequest) {
   }
 
   const key = request.nextUrl.searchParams.get('key')
-  const etag = request.nextUrl.searchParams.get('etag') // used purely for cache-busting
+  // etag is used purely for cache-busting; sanitise before echoing in a header
+  const rawEtag = request.nextUrl.searchParams.get('etag')
+  const etag = rawEtag ? rawEtag.replace(/[\r\n\x00]/g, '') : null
+  const meta = request.nextUrl.searchParams.get('meta') === '1'
+
+  // Optional crop params (pixel coordinates in the source image)
+  const cx = request.nextUrl.searchParams.get('x')
+  const cy = request.nextUrl.searchParams.get('y')
+  const cw = request.nextUrl.searchParams.get('w')
+  const ch = request.nextUrl.searchParams.get('h')
+  let crop: { left: number; top: number; width: number; height: number } | null = null
+  if (cx !== null && cy !== null && cw !== null && ch !== null) {
+    const left = parseInt(cx, 10)
+    const top = parseInt(cy, 10)
+    const width = parseInt(cw, 10)
+    const height = parseInt(ch, 10)
+    if (
+      !Number.isFinite(left) || !Number.isFinite(top) ||
+      !Number.isFinite(width) || !Number.isFinite(height) ||
+      left < 0 || top < 0 || width <= 0 || height <= 0
+    ) {
+      return new NextResponse('Invalid crop parameters', { status: 400 })
+    }
+    crop = { left, top, width, height }
+  }
 
   if (!key || key.trim() === '') {
     return new NextResponse('Missing key', { status: 400 })
@@ -35,8 +60,24 @@ export async function GET(request: NextRequest) {
     return new NextResponse('S3 fetch failed', { status: 502 })
   }
 
+  const buffer = Buffer.from(await upstream.arrayBuffer())
+
+  // ?meta=1 → return image dimensions as JSON (no full decode needed)
+  if (meta) {
+    const { width, height } = await sharp(buffer).metadata()
+    return NextResponse.json({ width: width ?? 0, height: height ?? 0 }, {
+      headers: { 'Cache-Control': etag ? 'public, max-age=31536000, immutable' : 'public, max-age=3600' },
+    })
+  }
+
   const contentType = upstream.headers.get('content-type') ?? 'image/jpeg'
-  const body = await upstream.arrayBuffer()
+  let bodyBuffer: Buffer
+
+  if (crop) {
+    bodyBuffer = await sharp(buffer).extract(crop).toBuffer()
+  } else {
+    bodyBuffer = buffer
+  }
 
   // Cache aggressively: ETag is content-derived, so cache is valid as long as
   // the etag param matches. 1 year browser cache + CDN immutable.
@@ -44,7 +85,7 @@ export async function GET(request: NextRequest) {
     ? 'public, max-age=31536000, immutable'
     : 'public, max-age=3600'
 
-  return new NextResponse(body, {
+  return new NextResponse(new Uint8Array(bodyBuffer), {
     status: 200,
     headers: {
       'Content-Type': contentType,

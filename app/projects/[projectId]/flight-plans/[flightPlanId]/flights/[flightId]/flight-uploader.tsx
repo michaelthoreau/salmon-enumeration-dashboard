@@ -141,6 +141,12 @@ export default function FlightUploader({ flightId }: { flightId: string }) {
               (pct) => updateStatus(i, { progress: pct }),
               (loaded) => { fileLoadedRef.current[i] = loaded },
             )
+            // Register the file in the DB to record its key and ETag
+            await fetch('/api/files/register', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ key: fields.key, flightId }),
+            })
             updateStatus(i, { status: 'done', progress: 100 })
           } catch (err) {
             updateStatus(i, { status: 'error', error: String(err) })

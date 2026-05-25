@@ -6,7 +6,6 @@ import { eq, desc } from 'drizzle-orm'
 import { getSession } from '@/lib/session'
 import CreateFlightPlanForm from './create-flight-plan-form'
 import { DeleteFlightPlanButton, RestoreFlightPlanButton, EditFlightPlanButton } from './flight-plan-actions'
-import { EditProjectButton } from '@/app/projects/project-actions'
 
 interface PageProps {
   params: Promise<{ projectId: string }>
@@ -31,18 +30,6 @@ export default async function FlightPlansPage({ params }: PageProps) {
 
   return (
     <div className="space-y-8">
-      <div>
-        <Link href="/projects" className="text-sm text-gray-500 hover:text-gray-900 flex items-center gap-1 mb-4">← All projects</Link>
-        <div className="flex items-start justify-between">
-          <div>
-            <p className="text-sm text-gray-500 mb-1">Project</p>
-            <h1 className="text-2xl font-semibold text-gray-900">{project.name}</h1>
-            {project.description && <p className="text-gray-500 mt-1">{project.description}</p>}
-          </div>
-          {isAdmin && <EditProjectButton project={project} label="Configure" variant="outline" size="sm" />}
-        </div>
-      </div>
-
       <section>
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-lg font-semibold text-gray-900">

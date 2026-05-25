@@ -8,6 +8,48 @@
       "when": 1778456566754,
       "tag": "0000_amazing_korvac",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1779075930184,
+      "tag": "0001_groovy_the_liberteens",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1779076386980,
+      "tag": "0002_solid_brother_voodoo",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1779077002430,
+      "tag": "0003_huge_jackpot",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1779079857822,
+      "tag": "0004_long_james_howlett",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1779079910469,
+      "tag": "0005_bumpy_korg",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1779082513880,
+      "tag": "0006_amazing_genesis",
+      "breakpoints": true
     }
   ]
 }

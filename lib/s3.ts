@@ -120,6 +120,16 @@ export async function deleteObject(key: string): Promise<void> {
   await client.send(new DeleteObjectCommand({ Bucket: getBucket(), Key: key }))
 }
 
+/** Fetch metadata for an S3 object, including its ETag */
+export async function headObject(key: string): Promise<{ etag: string; contentLength: number }> {
+  const client = getClient()
+  const response = await client.send(new HeadObjectCommand({ Bucket: getBucket(), Key: key }))
+  return {
+    etag: (response.ETag ?? '').replace(/"/g, ''),
+    contentLength: response.ContentLength ?? 0,
+  }
+}
+
 /** Check whether an S3 key exists */
 export async function objectExists(key: string): Promise<boolean> {
   const client = getClient()

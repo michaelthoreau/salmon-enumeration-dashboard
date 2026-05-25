@@ -36,7 +36,8 @@ export async function sendInviteEmail(
   role: Role,
   invitedByEmail: string,
 ): Promise<void> {
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000'
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL
+  if (!appUrl) throw new Error('NEXT_PUBLIC_APP_URL environment variable is not set')
   const loginUrl = `${appUrl}/login`
 
   const html = await render(

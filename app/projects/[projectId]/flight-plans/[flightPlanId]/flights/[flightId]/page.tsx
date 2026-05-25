@@ -1,7 +1,7 @@
 import { notFound } from 'next/navigation'
 import Link from 'next/link'
 import { db } from '@/lib/db'
-import { flights, flightPlans, projects } from '@/lib/schema'
+import { flights, flightPlans, projects, files as filesTable } from '@/lib/schema'
 import { eq } from 'drizzle-orm'
 import { getSession } from '@/lib/session'
 import { listFlightObjects } from '@/lib/s3'
@@ -55,6 +55,9 @@ export default async function FlightDetailPage({ params }: PageProps) {
     // S3 unavailable — show empty state, don't crash
   }
 
+  const dbFiles = await db.select().from(filesTable).where(eq(filesTable.flightId, flightId))
+  const splitByKey = new Map(dbFiles.map(f => [f.key, f.split ?? null]))
+
   return (
     <div className="space-y-8">
       <div>
@@ -107,6 +110,7 @@ export default async function FlightDetailPage({ params }: PageProps) {
                 size: o.size,
                 lastModifiedIso: o.lastModified.toISOString(),
                 etag: o.etag,
+                split: splitByKey.get(o.key) ?? null,
               }))}
               timezone={project.timezone}
               canWrite={canWrite}

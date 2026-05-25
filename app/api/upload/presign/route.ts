@@ -15,6 +15,11 @@ const ALLOWED_TYPES = new Set([
   'application/octet-stream',
 ])
 
+/** Strip path separators and leading dots to prevent path traversal in S3 keys. */
+function sanitizeFileName(name: string): string {
+  return name.replace(/[\\/]/g, '_').replace(/^\.+/, '')
+}
+
 export async function POST(request: NextRequest) {
   const session = await getSession()
   if (!session || (session.role !== 'read-write' && session.role !== 'admin')) {
@@ -83,7 +88,7 @@ export async function POST(request: NextRequest) {
         project.id,
         flightPlan.id,
         flight.id,
-        file.name,
+        sanitizeFileName(file.name),
         file.type,
         file.size,
       ).then((post) => ({ name: file.name, ...post })),
