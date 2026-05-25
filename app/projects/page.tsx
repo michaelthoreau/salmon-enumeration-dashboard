@@ -3,6 +3,7 @@ import { db } from '@/lib/db'
 import { projects } from '@/lib/schema'
 import { desc } from 'drizzle-orm'
 import { getSession } from '@/lib/session'
+import { logout } from '@/app/actions/auth'
 import CreateProjectForm from './create-project-form'
 import { DeleteProjectButton, RestoreProjectButton, EditProjectButton } from './project-actions'
 
@@ -15,6 +16,24 @@ export default async function ProjectsPage() {
   const deleted = allProjects.filter((p) => p.deletedAt)
 
   return (
+    <>
+    <header className="bg-white border-b border-gray-200">
+      <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 h-12 flex items-center justify-between">
+        <Link href="/" className="font-semibold text-gray-900 hover:text-blue-600 transition-colors text-sm">
+          Salmon Enumeration
+        </Link>
+        <div className="flex items-center gap-4">
+          <span className="text-sm text-gray-500">{session?.email}</span>
+          {isAdmin && (
+            <Link href="/admin" className="text-sm font-medium text-blue-600 hover:underline">Admin</Link>
+          )}
+          <form action={logout}>
+            <button type="submit" className="text-sm text-gray-500 hover:text-gray-900 transition-colors">Sign out</button>
+          </form>
+        </div>
+      </div>
+    </header>
+    <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
     <div className="space-y-8">
       {isAdmin && (
         <details className="group">
@@ -101,5 +120,7 @@ export default async function ProjectsPage() {
         </section>
       )}
     </div>
+    </div>
+    </>
   )
 }

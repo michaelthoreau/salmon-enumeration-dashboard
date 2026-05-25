@@ -10,6 +10,11 @@ const ALLOWED_TYPES = new Set([
   'video/mp4', 'video/quicktime', 'application/octet-stream',
 ])
 
+/** Strip path separators and leading dots to prevent path traversal in S3 keys. */
+function sanitizeFileName(name: string): string {
+  return name.replace(/[\\/]/g, '_').replace(/^\.+/, '')
+}
+
 // POST /api/v1/upload
 // Body: { flightId, files: [{ name, type, size }] }
 // Returns: { uploads: [{ name, url, fields }] }
@@ -39,15 +44,26 @@ export async function POST(request: NextRequest) {
   const [project] = await db.select().from(projects).where(and(eq(projects.id, plan.projectId), isNull(projects.deletedAt)))
   if (!project) return NextResponse.json({ error: 'Project not found' }, { status: 404 })
 
+  for (const f of files) {
+    if (!f.name || typeof f.name !== 'string') {
+      return NextResponse.json({ error: 'Each file must have a name' }, { status: 400 })
+    }
+    if (!ALLOWED_TYPES.has(f.type)) {
+      return NextResponse.json({ error: `File type not allowed: ${f.type}` }, { status: 400 })
+    }
+    if (f.size > 5 * 1024 * 1024 * 1024) {
+      return NextResponse.json({ error: 'File exceeds 5 GB limit' }, { status: 400 })
+    }
+  }
+
   const uploads = await Promise.all(
     files.map(async (f) => {
-      const type = ALLOWED_TYPES.has(f.type) ? f.type : 'application/octet-stream'
       const { url, fields } = await createPresignedUploadPost(
         project.id,
         plan.id,
         flight.id,
-        f.name,
-        type,
+        sanitizeFileName(f.name),
+        f.type,
         f.size,
       )
       return { name: f.name, url, fields }

@@ -19,7 +19,10 @@ import {
   Trash2Icon,
   LayoutGridIcon,
   ListIcon,
+  TagIcon,
 } from 'lucide-react'
+import type { Split } from '@/lib/schema'
+import { assignFileSplit } from '@/app/actions/files'
 
 const IMAGE_EXTS = new Set(['jpg', 'jpeg', 'png', 'webp', 'gif', 'tiff', 'tif'])
 
@@ -45,6 +48,31 @@ interface FileEntry {
   size: number
   lastModifiedIso: string
   etag: string
+  split: Split | null
+}
+
+type SplitChoice = Split | 'none'
+
+const SPLIT_STYLES: Record<Split, string> = {
+  train: 'bg-blue-100 text-blue-700',
+  val:   'bg-amber-100 text-amber-700',
+  test:  'bg-green-100 text-green-700',
+}
+
+function splitSelectClass(split: Split | null): string {
+  if (split === 'train') return 'bg-blue-50 border-blue-300 text-blue-700'
+  if (split === 'val')   return 'bg-amber-50 border-amber-300 text-amber-700'
+  if (split === 'test')  return 'bg-green-50 border-green-300 text-green-700'
+  return 'bg-white border-gray-200 text-gray-400'
+}
+
+function SplitBadge({ split }: { split: Split | null }) {
+  if (!split) return <span className="text-xs text-gray-300 select-none">—</span>
+  return (
+    <span className={cn('inline-flex items-center rounded px-1.5 py-0.5 text-xs font-medium', SPLIT_STYLES[split])}>
+      {split}
+    </span>
+  )
 }
 
 interface Props {
@@ -64,11 +92,21 @@ export default function FileLightbox({ files: initialFiles, timezone, canWrite =
   const [bulkWorking, setBulkWorking] = useState(false)
   const [deleteConfirm, setDeleteConfirm] = useState<{ keys: string[]; label: string } | null>(null)
 
+  // Split assignment state
+  const [splits, setSplits] = useState<Map<string, Split | null>>(
+    () => new Map(initialFiles.map(f => [f.key, f.split]))
+  )
+  const [splitDialog, setSplitDialog] = useState<{ keys: string[] } | null>(null)
+  const [pendingSplit, setPendingSplit] = useState<SplitChoice | null>(null)
+
   const lightboxOpen = lightboxIndex !== null
   const activeFile = lightboxIndex !== null ? files[lightboxIndex] : null
 
   // Keep files in sync if parent re-renders (after router.refresh)
   useEffect(() => { setFiles(initialFiles) }, [initialFiles])
+  useEffect(() => {
+    setSplits(new Map(initialFiles.map(f => [f.key, f.split])))
+  }, [initialFiles])
 
   // ---- Selection ----
   const toggleSelect = useCallback((key: string, e: React.MouseEvent) => {
@@ -149,6 +187,42 @@ export default function FileLightbox({ files: initialFiles, timezone, canWrite =
     try { await deleteKeys(keys) } finally { setBulkWorking(false) }
   }
 
+  const openSplitDialog = (keys: string[]) => {
+    setSplitDialog({ keys })
+    setPendingSplit(null)
+  }
+
+  const handleSplitChange = useCallback(async (key: string, choice: SplitChoice) => {
+    const cur = splits.get(key) ?? null
+    const target = choice === 'none' ? null : choice as Split
+    if (cur === target) return
+    if (cur !== null && target !== null) {
+      // Reassignment: pre-fill dialog so user can confirm
+      setSplitDialog({ keys: [key] })
+      setPendingSplit(choice)
+      return
+    }
+    // Direct assign or clear: apply immediately
+    setSplits(prev => { const n = new Map(prev); n.set(key, target); return n })
+    await assignFileSplit(key, target)
+    router.refresh()
+  }, [splits, router])
+
+  const confirmSplitAssign = useCallback(async () => {
+    if (!splitDialog || pendingSplit === null) return
+    const target = pendingSplit === 'none' ? null : pendingSplit
+    const keys = splitDialog.keys
+    setSplitDialog(null)
+    setPendingSplit(null)
+    setSplits(prev => {
+      const next = new Map(prev)
+      for (const k of keys) next.set(k, target)
+      return next
+    })
+    await Promise.all(keys.map(k => assignFileSplit(k, target)))
+    router.refresh()
+  }, [splitDialog, pendingSplit, router])
+
   // ---- Download (single) ----
   const downloadSingle = useCallback(async (key: string) => {
     setDlLoading(true)
@@ -214,14 +288,24 @@ export default function FileLightbox({ files: initialFiles, timezone, canWrite =
               Download
             </button>
             {canWrite && (
-              <button
-                onClick={deleteSelected}
-                disabled={bulkWorking}
-                className={cn(buttonVariants({ variant: 'ghost', size: 'xs' }), 'gap-1.5 text-destructive hover:text-destructive')}
-              >
-                <Trash2Icon className="w-3.5 h-3.5" />
-                Delete
-              </button>
+              <>
+                <button
+                  onClick={() => openSplitDialog([...selected])}
+                  disabled={bulkWorking}
+                  className={cn(buttonVariants({ variant: 'outline', size: 'xs' }), 'gap-1.5')}
+                >
+                  <TagIcon className="w-3.5 h-3.5" />
+                  Assign split
+                </button>
+                <button
+                  onClick={deleteSelected}
+                  disabled={bulkWorking}
+                  className={cn(buttonVariants({ variant: 'ghost', size: 'xs' }), 'gap-1.5 text-destructive hover:text-destructive')}
+                >
+                  <Trash2Icon className="w-3.5 h-3.5" />
+                  Delete
+                </button>
+              </>
             )}
           </div>
         )}
@@ -254,6 +338,7 @@ export default function FileLightbox({ files: initialFiles, timezone, canWrite =
           <th className="text-left px-4 py-3 font-medium text-gray-600">Filename</th>
           <th className="text-left px-4 py-3 font-medium text-gray-600">Size</th>
           <th className="text-left px-4 py-3 font-medium text-gray-600">Last modified</th>
+          <th className="text-left px-4 py-3 font-medium text-gray-600">Split</th>
           {canWrite && <th className="w-10 px-4 py-3" />}
         </tr>
       </thead>
@@ -293,6 +378,25 @@ export default function FileLightbox({ files: initialFiles, timezone, canWrite =
               </td>
               <td className="px-4 py-3 text-gray-500">{formatBytes(file.size)}</td>
               <td className="px-4 py-3 text-gray-500">{fmt.format(new Date(file.lastModifiedIso))}</td>
+              <td className="px-4 py-3">
+                {canWrite ? (
+                  <select
+                    value={splits.get(file.key) ?? 'none'}
+                    onChange={e => handleSplitChange(file.key, e.target.value as SplitChoice)}
+                    className={cn(
+                      'text-xs rounded border px-2 py-0.5 focus:outline-none focus:ring-1 focus:ring-blue-400 cursor-pointer',
+                      splitSelectClass(splits.get(file.key) ?? null),
+                    )}
+                  >
+                    <option value="none">—</option>
+                    <option value="train">train</option>
+                    <option value="val">val</option>
+                    <option value="test">test</option>
+                  </select>
+                ) : (
+                  <SplitBadge split={splits.get(file.key) ?? null} />
+                )}
+              </td>
               {canWrite && (
                 <td className="px-4 py-3">
                   <button
@@ -372,7 +476,26 @@ export default function FileLightbox({ files: initialFiles, timezone, canWrite =
             {/* Label */}
             <div className="p-2 border-t border-gray-100">
               <p className="text-xs font-mono text-gray-700 truncate" title={filename}>{filename}</p>
-              <p className="text-xs text-gray-400">{formatBytes(file.size)}</p>
+              <div className="flex items-center justify-between mt-0.5">
+                <p className="text-xs text-gray-400">{formatBytes(file.size)}</p>
+                {canWrite ? (
+                  <select
+                    value={splits.get(file.key) ?? 'none'}
+                    onChange={e => { e.stopPropagation(); handleSplitChange(file.key, e.target.value as SplitChoice) }}
+                    className={cn(
+                      'text-xs rounded border px-1.5 py-0.5 focus:outline-none focus:ring-1 focus:ring-blue-400 cursor-pointer max-w-full',
+                      splitSelectClass(splits.get(file.key) ?? null),
+                    )}
+                  >
+                    <option value="none">—</option>
+                    <option value="train">train</option>
+                    <option value="val">val</option>
+                    <option value="test">test</option>
+                  </select>
+                ) : (
+                  <SplitBadge split={splits.get(file.key) ?? null} />
+                )}
+              </div>
             </div>
           </div>
         )
@@ -435,6 +558,24 @@ export default function FileLightbox({ files: initialFiles, timezone, canWrite =
             </p>
             <div className="flex items-center gap-2">
               {canWrite && activeFile && (
+                <select
+                  value={splits.get(activeFile.key) ?? 'none'}
+                  onChange={e => handleSplitChange(activeFile.key, e.target.value as SplitChoice)}
+                  className={cn(
+                    'text-xs rounded border px-2 py-1 focus:outline-none focus:ring-1 focus:ring-blue-400 cursor-pointer',
+                    splitSelectClass(splits.get(activeFile.key) ?? null),
+                  )}
+                >
+                  <option value="none">— unassigned</option>
+                  <option value="train">train</option>
+                  <option value="val">val</option>
+                  <option value="test">test</option>
+                </select>
+              )}
+              {!canWrite && activeFile && (
+                <SplitBadge split={splits.get(activeFile.key) ?? null} />
+              )}
+              {canWrite && activeFile && (
                 <button
                   onClick={() => activeFile && deleteSingle(activeFile.key)}
                   className={cn(buttonVariants({ variant: 'ghost', size: 'sm' }), 'text-destructive hover:text-destructive gap-1.5')}
@@ -456,6 +597,78 @@ export default function FileLightbox({ files: initialFiles, timezone, canWrite =
               )}
             </div>
           </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Split assignment dialog */}
+      <Dialog open={!!splitDialog} onOpenChange={(o) => { if (!o) { setSplitDialog(null); setPendingSplit(null) } }}>
+        <DialogContent showCloseButton>
+          <DialogHeader>
+            <DialogTitle>Assign split</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-gray-600">
+            {splitDialog?.keys.length === 1
+              ? <>Assign a dataset split to <strong>{splitDialog.keys[0].split('/').pop()}</strong>.</>
+              : <>Assign a dataset split to <strong>{splitDialog?.keys.length} files</strong>.</>}
+          </p>
+          <div className="flex flex-wrap gap-2 mt-1">
+            {(['train', 'val', 'test'] as Split[]).map(s => (
+              <button
+                key={s}
+                onClick={() => setPendingSplit(s)}
+                className={cn(
+                  'px-3 py-1.5 rounded-lg border text-sm font-medium transition-colors',
+                  pendingSplit === s
+                    ? cn(SPLIT_STYLES[s], 'border-transparent ring-2 ring-offset-1',
+                        s === 'train' ? 'ring-blue-400' : s === 'val' ? 'ring-amber-400' : 'ring-green-400')
+                    : 'border-gray-200 text-gray-600 hover:border-gray-400',
+                )}
+              >
+                {s}
+              </button>
+            ))}
+            <button
+              onClick={() => setPendingSplit('none')}
+              className={cn(
+                'px-3 py-1.5 rounded-lg border text-sm font-medium transition-colors',
+                pendingSplit === 'none'
+                  ? 'bg-gray-100 border-gray-400 text-gray-700 ring-2 ring-offset-1 ring-gray-400'
+                  : 'border-gray-200 text-gray-400 hover:border-gray-400',
+              )}
+            >
+              Clear
+            </button>
+          </div>
+          {/* Reassignment warning */}
+          {pendingSplit !== null && splitDialog !== null && splitDialog.keys.some(k => {
+            const cur = splits.get(k) ?? null
+            const target = pendingSplit === 'none' ? null : pendingSplit
+            return cur !== null && cur !== target
+          }) && (
+            <p className="text-sm text-amber-600 flex items-start gap-1.5 mt-1">
+              <span className="shrink-0">⚠️</span>
+              <span>
+                {splitDialog.keys.filter(k => {
+                  const cur = splits.get(k) ?? null
+                  const target = pendingSplit === 'none' ? null : pendingSplit
+                  return cur !== null && cur !== target
+                }).length} file(s) already have a split assigned and will be reassigned.
+              </span>
+            </p>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => { setSplitDialog(null); setPendingSplit(null) }}>Cancel</Button>
+            <Button
+              onClick={confirmSplitAssign}
+              disabled={pendingSplit === null}
+            >
+              {splitDialog !== null && pendingSplit !== null && splitDialog.keys.some(k => {
+                const cur = splits.get(k) ?? null
+                const target = pendingSplit === 'none' ? null : pendingSplit
+                return cur !== null && cur !== target
+              }) ? 'Confirm reassignment' : 'Assign'}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 

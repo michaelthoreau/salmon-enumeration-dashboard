@@ -1,6 +1,7 @@
-import { sqliteTable, text, integer } from 'drizzle-orm/sqlite-core'
+import { sqliteTable, text, integer, real } from 'drizzle-orm/sqlite-core'
 
 export type Role = 'read' | 'read-write' | 'admin'
+export type Split = 'train' | 'val' | 'test'
 
 export const users = sqliteTable('users', {
   id: text('id').primaryKey(),
@@ -57,6 +58,54 @@ export const flights = sqliteTable('flights', {
   createdBy: text('created_by').notNull(),
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
   deletedAt: integer('deleted_at', { mode: 'timestamp' }),
+})
+
+// ─── Files ────────────────────────────────────────────────────────────────────
+
+export const files = sqliteTable('files', {
+  id: text('id').primaryKey(), // UUID
+  flightId: text('flight_id').notNull(), // FK → flights.id
+  key: text('key').notNull().unique(), // S3 object key
+  etag: text('etag').notNull(), // S3 ETag (MD5 hex, quotes stripped)
+  split: text('split').$type<Split>(), // train | val | test; null = unallocated
+  uploadedAt: integer('uploaded_at', { mode: 'timestamp' }).notNull(),
+  uploadedBy: text('uploaded_by').notNull(), // userId
+})
+
+// ─── File Points ──────────────────────────────────────────────────────────────
+
+export const filePoints = sqliteTable('file_points', {
+  id: text('id').primaryKey(), // UUID
+  fileId: text('file_id').notNull(), // FK → files.id
+  x: real('x').notNull(),
+  y: real('y').notNull(),
+  frame: integer('frame').notNull().default(0), // 0 for images; frame number for videos
+})
+
+// ─── Labeling Tasks ───────────────────────────────────────────────────────────
+
+export const labelingTasks = sqliteTable('labeling_tasks', {
+  id: text('id').primaryKey(), // UUID
+  fileId: text('file_id').notNull(), // FK → files.id
+  x1: real('x1').notNull(), // crop region in source pixels
+  y1: real('y1').notNull(),
+  x2: real('x2').notNull(),
+  y2: real('y2').notNull(),
+  frame: integer('frame').notNull().default(0), // 0 for images; frame number for videos
+  completedBy: text('completed_by'), // userId; null = incomplete
+  createdBy: text('created_by').notNull(), // userId
+  createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
+})
+
+// ─── Labeling Task Points ─────────────────────────────────────────────────────
+
+export const labelingTaskPoints = sqliteTable('labeling_task_points', {
+  id: text('id').primaryKey(), // UUID
+  taskId: text('task_id').notNull(), // FK → labeling_tasks.id
+  x: real('x').notNull(), // pixels from left edge of task tile
+  y: real('y').notNull(), // pixels from top edge of task tile
+  createdBy: text('created_by').notNull(), // userId
+  createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
 })
 
 // ─── API Keys ──────────────────────────────────────────────────────────────────
