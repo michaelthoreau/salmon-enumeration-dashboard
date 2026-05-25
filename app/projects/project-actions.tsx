@@ -25,6 +25,15 @@ import {
 
 type Project = InferSelectModel<typeof projects>
 
+export function ProjectCardActions({ project }: { project: Project }) {
+  return (
+    <div className="flex items-center gap-3" onClick={(e) => e.preventDefault()}>
+      <EditProjectButton project={project} />
+      <DeleteProjectButton project={project} />
+    </div>
+  )
+}
+
 export function DeleteProjectButton({ project }: { project: Project }) {
   const [open, setOpen] = useState(false)
   const [state, action, pending] = useActionState(deleteProject, null)

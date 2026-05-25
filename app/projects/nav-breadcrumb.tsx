@@ -89,7 +89,7 @@ export default function NavBreadcrumb() {
 
   // Default: just show Projects link
   return (
-    <Link href="/projects" className="text-gray-600 hover:text-gray-900 text-sm">
+    <Link href="/" className="text-gray-600 hover:text-gray-900 text-sm">
       Projects
     </Link>
   )

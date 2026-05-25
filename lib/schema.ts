@@ -34,7 +34,7 @@ export const projects = sqliteTable('projects', {
   id: text('id').primaryKey(),
   name: text('name').notNull().unique(), // used in S3 path
   description: text('description'),
-  timezone: text('timezone').notNull().default('UTC'), // IANA timezone name
+  timezone: text('timezone').notNull().default('America/Anchorage'), // IANA timezone name
   createdBy: text('created_by').notNull(), // userId
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
   deletedAt: integer('deleted_at', { mode: 'timestamp' }), // soft delete

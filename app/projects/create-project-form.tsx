@@ -30,7 +30,7 @@ export default function CreateProjectForm() {
           placeholder="Description (optional)"
           className="flex-1"
         />
-        <Select name="timezone" defaultValue="Pacific/Auckland">
+        <Select name="timezone" defaultValue="America/Anchorage">
           <SelectTrigger className="w-64">
             <SelectValue placeholder="Timezone" />
           </SelectTrigger>
