@@ -116,7 +116,7 @@ export default function ApiDocsPage() {
                   <div key={section.label}>
                     <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-1.5">{section.label}</p>
                     <ul className="space-y-0.5">
-                      {section.children.map((item) => (
+                      {section.children ? section.children.map((item) => (
                         <li key={item.id}>
                           <a
                             href={`#${item.id}`}
@@ -132,7 +132,7 @@ export default function ApiDocsPage() {
                             <span className="font-mono truncate">{item.label}</span>
                           </a>
                         </li>
-                      ))}
+                      )) : null}
                     </ul>
                   </div>
                 )
