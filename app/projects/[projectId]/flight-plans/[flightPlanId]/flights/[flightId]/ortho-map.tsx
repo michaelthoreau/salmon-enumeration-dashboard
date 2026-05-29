@@ -8,40 +8,28 @@ interface OrthoMapProps {
 
 export default function OrthoMap({ outputKey }: OrthoMapProps) {
   const containerRef = useRef<HTMLDivElement>(null)
-  const mapRef = useRef<{ remove(): void } | null>(null)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const mapRef = useRef<any | null>(null)
+  const mapReadyRef = useRef(false)
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading')
   const [errorMsg, setErrorMsg] = useState('')
 
+  // ── Init map once ──────────────────────────────────────────────────────────
   useEffect(() => {
     if (!containerRef.current) return
     let cancelled = false
 
     async function init() {
       try {
-        // Fetch tile bounds + zoom range from the Modal tile server (via Next.js proxy)
-        const infoRes = await fetch(`/api/tiles/info?key=${encodeURIComponent(outputKey)}`)
-        if (!infoRes.ok) throw new Error(`Failed to load tile info (${infoRes.status})`)
-        const { bounds, minzoom, maxzoom } = (await infoRes.json()) as {
-          bounds: [number, number, number, number] // [W, S, E, N]
-          minzoom: number
-          maxzoom: number
-        }
-
-        if (cancelled || !containerRef.current) return
-
         const maplibre = (await import('maplibre-gl')).default
         await import('maplibre-gl/dist/maplibre-gl.css')
-
         if (cancelled || !containerRef.current) return
-
-        // Use a relative tile URL — Next.js proxy adds the Modal auth header server-side
-        const tileUrl = `/api/tiles/{z}/{x}/{y}?key=${encodeURIComponent(outputKey)}`
 
         const map = new maplibre.Map({
           container: containerRef.current,
           style: 'https://tiles.openfreemap.org/styles/liberty',
-          bounds: [bounds[0], bounds[1], bounds[2], bounds[3]],
-          fitBoundsOptions: { padding: 20 },
+          zoom: 2,
+          center: [0, 20],
           attributionControl: false,
         })
 
@@ -50,20 +38,13 @@ export default function OrthoMap({ outputKey }: OrthoMapProps) {
 
         map.on('load', () => {
           if (cancelled) return
-          map.addSource('ortho', {
-            type: 'raster',
-            tiles: [tileUrl],
-            tileSize: 256,
-            minzoom,
-            maxzoom,
-          })
-          map.addLayer({ id: 'ortho-layer', type: 'raster', source: 'ortho' })
-          setStatus('ready')
+          mapReadyRef.current = true
+          // Source/layer added by the outputKey effect below
         })
       } catch (err) {
         if (!cancelled) {
           const msg = err instanceof Error ? err.message : String(err)
-          console.error('[OrthoMap] error:', err)
+          console.error('[OrthoMap] init error:', err)
           setErrorMsg(msg)
           setStatus('error')
         }
@@ -77,8 +58,69 @@ export default function OrthoMap({ outputKey }: OrthoMapProps) {
       if (mapRef.current) {
         mapRef.current.remove()
         mapRef.current = null
+        mapReadyRef.current = false
       }
     }
+  }, []) // run once
+
+  // ── Swap layer when outputKey changes ──────────────────────────────────────
+  useEffect(() => {
+    let cancelled = false
+
+    async function applyLayer() {
+      setStatus('loading')
+      try {
+        const infoRes = await fetch(`/api/tiles/info?key=${encodeURIComponent(outputKey)}`)
+        if (!infoRes.ok) throw new Error(`Failed to load tile info (${infoRes.status})`)
+        const { bounds, minzoom, maxzoom } = (await infoRes.json()) as {
+          bounds: [number, number, number, number]
+          minzoom: number
+          maxzoom: number
+        }
+
+        if (cancelled) return
+
+        const tileUrl = `/api/tiles/{z}/{x}/{y}?key=${encodeURIComponent(outputKey)}`
+
+        // Wait for the map to be ready (style loaded)
+        await new Promise<void>((resolve) => {
+          if (mapReadyRef.current && mapRef.current) return resolve()
+          const check = setInterval(() => {
+            if (cancelled || !mapRef.current) { clearInterval(check); return }
+            if (mapReadyRef.current) { clearInterval(check); resolve() }
+          }, 100)
+        })
+
+        if (cancelled || !mapRef.current) return
+        const map = mapRef.current
+
+        // Remove existing ortho layer/source if present
+        if (map.getLayer('ortho-layer')) map.removeLayer('ortho-layer')
+        if (map.getSource('ortho')) map.removeSource('ortho')
+
+        map.addSource('ortho', {
+          type: 'raster',
+          tiles: [tileUrl],
+          tileSize: 256,
+          minzoom,
+          maxzoom,
+        })
+        map.addLayer({ id: 'ortho-layer', type: 'raster', source: 'ortho' })
+        map.fitBounds([bounds[0], bounds[1], bounds[2], bounds[3]], { padding: 20, animate: true })
+
+        setStatus('ready')
+      } catch (err) {
+        if (!cancelled) {
+          const msg = err instanceof Error ? err.message : String(err)
+          console.error('[OrthoMap] layer error:', err)
+          setErrorMsg(msg)
+          setStatus('error')
+        }
+      }
+    }
+
+    applyLayer()
+    return () => { cancelled = true }
   }, [outputKey])
 
   return (

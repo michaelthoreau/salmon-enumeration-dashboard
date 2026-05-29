@@ -152,7 +152,7 @@ export default function FlightsView({ rows, projectId, flightPlanId, timezone, c
         <div className="space-y-2">
           {/* Map area */}
           {selected?.outputKey ? (
-            <OrthoMap key={selected.flight.id} outputKey={selected.outputKey} />
+            <OrthoMap outputKey={selected.outputKey} />
           ) : (
             <div className="relative w-full h-96 rounded-xl overflow-hidden border border-gray-200 bg-gray-100 flex items-center justify-center">
               <p className="text-sm text-gray-400">
