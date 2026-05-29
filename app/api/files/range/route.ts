@@ -31,7 +31,7 @@ export async function GET(request: NextRequest) {
     if (contentLength !== undefined) headers['Content-Length'] = contentLength.toString()
     if (contentRange) headers['Content-Range'] = contentRange
 
-    return new NextResponse(body, { status, headers })
+    return new NextResponse(Buffer.from(body), { status, headers })
   } catch (err) {
     // NoSuchKey is expected for sidecar files (.ovr, .aux.xml, etc.) — return 404 silently
     const code = err && typeof err === 'object' && 'Code' in err ? (err as { Code: string }).Code : null
