@@ -32,7 +32,8 @@ const nextConfig: NextConfig = {
               "style-src 'self' 'unsafe-inline'",
               `img-src 'self' data: blob: ${s3Host}`,
               "font-src 'self'",
-              `connect-src 'self' ${s3Host}`,
+              `connect-src 'self' ${s3Host} https://tiles.openfreemap.org`,
+              "worker-src blob: 'self'",
 
               "frame-ancestors 'none'",
             ].join('; '),

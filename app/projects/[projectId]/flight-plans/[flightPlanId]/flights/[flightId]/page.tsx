@@ -1,13 +1,15 @@
 import { notFound } from 'next/navigation'
 import Link from 'next/link'
 import { db } from '@/lib/db'
-import { flights, flightPlans, projects, files as filesTable } from '@/lib/schema'
-import { eq } from 'drizzle-orm'
+import { flights, flightPlans, projects, files as filesTable, odmTasks } from '@/lib/schema'
+import { eq, desc } from 'drizzle-orm'
 import { getSession } from '@/lib/session'
 import { listFlightObjects } from '@/lib/s3'
 import FlightUploader from './flight-uploader'
 import FileLightbox from './file-lightbox'
 import EditFlightButton from './edit-flight-button'
+import OdmPanel from './odm-panel'
+import OrthoMap from './ortho-map'
 
 interface PageProps {
   params: Promise<{ projectId: string; flightPlanId: string; flightId: string }>
@@ -58,6 +60,14 @@ export default async function FlightDetailPage({ params }: PageProps) {
   const dbFiles = await db.select().from(filesTable).where(eq(filesTable.flightId, flightId))
   const splitByKey = new Map(dbFiles.map(f => [f.key, f.split ?? null]))
 
+  // Most recent ODM task for this flight (if any)
+  const [latestOdmTask] = await db
+    .select()
+    .from(odmTasks)
+    .where(eq(odmTasks.flightId, flightId))
+    .orderBy(desc(odmTasks.createdAt))
+    .limit(1)
+
   return (
     <div className="space-y-8">
       <div>
@@ -85,8 +95,31 @@ export default async function FlightDetailPage({ params }: PageProps) {
 
       {canWrite && (
         <section>
-          <FlightUploader flightId={flightId} />
+          <FlightUploader flightId={flightId} defaultOpen={objects.length === 0} />
         </section>
+      )}
+
+      {latestOdmTask?.status === 'completed' && latestOdmTask.outputKey && (
+        <OrthoMap outputKey={latestOdmTask.outputKey} />
+      )}
+
+      {canWrite && (
+        <OdmPanel
+          flightId={flightId}
+          projectId={projectId}
+          flightPlanId={flightPlanId}
+          initialTask={
+            latestOdmTask
+              ? {
+                  taskId: latestOdmTask.id,
+                  odmUuid: latestOdmTask.odmUuid,
+                  status: latestOdmTask.status,
+                  outputKey: latestOdmTask.outputKey ?? null,
+                  reportKey: latestOdmTask.reportKey ?? null,
+                }
+              : null
+          }
+        />
       )}
 
       <section>

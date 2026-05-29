@@ -1,7 +1,6 @@
-import { S3Client, ListObjectsV2Command, DeleteObjectCommand } from '@aws-sdk/client-s3'
+import { S3Client, ListObjectsV2Command, DeleteObjectCommand, GetObjectCommand, HeadObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3'
 import { createPresignedPost } from '@aws-sdk/s3-presigned-post'
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner'
-import { GetObjectCommand, HeadObjectCommand } from '@aws-sdk/client-s3'
 
 function getClient(): S3Client {
   const region = process.env.AWS_REGION
@@ -138,5 +137,52 @@ export async function objectExists(key: string): Promise<boolean> {
     return true
   } catch {
     return false
+  }
+}
+
+/** Download an S3 object as a Buffer */
+export async function getObjectBuffer(key: string): Promise<Buffer> {
+  const client = getClient()
+  const response = await client.send(new GetObjectCommand({ Bucket: getBucket(), Key: key }))
+  if (!response.Body) throw new Error(`S3 object body empty for key: ${key}`)
+  const bytes = await response.Body.transformToByteArray()
+  return Buffer.from(bytes)
+}
+
+/** Upload a Buffer to S3 at the given key */
+export async function putObject(key: string, body: Buffer, contentType: string): Promise<void> {
+  const client = getClient()
+  await client.send(
+    new PutObjectCommand({ Bucket: getBucket(), Key: key, Body: body, ContentType: contentType }),
+  )
+}
+
+/** Fetch a byte range from an S3 object (for proxying range requests to browsers) */
+export async function getObjectRange(
+  key: string,
+  range?: string,
+): Promise<{
+  body: Uint8Array
+  status: 200 | 206
+  contentLength?: number
+  contentRange?: string
+  acceptRanges: string
+}> {
+  const client = getClient()
+  const response = await client.send(
+    new GetObjectCommand({
+      Bucket: getBucket(),
+      Key: key,
+      ...(range ? { Range: range } : {}),
+    }),
+  )
+  if (!response.Body) throw new Error(`S3 object body empty for key: ${key}`)
+  const body = await response.Body.transformToByteArray()
+  return {
+    body,
+    status: range ? 206 : 200,
+    contentLength: response.ContentLength,
+    contentRange: response.ContentRange,
+    acceptRanges: response.AcceptRanges ?? 'bytes',
   }
 }
