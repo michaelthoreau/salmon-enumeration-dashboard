@@ -1,12 +1,13 @@
+import React from 'react'
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { db } from '@/lib/db'
-import { projects, flightPlans, flights } from '@/lib/schema'
-import { eq, desc } from 'drizzle-orm'
+import { projects, flightPlans, flights, files as filesTable, odmTasks } from '@/lib/schema'
+import { eq, desc, inArray, sql } from 'drizzle-orm'
 import { getSession } from '@/lib/session'
 import CreateFlightForm from './create-flight-form'
-import { DeleteFlightButton } from './flight-actions'
-import EditFlightButton from './[flightId]/edit-flight-button'
+import FlightsView from './flights-view'
+import type { FlightRow } from './flights-view'
 
 interface PageProps {
   params: Promise<{ projectId: string; flightPlanId: string }>
@@ -50,6 +51,43 @@ export default async function FlightsPage({ params }: PageProps) {
     .orderBy(desc(flights.timestamp))
 
   const active = allFlights.filter((f) => !f.deletedAt)
+  const flightIds = active.map((f) => f.id)
+
+  // File counts per flight (from DB — registered on upload)
+  const fileCounts = flightIds.length > 0
+    ? await db
+        .select({ flightId: filesTable.flightId, count: sql<number>`count(*)`.as('count') })
+        .from(filesTable)
+        .where(inArray(filesTable.flightId, flightIds))
+        .groupBy(filesTable.flightId)
+    : []
+
+  // Latest ODM task per flight
+  const taskRows = flightIds.length > 0
+    ? await db
+        .select()
+        .from(odmTasks)
+        .where(inArray(odmTasks.flightId, flightIds))
+        .orderBy(desc(odmTasks.createdAt))
+    : []
+
+  const fileCountMap = new Map(fileCounts.map((r) => [r.flightId, r.count]))
+  const latestTaskMap = new Map<string, typeof taskRows[number]>()
+  for (const task of taskRows) {
+    if (!latestTaskMap.has(task.flightId)) latestTaskMap.set(task.flightId, task)
+  }
+
+  const rows: FlightRow[] = active.map((flight) => {
+    const task = latestTaskMap.get(flight.id)
+    return {
+      flight,
+      formattedTime: formatInTz(flight.timestamp, project.timezone),
+      localTimestamp: toLocalInputValue(flight.timestamp, project.timezone),
+      imageCount: fileCountMap.get(flight.id) ?? 0,
+      taskStatus: task?.status ?? null,
+      outputKey: task?.outputKey ?? null,
+    }
+  })
 
   return (
     <div className="space-y-8">
@@ -65,59 +103,13 @@ export default async function FlightsPage({ params }: PageProps) {
         </div>
       )}
 
-      <section>
-        <h2 className="text-lg font-semibold text-gray-900 mb-4">
-          Flights{' '}
-          <span className="text-sm font-normal text-gray-500">({active.length})</span>
-        </h2>
-        <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-          {active.length === 0 ? (
-            <p className="text-sm text-gray-500 p-6">No flights logged yet.</p>
-          ) : (
-            <table className="w-full text-sm">
-              <thead className="bg-gray-50 border-b border-gray-200">
-                <tr>
-                  <th className="text-left px-6 py-3 font-medium text-gray-600">Timestamp</th>
-                  <th className="text-left px-6 py-3 font-medium text-gray-600">Notes</th>
-                  {canWrite && <th className="px-6 py-3" />}
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-100">
-                {active.map((flight) => (
-                  <tr key={flight.id}>
-                    <td className="px-6 py-3 text-xs text-gray-700">
-                      <Link
-                        href={`/projects/${projectId}/flight-plans/${flightPlanId}/flights/${flight.id}`}
-                        className="font-medium text-blue-600 hover:underline"
-                      >
-                        {formatInTz(flight.timestamp, project.timezone)}
-                      </Link>
-                    </td>
-                    <td className="px-6 py-3 text-gray-500">{flight.notes ?? '—'}</td>
-                    {canWrite && (
-                      <td className="px-6 py-3 text-right flex items-center justify-end gap-1">
-                        <EditFlightButton
-                          flightId={flight.id}
-                          projectId={projectId}
-                          flightPlanId={flightPlanId}
-                          timezone={project.timezone}
-                          localTimestamp={toLocalInputValue(flight.timestamp, project.timezone)}
-                          currentNotes={flight.notes}
-                        />
-                        <DeleteFlightButton
-                          flight={flight}
-                          projectId={projectId}
-                          flightPlanId={flightPlanId}
-                        />
-                      </td>
-                    )}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-        </div>
-      </section>
+      <FlightsView
+        rows={rows}
+        projectId={projectId}
+        flightPlanId={flightPlanId}
+        timezone={project.timezone}
+        canWrite={canWrite}
+      />
     </div>
   )
 }

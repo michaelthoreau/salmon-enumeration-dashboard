@@ -24,7 +24,7 @@ import {
 import type { Split } from '@/lib/schema'
 import { assignFileSplit } from '@/app/actions/files'
 
-const IMAGE_EXTS = new Set(['jpg', 'jpeg', 'png', 'webp', 'gif', 'tiff', 'tif'])
+const IMAGE_EXTS = new Set(['jpg', 'jpeg', 'png', 'webp', 'gif'])
 
 function isImage(key: string): boolean {
   const ext = key.split('.').pop()?.toLowerCase() ?? ''
@@ -362,7 +362,7 @@ export default function FileLightbox({ files: initialFiles, timezone, canWrite =
               </td>
               <td
                 className="px-4 py-3 font-mono text-xs text-blue-600 cursor-pointer"
-                onClick={() => openFile(i)}
+                onClick={() => isImage(file.key) ? openFile(i) : downloadSingle(file.key)}
               >
                 <div className="flex items-center gap-2">
                   {img && (
@@ -433,7 +433,7 @@ export default function FileLightbox({ files: initialFiles, timezone, canWrite =
             {/* Thumbnail / icon */}
             <div
               className="aspect-square bg-gray-100 flex items-center justify-center overflow-hidden"
-              onClick={() => openFile(i)}
+              onClick={() => isImage(file.key) ? openFile(i) : downloadSingle(file.key)}
             >
               {img ? (
                 // eslint-disable-next-line @next/next/no-img-element

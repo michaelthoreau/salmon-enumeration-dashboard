@@ -60,7 +60,7 @@ async function uploadFile(
   })
 }
 
-export default function FlightUploader({ flightId }: { flightId: string }) {
+export default function FlightUploader({ flightId, defaultOpen = false }: { flightId: string; defaultOpen?: boolean }) {
   const [statuses, setStatuses] = useState<FileStatus[]>([])
   const [isRunning, setIsRunning] = useState(false)
   const [uploadSpeed, setUploadSpeed] = useState<number | null>(null)
@@ -189,7 +189,7 @@ export default function FlightUploader({ flightId }: { flightId: string }) {
   const done = statuses.filter((s) => s.status === 'done').length
   const errors = statuses.filter((s) => s.status === 'error').length
   const total = statuses.length
-  const [open, setOpen] = useState(false)
+  const [open, setOpen] = useState(defaultOpen)
 
   return (
     <div className="rounded-xl border border-gray-200 bg-white overflow-hidden">
