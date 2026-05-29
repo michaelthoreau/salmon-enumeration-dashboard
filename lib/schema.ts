@@ -108,6 +108,23 @@ export const labelingTaskPoints = sqliteTable('labeling_task_points', {
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
 })
 
+// ─── ODM Processing Tasks ─────────────────────────────────────────────────────
+
+export type OdmTaskStatus = 'uploading' | 'queued' | 'running' | 'failed' | 'completed' | 'canceled'
+
+export const odmTasks = sqliteTable('odm_tasks', {
+  id: text('id').primaryKey(), // UUID (our internal ID)
+  flightId: text('flight_id').notNull(), // FK → flights.id
+  odmUuid: text('odm_uuid').notNull(), // UUID assigned by NodeODM
+  status: text('status').$type<OdmTaskStatus>().notNull().default('uploading'),
+  totalImages: integer('total_images'), // number of images to upload; set at creation
+  outputKey: text('output_key'), // S3 key of the collected GeoTIFF; null until complete
+  reportKey: text('report_key'), // S3 key of the ODM PDF report; null until complete
+  createdBy: text('created_by').notNull(), // userId
+  createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
+  completedAt: integer('completed_at', { mode: 'timestamp' }),
+})
+
 // ─── API Keys ──────────────────────────────────────────────────────────────────
 
 export const apiKeys = sqliteTable('api_keys', {

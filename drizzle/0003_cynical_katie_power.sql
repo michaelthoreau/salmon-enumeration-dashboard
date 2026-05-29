@@ -1,0 +1,1 @@
+ALTER TABLE `odm_tasks` ADD `report_key` text;
