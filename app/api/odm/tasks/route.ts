@@ -111,7 +111,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${workerToken}`,
       },
-      body: JSON.stringify({ task_name: taskName, images }),
+      body: JSON.stringify({ task_name: taskName, images, bucket: process.env.S3_BUCKET_NAME }),
     })
     if (!res.ok) {
       const text = await res.text()

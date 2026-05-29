@@ -69,6 +69,7 @@ class ImageSpec(BaseModel):
 class ProcessRequest(BaseModel):
     task_name: str
     images: list[ImageSpec]
+    bucket: str  # S3 bucket name — passed from the Next.js app so both sides agree
 
 
 # ── In-memory upload progress ──────────────────────────────────────────────────
@@ -110,11 +111,10 @@ def web() -> FastAPI:
         return odm_url
 
     # ── Background upload + commit ─────────────────────────────────────────
-    async def _upload_and_commit(odm_uuid: str, images: list[ImageSpec]) -> None:
+    async def _upload_and_commit(odm_uuid: str, images: list[ImageSpec], bucket: str) -> None:
         import boto3
         import httpx
 
-        bucket = os.environ["S3_BUCKET_NAME"]
         odm_url = _make_odm_url()
         s3 = boto3.client(
             "s3",
@@ -213,7 +213,7 @@ def web() -> FastAPI:
         }
 
         # Kick off uploads in the background — response returns immediately
-        background_tasks.add_task(_upload_and_commit, odm_uuid, req.images)
+        background_tasks.add_task(_upload_and_commit, odm_uuid, req.images, req.bucket)
 
         return {"odm_uuid": odm_uuid, "total": len(req.images)}
 
