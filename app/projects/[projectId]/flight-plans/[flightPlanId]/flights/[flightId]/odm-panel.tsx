@@ -202,21 +202,18 @@ export default function OdmPanel({ flightId, projectId, flightPlanId, initialTas
   }
 
   const isActive = task && !TERMINAL_STATUSES.has(task.status)
-  const canRestart = !task || TERMINAL_STATUSES.has(task.status)
 
   return (
     <section className="space-y-4">
       <div className="flex items-center justify-between">
         <h2 className="text-lg font-semibold text-gray-900">ODM Processing</h2>
-        {canRestart && (
-          <button
-            onClick={startProcessing}
-            disabled={starting}
-            className="px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50 rounded-lg"
-          >
-            {starting ? 'Starting…' : task ? 'Reprocess' : 'Start Processing'}
-          </button>
-        )}
+        <button
+          onClick={startProcessing}
+          disabled={starting}
+          className="px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50 rounded-lg"
+        >
+          {starting ? 'Starting…' : !task ? 'Start Processing' : isActive ? 'Resubmit' : 'Reprocess'}
+        </button>
       </div>
 
       {startError && (
