@@ -39,8 +39,8 @@ function formatBytes(bytes: number): string {
 }
 
 /** Thumbnail URL — served by our API, cached by ETag (content hash from S3) */
-function thumbnailUrl(key: string, etag: string): string {
-  return `/api/files/thumbnail?key=${encodeURIComponent(key)}&etag=${encodeURIComponent(etag)}`
+function thumbnailUrl(key: string, etag: string, size: number): string {
+  return `/api/files/thumbnail?key=${encodeURIComponent(key)}&etag=${encodeURIComponent(etag)}&size=${size}`
 }
 
 interface FileEntry {
@@ -368,7 +368,7 @@ export default function FileLightbox({ files: initialFiles, timezone, canWrite =
                   {img && (
                     // eslint-disable-next-line @next/next/no-img-element
                     <img
-                      src={thumbnailUrl(file.key, file.etag)}
+                      src={thumbnailUrl(file.key, file.etag, 64)}
                       alt=""
                       className="w-8 h-8 rounded object-cover bg-gray-100 shrink-0"
                     />
@@ -417,7 +417,7 @@ export default function FileLightbox({ files: initialFiles, timezone, canWrite =
 
   // ---- Grid view ----
   const gridView = (
-    <div className="p-4 grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
+    <div className="p-4 grid grid-cols-3 sm:grid-cols-5 md:grid-cols-6 lg:grid-cols-8 gap-2">
       {files.map((file, i) => {
         const filename = file.key.split('/').pop() ?? file.key
         const img = isImage(file.key)
@@ -438,7 +438,7 @@ export default function FileLightbox({ files: initialFiles, timezone, canWrite =
               {img ? (
                 // eslint-disable-next-line @next/next/no-img-element
                 <img
-                  src={thumbnailUrl(file.key, file.etag)}
+                  src={thumbnailUrl(file.key, file.etag, 160)}
                   alt={filename}
                   className="w-full h-full object-cover"
                 />
@@ -522,7 +522,7 @@ export default function FileLightbox({ files: initialFiles, timezone, canWrite =
               // eslint-disable-next-line @next/next/no-img-element
               <img
                 key={activeFile.key}
-                src={thumbnailUrl(activeFile.key, activeFile.etag)}
+                src={thumbnailUrl(activeFile.key, activeFile.etag, 1200)}
                 alt={activeFile.key.split('/').pop()}
                 className="max-w-full max-h-[70vh] object-contain"
               />

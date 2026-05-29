@@ -22,6 +22,10 @@ export async function GET(request: NextRequest) {
   const etag = rawEtag ? rawEtag.replace(/[\r\n\x00]/g, '') : null
   const meta = request.nextUrl.searchParams.get('meta') === '1'
 
+  // Optional resize: ?size=N → fit within an N×N square
+  const rawSize = request.nextUrl.searchParams.get('size')
+  const size = rawSize ? Math.min(Math.max(parseInt(rawSize, 10), 1), 2000) : null
+
   // Optional crop params (pixel coordinates in the source image)
   const cx = request.nextUrl.searchParams.get('x')
   const cy = request.nextUrl.searchParams.get('y')
@@ -70,11 +74,13 @@ export async function GET(request: NextRequest) {
     })
   }
 
-  const contentType = upstream.headers.get('content-type') ?? 'image/jpeg'
+  const contentType = (crop || size) ? 'image/jpeg' : (upstream.headers.get('content-type') ?? 'image/jpeg')
   let bodyBuffer: Buffer
 
   if (crop) {
-    bodyBuffer = await sharp(buffer).extract(crop).toBuffer()
+    bodyBuffer = await sharp(buffer).extract(crop).resize(size ?? undefined, size ?? undefined, { fit: 'inside', withoutEnlargement: true }).jpeg({ quality: 85 }).toBuffer()
+  } else if (size) {
+    bodyBuffer = await sharp(buffer).resize(size, size, { fit: 'inside', withoutEnlargement: true }).jpeg({ quality: 85 }).toBuffer()
   } else {
     bodyBuffer = buffer
   }
