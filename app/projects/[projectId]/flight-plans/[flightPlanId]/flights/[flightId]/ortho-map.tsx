@@ -64,6 +64,7 @@ export default function OrthoMap({ outputKey }: OrthoMapProps) {
   }, []) // run once
 
   // ── Swap layer when outputKey changes ──────────────────────────────────────
+  const initialFitDoneRef = useRef(false)
   useEffect(() => {
     let cancelled = false
 
@@ -106,7 +107,10 @@ export default function OrthoMap({ outputKey }: OrthoMapProps) {
           maxzoom,
         })
         map.addLayer({ id: 'ortho-layer', type: 'raster', source: 'ortho' })
-        map.fitBounds([bounds[0], bounds[1], bounds[2], bounds[3]], { padding: 20, animate: true })
+        if (!initialFitDoneRef.current) {
+          map.fitBounds([bounds[0], bounds[1], bounds[2], bounds[3]], { padding: 20, animate: false })
+          initialFitDoneRef.current = true
+        }
 
         setStatus('ready')
       } catch (err) {
