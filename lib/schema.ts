@@ -125,6 +125,22 @@ export const odmTasks = sqliteTable('odm_tasks', {
   completedAt: integer('completed_at', { mode: 'timestamp' }),
 })
 
+// ─── Georef Processing Tasks ──────────────────────────────────────────────────
+
+export type GeorefTaskStatus = 'pending' | 'running' | 'failed' | 'completed'
+
+export const georefTasks = sqliteTable('georef_tasks', {
+  id: text('id').primaryKey(), // UUID (our internal ID, also used as Modal task_id)
+  flightId: text('flight_id').notNull(), // FK → flights.id
+  status: text('status').$type<GeorefTaskStatus>().notNull().default('pending'),
+  totalImages: integer('total_images'), // number of images to process
+  outputKey: text('output_key'), // S3 key of merged COG; null until complete
+  error: text('error'), // human-readable error message on failure
+  createdBy: text('created_by').notNull(), // userId
+  createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
+  completedAt: integer('completed_at', { mode: 'timestamp' }),
+})
+
 // ─── API Keys ──────────────────────────────────────────────────────────────────
 
 export const apiKeys = sqliteTable('api_keys', {
