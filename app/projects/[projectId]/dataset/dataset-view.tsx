@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useCallback, useEffect } from 'react'
+import { useState, useCallback, useEffect, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
@@ -26,7 +26,7 @@ function splitSelectClass(split: Split | null): string {
   return 'bg-white border-gray-200 text-gray-400'
 }
 
-const TABS = ['all', 'train', 'val', 'test', 'unassigned'] as const
+const TABS = ['unassigned', 'train', 'val', 'test'] as const
 type Tab = (typeof TABS)[number]
 
 function SplitBadge({ split }: { split: Split | null }) {
@@ -108,6 +108,8 @@ export interface DatasetEntry {
   key: string
   etag: string
   split: Split | null
+  imageWidth: number | null
+  imageHeight: number | null
   flightId: string
   flightTimestampIso: string
   flightPlanName: string
@@ -123,7 +125,7 @@ interface Props {
 
 export default function DatasetView({ entries: initialEntries, taskCountByFileId, canWrite, timezone }: Props) {
   const router = useRouter()
-  const [activeTab, setActiveTab] = useState<Tab>('all')
+  const [activeTab, setActiveTab] = useState<Tab>('unassigned')
   const [splits, setSplits] = useState<Map<string, Split | null>>(
     () => new Map(initialEntries.map(e => [e.key, e.split]))
   )
@@ -132,6 +134,15 @@ export default function DatasetView({ entries: initialEntries, taskCountByFileId
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [taskDialog, setTaskDialog] = useState<TaskDialogState | null>(null)
   const [maxPerImage, setMaxPerImage] = useState<number | null>(null)
+  const [collapsedFlights, setCollapsedFlights] = useState<Set<string>>(new Set())
+
+  const toggleFlight = useCallback((flightId: string) => {
+    setCollapsedFlights(prev => {
+      const n = new Set(prev)
+      n.has(flightId) ? n.delete(flightId) : n.add(flightId)
+      return n
+    })
+  }, [])
 
   useEffect(() => {
     setSplits(new Map(initialEntries.map(e => [e.key, e.split])))
@@ -195,7 +206,10 @@ export default function DatasetView({ entries: initialEntries, taskCountByFileId
         imageEntries.map(async entry => {
           const filename = entry.key.split('/').pop() ?? entry.key
           try {
-            const { width, height } = await getImageDimensions(entry.key)
+            // Use cached dimensions from DB when available
+            const { width, height } = (entry.imageWidth && entry.imageHeight)
+              ? { width: entry.imageWidth, height: entry.imageHeight }
+              : await getImageDimensions(entry.key)
             return { key: entry.key, fileId: entry.fileId, filename, width, height, tiles: computeTiles(width, height) }
           } catch {
             return { key: entry.key, fileId: entry.fileId, filename, width: 0, height: 0, tiles: [] }
@@ -229,14 +243,12 @@ export default function DatasetView({ entries: initialEntries, taskCountByFileId
   // Filter entries by active tab (use live splits map, not initial data)
   const filtered = initialEntries.filter(e => {
     const s = splits.get(e.key) ?? null
-    if (activeTab === 'all') return true
     if (activeTab === 'unassigned') return s === null
     return s === activeTab
   })
 
   // Counts for tab badges
   const counts: Record<Tab, number> = {
-    all: initialEntries.length,
     train: 0, val: 0, test: 0, unassigned: 0,
   }
   for (const e of initialEntries) {
@@ -245,12 +257,23 @@ export default function DatasetView({ entries: initialEntries, taskCountByFileId
     else counts.unassigned++
   }
 
+  // Group filtered entries by flight
+  const flightGroups = useMemo(() => {
+    const map = new Map<string, { flightPlanName: string; flightTimestampIso: string; entries: DatasetEntry[] }>()
+    for (const entry of filtered) {
+      if (!map.has(entry.flightId)) {
+        map.set(entry.flightId, { flightPlanName: entry.flightPlanName, flightTimestampIso: entry.flightTimestampIso, entries: [] })
+      }
+      map.get(entry.flightId)!.entries.push(entry)
+    }
+    return Array.from(map.entries())
+  }, [filtered])
+
   const tabLabel: Record<Tab, string> = {
-    all: 'All',
+    unassigned: 'Unassigned',
     train: 'Train',
     val: 'Val',
     test: 'Test',
-    unassigned: 'Unassigned',
   }
 
   const splitDialogHasConflict = !!splitDialog && pendingSplit !== null &&
@@ -262,134 +285,188 @@ export default function DatasetView({ entries: initialEntries, taskCountByFileId
 
   return (
     <>
-      {/* Tabs */}
-      <div className="flex items-center gap-1 border-b border-gray-200">
-        {TABS.map(tab => (
-          <button
-            key={tab}
-            onClick={() => setActiveTab(tab)}
-            className={cn(
-              'px-3 py-2 text-sm font-medium transition-colors border-b-2 -mb-px',
-              activeTab === tab
-                ? 'border-blue-600 text-blue-600'
-                : 'border-transparent text-gray-500 hover:text-gray-800',
-            )}
-          >
-            {tabLabel[tab]}
-            <span className={cn(
-              'ml-1.5 rounded-full px-1.5 py-0.5 text-xs',
-              activeTab === tab ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-500',
-            )}>
-              {counts[tab]}
-            </span>
-          </button>
-        ))}
+      {/* Tabs + inline action bar */}
+      <div className="flex items-center justify-between border-b border-gray-200">
+        <div className="flex items-center gap-1">
+          {TABS.map(tab => (
+            <button
+              key={tab}
+              onClick={() => setActiveTab(tab)}
+              className={cn(
+                'px-3 py-2 text-sm font-medium transition-colors border-b-2 -mb-px',
+                activeTab === tab
+                  ? 'border-blue-600 text-blue-600'
+                  : 'border-transparent text-gray-500 hover:text-gray-800',
+              )}
+            >
+              {tabLabel[tab]}
+              <span className={cn(
+                'ml-1.5 rounded-full px-1.5 py-0.5 text-xs',
+                activeTab === tab ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-500',
+              )}>
+                {counts[tab]}
+              </span>
+            </button>
+          ))}
+        </div>
+
+        {/* Actions — always in this spot, content changes with selection */}
+        <div className="flex items-center gap-2 pb-1">
+          {selected.size > 0 ? (
+            <>
+              <span className="text-xs text-gray-500">{selected.size} selected</span>
+              {canWrite && activeTab === 'unassigned' && (
+                <>
+                  {(['train', 'val', 'test'] as Split[]).map(s => (
+                    <button
+                      key={s}
+                      onClick={async () => {
+                        const keys = Array.from(selected)
+                        setSplits(prev => { const n = new Map(prev); keys.forEach(k => n.set(k, s)); return n })
+                        setSelected(new Set())
+                        await Promise.all(keys.map(k => assignFileSplit(k, s)))
+                        router.refresh()
+                      }}
+                      className={cn(buttonVariants({ variant: 'outline', size: 'sm' }))}
+                    >
+                      Add to {s}
+                    </button>
+                  ))}
+                </>
+              )}
+              {canWrite && activeTab !== 'unassigned' && selectedImageEntries.length > 0 && (
+                <button
+                  onClick={openTaskDialog}
+                  className={cn(buttonVariants({ variant: 'outline', size: 'sm' }))}
+                >
+                  Create labeling tasks ({selectedImageEntries.length} image{selectedImageEntries.length !== 1 ? 's' : ''})
+                </button>
+              )}
+              <button
+                onClick={() => setSelected(new Set())}
+                className="text-xs text-gray-400 hover:text-gray-600"
+              >
+                Clear
+              </button>
+            </>
+          ) : (
+            <span className="text-xs text-gray-300 select-none">Select files to take action</span>
+          )}
+        </div>
       </div>
 
-      {/* Selection toolbar */}
-      {selected.size > 0 && (
-        <div className="flex items-center justify-between px-4 py-2 bg-blue-50 border border-blue-200 rounded-lg text-sm">
-          <span className="text-blue-700 font-medium">{selected.size} selected</span>
-          <div className="flex items-center gap-2">
-            {canWrite && selectedImageEntries.length > 0 && (
-              <button
-                onClick={openTaskDialog}
-                className={cn(buttonVariants({ variant: 'outline', size: 'sm' }), 'bg-white')}
-              >
-                Create labeling tasks ({selectedImageEntries.length} image{selectedImageEntries.length !== 1 ? 's' : ''})
-              </button>
-            )}
-            <button
-              onClick={() => setSelected(new Set())}
-              className="text-blue-500 hover:text-blue-700 text-xs"
-            >
-              Clear
-            </button>
-          </div>
+      {/* Flight groups */}
+      {flightGroups.length === 0 ? (
+        <div className="bg-white rounded-xl border border-gray-200 p-6">
+          <p className="text-sm text-gray-500">No files in this split.</p>
         </div>
-      )}
-
-      {/* Table */}
-      <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-        {filtered.length === 0 ? (
-          <p className="text-sm text-gray-500 p-6">No files in this split.</p>
-        ) : (
-          <table className="w-full text-sm">
-            <thead className="bg-gray-50 border-b border-gray-200">
-              <tr>
-                <th className="w-10 px-4 py-3">
+      ) : (
+        <div className="space-y-3">
+          {flightGroups.map(([flightId, group]) => {
+            const isCollapsed = collapsedFlights.has(flightId)
+            const groupKeys = group.entries.map(e => e.key)
+            const allGroupSelected = groupKeys.every(k => selected.has(k))
+            const someGroupSelected = groupKeys.some(k => selected.has(k))
+            return (
+              <div key={flightId} className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+                {/* Section header */}
+                <div className="flex items-center gap-3 px-4 py-3 bg-gray-50 border-b border-gray-200">
                   <input
                     type="checkbox"
                     className="rounded"
-                    checked={filtered.length > 0 && filtered.every(e => selected.has(e.key))}
+                    checked={allGroupSelected}
+                    ref={el => { if (el) el.indeterminate = !allGroupSelected && someGroupSelected }}
                     onChange={e => {
-                      if (e.target.checked) setSelected(prev => new Set([...prev, ...filtered.map(f => f.key)]))
-                      else setSelected(prev => { const n = new Set(prev); filtered.forEach(f => n.delete(f.key)); return n })
+                      if (e.target.checked) setSelected(prev => new Set([...prev, ...groupKeys]))
+                      else setSelected(prev => { const n = new Set(prev); groupKeys.forEach(k => n.delete(k)); return n })
                     }}
-                    aria-label="Select all"
+                    aria-label={`Select all files in ${group.flightPlanName}`}
+                    onClick={ev => ev.stopPropagation()}
                   />
-                </th>
-                <th className="text-left px-4 py-3 font-medium text-gray-600">Filename</th>
-                <th className="text-left px-4 py-3 font-medium text-gray-600">Split</th>
-                <th className="text-right px-4 py-3 font-medium text-gray-600">Tasks</th>
-                <th className="text-left px-4 py-3 font-medium text-gray-600">Flight plan</th>
-                <th className="text-left px-4 py-3 font-medium text-gray-600">Flight</th>
-                <th className="text-left px-4 py-3 font-medium text-gray-600">Uploaded</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-100">
-              {filtered.map(entry => {
-                const filename = entry.key.split('/').pop() ?? entry.key
-                const split = splits.get(entry.key) ?? null
-                return (
-                  <tr key={entry.key} className={cn('transition-colors', selected.has(entry.key) ? 'bg-blue-50' : 'hover:bg-gray-50')}>
-                    <td className="px-4 py-3" onClick={() => setSelected(prev => { const n = new Set(prev); n.has(entry.key) ? n.delete(entry.key) : n.add(entry.key); return n })}>
-                      <input type="checkbox" className="rounded pointer-events-none" checked={selected.has(entry.key)} onChange={() => {}} />
-                    </td>
-                    <td className="px-4 py-3 font-mono text-xs text-gray-700 max-w-xs truncate" title={filename}>
-                      {filename}
-                    </td>
-                    <td className="px-4 py-3">
-                      {canWrite ? (
-                        <select
-                          value={split ?? 'none'}
-                          onChange={e => handleSplitChange(entry.key, e.target.value as SplitChoice)}
-                          className={cn(
-                            'text-xs rounded border px-2 py-0.5 focus:outline-none focus:ring-1 focus:ring-blue-400 cursor-pointer',
-                            splitSelectClass(split),
-                          )}
-                        >
-                          <option value="none">—</option>
-                          <option value="train">train</option>
-                          <option value="val">val</option>
-                          <option value="test">test</option>
-                        </select>
-                      ) : (
-                        <SplitBadge split={split} />
-                      )}
-                    </td>
-                    <td className="px-4 py-3 text-right">
-                      {(() => {
-                        const n = taskCountByFileId.get(entry.fileId) ?? 0
-                        return n > 0
-                          ? <span className="inline-flex items-center rounded-full bg-indigo-50 px-2 py-0.5 text-xs font-medium text-indigo-700">{n}</span>
-                          : <span className="text-xs text-gray-300">—</span>
-                      })()}
-                    </td>
-                    <td className="px-4 py-3 text-gray-500">{entry.flightPlanName}</td>
-                    <td className="px-4 py-3 text-gray-500">
-                      {fmt.format(new Date(entry.flightTimestampIso))}
-                    </td>
-                    <td className="px-4 py-3 text-gray-400 text-xs">
-                      {new Date(entry.uploadedAtIso).toLocaleDateString()}
-                    </td>
-                  </tr>
-                )
-              })}
-            </tbody>
-          </table>
-        )}
-      </div>
+                  <button
+                    onClick={() => toggleFlight(flightId)}
+                    className="flex-1 flex items-center gap-3 text-left"
+                  >
+                    <span className="text-sm font-semibold text-gray-800">{group.flightPlanName}</span>
+                    <span className="text-gray-300">–</span>
+                    <span className="text-sm text-gray-500">{fmt.format(new Date(group.flightTimestampIso))}</span>
+                    <span className="text-xs text-gray-400 bg-gray-100 rounded-full px-2 py-0.5 ml-1">
+                      {group.entries.length} file{group.entries.length !== 1 ? 's' : ''}
+                    </span>
+                    <svg
+                      className={cn('ml-auto h-4 w-4 text-gray-400 transition-transform shrink-0', isCollapsed ? '-rotate-90' : '')}
+                      xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor"
+                    >
+                      <path fillRule="evenodd" d="M5.22 8.22a.75.75 0 0 1 1.06 0L10 11.94l3.72-3.72a.75.75 0 1 1 1.06 1.06l-4.25 4.25a.75.75 0 0 1-1.06 0L5.22 9.28a.75.75 0 0 1 0-1.06Z" clipRule="evenodd" />
+                    </svg>
+                  </button>
+                </div>
+
+                {/* Collapsible table */}
+                {!isCollapsed && (
+                  <table className="w-full text-sm">
+                    <thead className="bg-gray-50 border-b border-gray-200">
+                      <tr>
+                        <th className="w-10 px-4 py-2" />
+                        <th className="text-left px-4 py-2 font-medium text-gray-600">Filename</th>
+                        <th className="text-left px-4 py-2 font-medium text-gray-600">Split</th>
+                        <th className="text-right px-4 py-2 font-medium text-gray-600">Tasks</th>
+                        <th className="text-left px-4 py-2 font-medium text-gray-600">Uploaded</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-100">
+                      {group.entries.map(entry => {
+                        const filename = entry.key.split('/').pop() ?? entry.key
+                        const split = splits.get(entry.key) ?? null
+                        return (
+                          <tr key={entry.key} className={cn('transition-colors', selected.has(entry.key) ? 'bg-blue-50' : 'hover:bg-gray-50')}>
+                            <td className="px-4 py-2.5" onClick={() => setSelected(prev => { const n = new Set(prev); n.has(entry.key) ? n.delete(entry.key) : n.add(entry.key); return n })}>
+                              <input type="checkbox" className="rounded pointer-events-none" checked={selected.has(entry.key)} onChange={() => {}} />
+                            </td>
+                            <td className="px-4 py-2.5 font-mono text-xs text-gray-700 max-w-xs truncate" title={filename}>
+                              {filename}
+                            </td>
+                            <td className="px-4 py-2.5">
+                              {canWrite ? (
+                                <select
+                                  value={split ?? 'none'}
+                                  onChange={e => handleSplitChange(entry.key, e.target.value as SplitChoice)}
+                                  className={cn(
+                                    'text-xs rounded border px-2 py-0.5 focus:outline-none focus:ring-1 focus:ring-blue-400 cursor-pointer',
+                                    splitSelectClass(split),
+                                  )}
+                                >
+                                  <option value="none">—</option>
+                                  <option value="train">train</option>
+                                  <option value="val">val</option>
+                                  <option value="test">test</option>
+                                </select>
+                              ) : (
+                                <SplitBadge split={split} />
+                              )}
+                            </td>
+                            <td className="px-4 py-2.5 text-right">
+                              {(() => {
+                                const n = taskCountByFileId.get(entry.fileId) ?? 0
+                                return n > 0
+                                  ? <span className="inline-flex items-center rounded-full bg-indigo-50 px-2 py-0.5 text-xs font-medium text-indigo-700">{n}</span>
+                                  : <span className="text-xs text-gray-300">—</span>
+                              })()}
+                            </td>
+                            <td className="px-4 py-2.5 text-gray-400 text-xs">
+                              {new Date(entry.uploadedAtIso).toLocaleDateString()}
+                            </td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                )}
+              </div>
+            )
+          })}
+        </div>
+      )}
 
       {/* Labeling task creation dialog */}
       <Dialog

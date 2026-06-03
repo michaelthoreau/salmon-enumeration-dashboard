@@ -62,45 +62,48 @@ function formatDuration(ms: number): string {
 }
 
 export default function OdmPanel({ flightId, projectId, flightPlanId, initialTask }: OdmPanelProps) {
-  const [task, setTask] = useState<OdmTask | null>(null)
+  const [task, setTask] = useState<OdmTask | null>(() => {
+    if (!initialTask) return null
+    return {
+      taskId: initialTask.taskId,
+      odmUuid: initialTask.odmUuid,
+      status: initialTask.status,
+      outputKey: initialTask.outputKey,
+      reportKey: initialTask.reportKey,
+      uploadedImages: 0,
+      totalImages: null,
+      processingTime: -1,
+      imagesCount: 0,
+      progress: 0,
+      output: [],
+    }
+  })
   const [starting, setStarting] = useState(false)
   const [startError, setStartError] = useState<string | null>(null)
+  const [cancelling, setCancelling] = useState(false)
+
+  const cancelTask = async () => {
+    if (!task) return
+    if (!confirm('Are you sure you want to cancel and reset this ODM task?')) return
+    setCancelling(true)
+    try {
+      const res = await fetch(`/api/odm/tasks/${task.taskId}`, {
+        method: 'DELETE',
+      })
+      if (res.ok) {
+        setTask((prev) => (prev ? { ...prev, status: 'canceled' } : null))
+      } else {
+        const data = await res.json()
+        alert(data.error ?? 'Failed to cancel task')
+      }
+    } catch (err) {
+      alert('Failed to cancel task: ' + String(err))
+    } finally {
+      setCancelling(false)
+    }
+  }
   const logRef = useRef<HTMLPreElement>(null)
   const outputLineRef = useRef(0)
-
-  // If server passed an existing task, kick off polling for it
-  useEffect(() => {
-    if (initialTask && !TERMINAL_STATUSES.has(initialTask.status)) {
-      setTask({
-        taskId: initialTask.taskId,
-        odmUuid: initialTask.odmUuid,
-        status: initialTask.status,
-        outputKey: initialTask.outputKey,
-        reportKey: initialTask.reportKey,
-        uploadedImages: 0,
-        totalImages: null,
-        processingTime: -1,
-        imagesCount: 0,
-        progress: 0,
-        output: [],
-      })
-    } else if (initialTask) {
-      // Terminal — just show it statically (we'll poll once to get logs)
-      setTask({
-        taskId: initialTask.taskId,
-        odmUuid: initialTask.odmUuid,
-        status: initialTask.status,
-        outputKey: initialTask.outputKey,
-        reportKey: initialTask.reportKey,
-        uploadedImages: 0,
-        totalImages: null,
-        processingTime: -1,
-        imagesCount: 0,
-        progress: 0,
-        output: [],
-      })
-    }
-  }, [initialTask]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const pollStatus = useCallback(async (taskId: string) => {
     const line = outputLineRef.current
@@ -243,11 +246,22 @@ export default function OdmPanel({ flightId, projectId, flightPlanId, initialTas
                 <span className="text-xs text-gray-500">{task.imagesCount} images</span>
               )}
             </div>
-            {task.processingTime >= 0 && (
-              <span className="text-xs text-gray-500 font-mono">
-                {formatDuration(task.processingTime)}
-              </span>
-            )}
+            <div className="flex items-center gap-3">
+              {task.processingTime >= 0 && (
+                <span className="text-xs text-gray-500 font-mono">
+                  {formatDuration(task.processingTime)}
+                </span>
+              )}
+              {isActive && (
+                <button
+                  onClick={cancelTask}
+                  disabled={cancelling}
+                  className="px-2 py-0.5 text-[10px] font-semibold text-red-600 hover:text-red-700 active:text-red-800 bg-red-50 border border-red-200 rounded hover:bg-red-100/50 disabled:opacity-50 transition-colors"
+                >
+                  {cancelling ? 'Cancelling…' : 'Cancel'}
+                </button>
+              )}
+            </div>
           </div>
 
           {/* Upload progress bar (uploading phase) */}

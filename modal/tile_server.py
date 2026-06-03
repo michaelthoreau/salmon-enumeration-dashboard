@@ -35,7 +35,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 # ── Image ──────────────────────────────────────────────────────────────────────
 
 image = (
-    modal.Image.debian_slim()
+    modal.Image.debian_slim(python_version="3.11")
     .pip_install("fastapi[standard]", "rio-tiler[http]")
 )
 
@@ -82,21 +82,22 @@ def web() -> FastAPI:
         "AWS_DEFAULT_REGION": os.environ.get("AWS_REGION", "us-east-1"),
     }
 
-    def _s3_url(key: str) -> str:
-        bucket = os.environ["S3_BUCKET_NAME"]
-        return f"s3://{bucket}/{key}"
+    def _s3_url(key: str, bucket: str | None = None) -> str:
+        b = bucket or os.environ["S3_BUCKET_NAME"]
+        return f"s3://{b}/{key}"
 
     # ── GET /info ──────────────────────────────────────────────────────────────
 
     @web_app.get("/info")
     async def info(
         key: str = Query(...),
+        bucket: str | None = Query(None),
         _: None = Depends(_require_auth),
     ) -> dict:
         from rio_tiler.io import COGReader
 
         with rasterio.Env(**_gdal_env):
-            with COGReader(_s3_url(key)) as cog:
+            with COGReader(_s3_url(key, bucket)) as cog:
                 meta = cog.info()
                 bounds = list(cog.geographic_bounds)  # [W, S, E, N] in WGS-84
 
@@ -114,6 +115,7 @@ def web() -> FastAPI:
         x: int,
         y: int,
         key: str = Query(...),
+        bucket: str | None = Query(None),
         _: None = Depends(_require_auth),
     ) -> Response:
         from rio_tiler.errors import TileOutsideBounds
@@ -121,7 +123,7 @@ def web() -> FastAPI:
 
         try:
             with rasterio.Env(**_gdal_env):
-                with COGReader(_s3_url(key)) as cog:
+                with COGReader(_s3_url(key, bucket)) as cog:
                     img = cog.tile(x, y, z)
                     content = img.render(img_format="PNG")
         except TileOutsideBounds:

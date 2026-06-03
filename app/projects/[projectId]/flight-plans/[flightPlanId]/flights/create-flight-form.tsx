@@ -29,10 +29,12 @@ export default function CreateFlightForm({
   projectId,
   flightPlanId,
   timezone,
+  className,
 }: {
   projectId: string
   flightPlanId: string
   timezone: string
+  className?: string
 }) {
   const [open, setOpen] = useState(false)
   const [timestamp, setTimestamp] = useState(() => nowInTz(timezone))
@@ -51,7 +53,7 @@ export default function CreateFlightForm({
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
-      <Button onClick={handleOpen}>+ Log flight</Button>
+      <Button onClick={handleOpen} className={className}>+ Log flight</Button>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle>Log a new flight</DialogTitle>

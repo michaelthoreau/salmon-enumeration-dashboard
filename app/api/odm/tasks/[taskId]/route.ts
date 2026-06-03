@@ -105,9 +105,17 @@ export async function GET(req: NextRequest, { params }: RouteParams): Promise<Ne
   // ── Processing phase: poll NodeODM ────────────────────────────────────────
   let info: Awaited<ReturnType<typeof odmGetTaskInfo>>
   try {
+    console.log(`[ODM Tasks API] Polling NodeODM for task uuid: ${task.odmUuid}, outputLine: ${outputLine}`);
     info = await odmGetTaskInfo(task.odmUuid, outputLine)
+    console.log(`[ODM Tasks API] NodeODM response status code: ${info.status?.code}`);
   } catch (err) {
+    console.error(`[ODM Tasks API] Failed to reach ODM node for uuid ${task.odmUuid}:`, err);
     return NextResponse.json({ error: `Failed to reach ODM node: ${String(err)}` }, { status: 502 })
+  }
+
+  if (!info.status) {
+    console.error(`[ODM Tasks API] Malformed ODM response (missing status) for uuid ${task.odmUuid}:`, info);
+    return NextResponse.json({ error: `Malformed ODM response: missing status` }, { status: 502 })
   }
 
   const statusCode = info.status.code as OdmStatusCode
@@ -155,6 +163,38 @@ export async function GET(req: NextRequest, { params }: RouteParams): Promise<Ne
     reportKey,
   })
 }
+
+export async function DELETE(req: NextRequest, { params }: RouteParams): Promise<NextResponse> {
+  const session = await getSession()
+  if (!session) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
+
+  const { taskId } = await params
+  const [task] = await db.select().from(odmTasks).where(eq(odmTasks.id, taskId))
+  if (!task) {
+    return NextResponse.json({ error: 'Task not found' }, { status: 404 })
+  }
+
+  // Update status to canceled in the database
+  await db
+    .update(odmTasks)
+    .set({ status: 'canceled', completedAt: new Date() })
+    .where(eq(odmTasks.id, taskId))
+
+  // Try to cancel on NodeODM if we have an odmUuid and it was queued/running
+  if (task.odmUuid && (task.status === 'queued' || task.status === 'running')) {
+    try {
+      const { odmCancelTask } = await import('@/lib/odm')
+      await odmCancelTask(task.odmUuid)
+    } catch (err) {
+      console.error('Failed to cancel task on NodeODM:', err)
+    }
+  }
+
+  return NextResponse.json({ success: true })
+}
+
 
 /**
  * Downloads all.zip from NodeODM (which contains only the orthophoto + report

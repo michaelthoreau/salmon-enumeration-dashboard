@@ -20,15 +20,26 @@ export async function GET(
   if (!key) return new NextResponse('Missing key', { status: 400 })
 
   const { url, token } = getTileServer()
-  const res = await fetch(`${url}/tiles/${z}/${x}/${y}?key=${encodeURIComponent(key)}`, {
-    headers: { Authorization: `Bearer ${token}` },
-  })
+  const bucket = process.env.S3_BUCKET_NAME || ''
+  const targetUrl = `${url}/tiles/${z}/${x}/${y}?key=${encodeURIComponent(key)}` + (bucket ? `&bucket=${encodeURIComponent(bucket)}` : '')
+
+  let res: Response
+  try {
+    res = await fetch(targetUrl, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+  } catch (err) {
+    console.error(`[Tile Image Route] Error reaching tile server for tile ${z}/${x}/${y}:`, err)
+    return new NextResponse('Tile server unreachable', { status: 502 })
+  }
 
   if (res.status === 204) {
     return new NextResponse(null, { status: 204 })
   }
 
   if (!res.ok) {
+    const text = await res.text()
+    console.error(`[Tile Image Route] Tile server returned non-ok status: ${res.status}. Body: ${text}`)
     return new NextResponse('Tile server error', { status: 502 })
   }
 

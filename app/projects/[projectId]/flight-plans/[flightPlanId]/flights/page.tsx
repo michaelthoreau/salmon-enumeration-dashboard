@@ -1,11 +1,9 @@
 import React from 'react'
-import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { db } from '@/lib/db'
 import { projects, flightPlans, flights, files as filesTable, odmTasks } from '@/lib/schema'
 import { eq, desc, inArray, sql } from 'drizzle-orm'
 import { getSession } from '@/lib/session'
-import CreateFlightForm from './create-flight-form'
 import FlightsView from './flights-view'
 import type { FlightRow } from './flights-view'
 
@@ -90,26 +88,17 @@ export default async function FlightsPage({ params }: PageProps) {
   })
 
   return (
-    <div className="space-y-8">
-      <div>
-        <Link href={`/projects/${projectId}/flight-plans`} className="text-sm text-gray-500 hover:text-gray-900 flex items-center gap-1 mb-4">← {project.name}</Link>
-        <h1 className="text-2xl font-semibold text-gray-900">{flightPlan.name}</h1>
-        {flightPlan.description && <p className="text-gray-500 mt-1">{flightPlan.description}</p>}
-      </div>
-
-      {canWrite && (
-        <div>
-          <CreateFlightForm projectId={projectId} flightPlanId={flightPlanId} timezone={project.timezone} />
-        </div>
-      )}
-
-      <FlightsView
-        rows={rows}
-        projectId={projectId}
-        flightPlanId={flightPlanId}
-        timezone={project.timezone}
-        canWrite={canWrite}
-      />
-    </div>
+    <FlightsView
+      rows={rows}
+      projectId={projectId}
+      flightPlanId={flightPlanId}
+      timezone={project.timezone}
+      canWrite={canWrite}
+      projectName={project.name}
+      flightPlan={{
+        name: flightPlan.name,
+        description: flightPlan.description,
+      }}
+    />
   )
 }

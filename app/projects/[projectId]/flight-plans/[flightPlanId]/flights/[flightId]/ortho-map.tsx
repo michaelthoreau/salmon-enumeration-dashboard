@@ -1,16 +1,23 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
+import { cn } from '@/lib/utils'
+import 'maplibre-gl/dist/maplibre-gl.css'
 
 interface OrthoMapProps {
   outputKey: string
+  className?: string
+  fitBoundsTrigger?: number
+  onViewportChange?: (viewport: { center: [number, number]; zoom: number }) => void
 }
 
-export default function OrthoMap({ outputKey }: OrthoMapProps) {
+export default function OrthoMap({ outputKey, className, fitBoundsTrigger, onViewportChange }: OrthoMapProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const mapRef = useRef<any | null>(null)
   const mapReadyRef = useRef(false)
+  const boundsRef = useRef<[number, number, number, number] | null>(null)
+  const initialFitDoneRef = useRef(false)
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading')
   const [errorMsg, setErrorMsg] = useState('')
 
@@ -22,7 +29,6 @@ export default function OrthoMap({ outputKey }: OrthoMapProps) {
     async function init() {
       try {
         const maplibre = (await import('maplibre-gl')).default
-        await import('maplibre-gl/dist/maplibre-gl.css')
         if (cancelled || !containerRef.current) return
 
         const map = new maplibre.Map({
@@ -36,9 +42,18 @@ export default function OrthoMap({ outputKey }: OrthoMapProps) {
         mapRef.current = map
         map.addControl(new maplibre.AttributionControl({ compact: true }))
 
+        map.on('moveend', () => {
+          if (cancelled) return
+          onViewportChange?.({
+            center: map.getCenter().toArray() as [number, number],
+            zoom: map.getZoom(),
+          })
+        })
+
         map.on('load', () => {
           if (cancelled) return
           mapReadyRef.current = true
+          map.resize()
           // Source/layer added by the outputKey effect below
         })
       } catch (err) {
@@ -61,10 +76,10 @@ export default function OrthoMap({ outputKey }: OrthoMapProps) {
         mapReadyRef.current = false
       }
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []) // run once
 
   // ── Swap layer when outputKey changes ──────────────────────────────────────
-  const initialFitDoneRef = useRef(false)
   useEffect(() => {
     let cancelled = false
 
@@ -107,8 +122,15 @@ export default function OrthoMap({ outputKey }: OrthoMapProps) {
           maxzoom,
         })
         map.addLayer({ id: 'ortho-layer', type: 'raster', source: 'ortho' })
+        
+        boundsRef.current = bounds
         if (!initialFitDoneRef.current) {
-          map.fitBounds([bounds[0], bounds[1], bounds[2], bounds[3]], { padding: 20, animate: false })
+          map.resize()
+          setTimeout(() => {
+            if (!cancelled && mapRef.current) {
+              mapRef.current.fitBounds([bounds[0], bounds[1], bounds[2], bounds[3]], { padding: 20, animate: false })
+            }
+          }, 100)
           initialFitDoneRef.current = true
         }
 
@@ -127,8 +149,16 @@ export default function OrthoMap({ outputKey }: OrthoMapProps) {
     return () => { cancelled = true }
   }, [outputKey])
 
+  // ── Fit bounds when fitBoundsTrigger changes ────────────────────────────────
+  useEffect(() => {
+    if (fitBoundsTrigger && fitBoundsTrigger > 0 && mapRef.current && boundsRef.current) {
+      mapRef.current.resize()
+      mapRef.current.fitBounds(boundsRef.current, { padding: 20, animate: true, duration: 300 })
+    }
+  }, [fitBoundsTrigger])
+
   return (
-    <div className="relative w-full h-96 rounded-xl overflow-hidden border border-gray-200 bg-gray-100">
+    <div className={cn("relative w-full bg-gray-100", className || "h-96 rounded-xl border border-gray-200 overflow-hidden")}>
       {status === 'loading' && (
         <div className="absolute inset-0 flex items-center justify-center z-10 pointer-events-none">
           <p className="text-sm text-gray-500">Loading orthophoto…</p>

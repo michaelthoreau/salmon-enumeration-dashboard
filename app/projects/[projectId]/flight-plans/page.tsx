@@ -4,6 +4,8 @@ import { db } from '@/lib/db'
 import { projects, flightPlans } from '@/lib/schema'
 import { eq, desc } from 'drizzle-orm'
 import { getSession } from '@/lib/session'
+import { cn } from '@/lib/utils'
+import { buttonVariants } from '@/components/ui/button'
 import CreateFlightPlanForm from './create-flight-plan-form'
 import { DeleteFlightPlanButton, RestoreFlightPlanButton, EditFlightPlanButton } from './flight-plan-actions'
 
@@ -57,7 +59,7 @@ export default async function FlightPlansPage({ params }: PageProps) {
                     <td className="px-6 py-3">
                       <Link
                         href={`/projects/${projectId}/flight-plans/${plan.id}/flights`}
-                        className="font-medium text-blue-600 hover:underline"
+                        className={cn(buttonVariants({ variant: 'outline', size: 'sm' }))}
                       >
                         {plan.name}
                       </Link>

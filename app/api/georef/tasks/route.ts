@@ -93,8 +93,6 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     )
   }
 
-  console.log(`[georef POST] taskId=${taskId} images=${images.length} workerUrl=${workerUrl} tokenLen=${workerToken.length}`)
-
   // Use our DB task ID also as the Modal task_id for idempotency
   const taskId = randomUUID()
   const outputPrefix = `${projectId}/${flightPlanId}/${flightId}/georef`
@@ -102,6 +100,8 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     key: o.key,
     filename: o.key.split('/').pop() ?? o.key,
   }))
+
+  console.log(`[georef POST] taskId=${taskId} images=${images.length} workerUrl=${workerUrl} tokenLen=${workerToken.length}`)
 
   // Kick off Modal worker (fire-and-forget — it reports status via /status/:task_id)
   try {
