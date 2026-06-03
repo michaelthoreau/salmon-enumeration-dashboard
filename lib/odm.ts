@@ -74,3 +74,17 @@ export async function odmDownloadAllZip(odmUuid: string): Promise<ArrayBuffer> {
   return res.arrayBuffer()
 }
 
+/** Cancel a running or queued task in NodeODM. */
+export async function odmCancelTask(odmUuid: string): Promise<void> {
+  const res = await fetch(odmUrl(`/task/${odmUuid}/cancel`), {
+    method: 'POST',
+    cache: 'no-store',
+    signal: AbortSignal.timeout(10_000),
+  })
+  if (!res.ok) {
+    const text = await res.text()
+    throw new Error(`ODM cancel failed (${res.status}): ${text}`)
+  }
+}
+
+

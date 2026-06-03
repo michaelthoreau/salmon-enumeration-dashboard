@@ -70,6 +70,8 @@ export const files = sqliteTable('files', {
   split: text('split').$type<Split>(), // train | val | test; null = unallocated
   uploadedAt: integer('uploaded_at', { mode: 'timestamp' }).notNull(),
   uploadedBy: text('uploaded_by').notNull(), // userId
+  imageWidth: integer('image_width'),   // cached pixel dimensions (null = unknown)
+  imageHeight: integer('image_height'),
 })
 
 // ─── File Points ──────────────────────────────────────────────────────────────

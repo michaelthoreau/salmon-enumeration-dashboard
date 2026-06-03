@@ -105,8 +105,13 @@ export async function createPresignedGetUrl(
     new GetObjectCommand({
       Bucket: getBucket(),
       Key: key,
-      ...(disposition === 'attachment' && filename
-        ? { ResponseContentDisposition: `attachment; filename="${filename}"` }
+      ...(disposition
+        ? {
+            ResponseContentDisposition:
+              disposition === 'attachment' && filename
+                ? `attachment; filename="${filename}"`
+                : 'inline',
+          }
         : {}),
     }),
     { expiresIn: expiresInSeconds },

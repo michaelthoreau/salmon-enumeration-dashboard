@@ -24,6 +24,8 @@ export default async function DatasetPage({ params }: PageProps) {
       etag: files.etag,
       split: files.split,
       uploadedAt: files.uploadedAt,
+      imageWidth: files.imageWidth,
+      imageHeight: files.imageHeight,
       flightId: flights.id,
       flightTimestamp: flights.timestamp,
       flightPlanName: flightPlans.name,
@@ -37,6 +39,8 @@ export default async function DatasetPage({ params }: PageProps) {
   const entries = rows.map(r => ({
     ...r,
     split: r.split ?? null,
+    imageWidth: r.imageWidth ?? null,
+    imageHeight: r.imageHeight ?? null,
     flightTimestampIso: r.flightTimestamp.toISOString(),
     uploadedAtIso: r.uploadedAt.toISOString(),
   }))

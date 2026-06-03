@@ -42,7 +42,7 @@ from pydantic import BaseModel
 # ── Container image ────────────────────────────────────────────────────────────
 
 image = (
-    modal.Image.debian_slim()
+    modal.Image.debian_slim(python_version="3.11")
     .pip_install("fastapi[standard]", "boto3", "httpx")
 )
 

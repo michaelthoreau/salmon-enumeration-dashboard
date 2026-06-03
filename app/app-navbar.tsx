@@ -8,7 +8,7 @@ export async function AppNavBar() {
 
   return (
     <header className="bg-white border-b border-gray-200">
-      <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 h-14 flex items-center justify-between">
+      <div className="w-full px-6 h-14 flex items-center justify-between">
         <Link href="/" className="shrink-0">
           <Image
             src="/kiwi_logo.webp"

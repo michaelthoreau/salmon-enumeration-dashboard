@@ -2,6 +2,9 @@ import { NextRequest, NextResponse } from 'next/server'
 import sharp from 'sharp'
 import { getSession } from '@/lib/session'
 import { createPresignedGetUrl } from '@/lib/s3'
+import { db } from '@/lib/db'
+import { files } from '@/lib/schema'
+import { eq } from 'drizzle-orm'
 
 const IMAGE_EXTS = new Set(['jpg', 'jpeg', 'png', 'webp', 'gif', 'tiff', 'tif'])
 
@@ -66,10 +69,20 @@ export async function GET(request: NextRequest) {
 
   const buffer = Buffer.from(await upstream.arrayBuffer())
 
-  // ?meta=1 → return image dimensions as JSON (no full decode needed)
+  // ?meta=1 → return image dimensions as JSON and cache in DB
   if (meta) {
     const { width, height } = await sharp(buffer).metadata()
-    return NextResponse.json({ width: width ?? 0, height: height ?? 0 }, {
+    const w = width ?? 0
+    const h = height ?? 0
+    // Persist dimensions if not already stored (fire-and-forget)
+    if (w > 0 && h > 0) {
+      db.update(files)
+        .set({ imageWidth: w, imageHeight: h })
+        .where(eq(files.key, key))
+        .run()
+        .catch(() => {}) // non-fatal
+    }
+    return NextResponse.json({ width: w, height: h }, {
       headers: { 'Cache-Control': etag ? 'public, max-age=31536000, immutable' : 'public, max-age=3600' },
     })
   }

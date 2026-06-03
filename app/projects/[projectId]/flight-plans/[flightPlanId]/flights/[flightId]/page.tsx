@@ -1,16 +1,10 @@
 import { notFound } from 'next/navigation'
-import Link from 'next/link'
 import { db } from '@/lib/db'
-import { flights, flightPlans, projects, files as filesTable, odmTasks, georefTasks } from '@/lib/schema'
+import { flights, flightPlans, projects, files as filesTable, odmTasks } from '@/lib/schema'
 import { eq, desc } from 'drizzle-orm'
 import { getSession } from '@/lib/session'
-import { listFlightObjects } from '@/lib/s3'
-import FlightUploader from './flight-uploader'
-import FileLightbox from './file-lightbox'
-import EditFlightButton from './edit-flight-button'
-import OdmPanel from './odm-panel'
-import GeorefPanel from './georef-panel'
-import OrthoMap from './ortho-map'
+import { listFlightObjects, createPresignedGetUrl } from '@/lib/s3'
+import FlightSplitView from './flight-split-view'
 
 interface PageProps {
   params: Promise<{ projectId: string; flightPlanId: string; flightId: string }>
@@ -59,7 +53,8 @@ export default async function FlightDetailPage({ params }: PageProps) {
   }
 
   const dbFiles = await db.select().from(filesTable).where(eq(filesTable.flightId, flightId))
-  const splitByKey = new Map(dbFiles.map(f => [f.key, f.split ?? null]))
+  const splitByKeyMap = new Map(dbFiles.map(f => [f.key, f.split ?? null]))
+  const splitByKey = Object.fromEntries(dbFiles.map(f => [f.key, f.split ?? null]))
 
   // Most recent ODM task for this flight (if any)
   const [latestOdmTask] = await db
@@ -69,116 +64,55 @@ export default async function FlightDetailPage({ params }: PageProps) {
     .orderBy(desc(odmTasks.createdAt))
     .limit(1)
 
-  // Most recent georef task for this flight (if any)
-  const [latestGeorefTask] = await db
-    .select()
-    .from(georefTasks)
-    .where(eq(georefTasks.flightId, flightId))
-    .orderBy(desc(georefTasks.createdAt))
-    .limit(1)
+  // Filter out any generated ODM outputs from the main file list
+  const displayObjects = objects.filter((o) => !o.key.includes('/odm/'))
+
+  // Find processed outputs in S3 list, fallback to db records if S3 fails
+  const geotiffKey = objects.find((o) => o.key.includes('/odm/') && (o.key.endsWith('.tif') || o.key.endsWith('.tiff')))?.key || latestOdmTask?.outputKey
+  const reportPdfKey = objects.find((o) => o.key.includes('/odm/') && o.key.endsWith('.pdf'))?.key || latestOdmTask?.reportKey
+
+  let geotiffDownloadUrl = ''
+  let reportPdfViewUrl = ''
+
+  if (geotiffKey) {
+    try {
+      geotiffDownloadUrl = await createPresignedGetUrl(geotiffKey, 3600, 'attachment')
+    } catch (err) {
+      console.error('Failed to presign geotiff:', err)
+    }
+  }
+  if (reportPdfKey) {
+    try {
+      reportPdfViewUrl = await createPresignedGetUrl(reportPdfKey, 3600, 'inline')
+    } catch (err) {
+      console.error('Failed to presign report pdf:', err)
+    }
+  }
 
   return (
-    <div className="space-y-8">
-      <div>
-        <Link href={`/projects/${projectId}/flight-plans/${flightPlanId}/flights`} className="text-sm text-gray-500 hover:text-gray-900 flex items-center gap-1 mb-4">← {flightPlan.name}</Link>
-        <div className="flex items-start justify-between gap-4">
-          <div>
-            <h1 className="text-2xl font-semibold text-gray-900">
-              {formatInTz(flight.timestamp, project.timezone)}
-            </h1>
-            <p className="text-xs text-gray-400 mt-1 font-mono">{flight.timestamp.toISOString()} · {project.timezone}</p>
-            {flight.notes && <p className="text-gray-500 mt-1">{flight.notes}</p>}
-          </div>
-          {canWrite && (
-            <EditFlightButton
-              flightId={flightId}
-              projectId={projectId}
-              flightPlanId={flightPlanId}
-              timezone={project.timezone}
-              localTimestamp={toLocalInputValue(flight.timestamp, project.timezone)}
-              currentNotes={flight.notes}
-            />
-          )}
-        </div>
-      </div>
-
-      {canWrite && (
-        <section>
-          <FlightUploader flightId={flightId} defaultOpen={objects.length === 0} />
-        </section>
-      )}
-
-      {latestOdmTask?.status === 'completed' && latestOdmTask.outputKey && (
-        <OrthoMap outputKey={latestOdmTask.outputKey} />
-      )}
-
-      {canWrite && (
-        <OdmPanel
-          flightId={flightId}
-          projectId={projectId}
-          flightPlanId={flightPlanId}
-          initialTask={
-            latestOdmTask
-              ? {
-                  taskId: latestOdmTask.id,
-                  odmUuid: latestOdmTask.odmUuid,
-                  status: latestOdmTask.status,
-                  outputKey: latestOdmTask.outputKey ?? null,
-                  reportKey: latestOdmTask.reportKey ?? null,
-                }
-              : null
-          }
-        />
-      )}
-
-      {canWrite && (
-        <GeorefPanel
-          flightId={flightId}
-          projectId={projectId}
-          flightPlanId={flightPlanId}
-          initialTask={
-            latestGeorefTask
-              ? {
-                  taskId: latestGeorefTask.id,
-                  status: latestGeorefTask.status,
-                  outputKey: latestGeorefTask.outputKey ?? null,
-                  error: latestGeorefTask.error ?? null,
-                  totalImages: latestGeorefTask.totalImages ?? null,
-                }
-              : null
-          }
-        />
-      )}
-
-      <section>
-        <h2 className="text-lg font-semibold text-gray-900 mb-1">
-          Files in S3{' '}
-          <span className="text-sm font-normal text-gray-500">
-            ({objects.length} file{objects.length !== 1 ? 's' : ''})
-          </span>
-        </h2>
-        <p className="text-xs text-gray-400 mb-4 font-mono">
-          {projectId}/{flightPlanId}/{flightId}/
-        </p>
-
-        <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-          {objects.length === 0 ? (
-            <p className="text-sm text-gray-500 p-6">No files uploaded yet.</p>
-          ) : (
-            <FileLightbox
-              files={objects.map((o) => ({
-                key: o.key,
-                size: o.size,
-                lastModifiedIso: o.lastModified.toISOString(),
-                etag: o.etag,
-                split: splitByKey.get(o.key) ?? null,
-              }))}
-              timezone={project.timezone}
-              canWrite={canWrite}
-            />
-          )}
-        </div>
-      </section>
-    </div>
+    <FlightSplitView
+      projectId={projectId}
+      flightPlanId={flightPlanId}
+      flightId={flightId}
+      flight={flight}
+      flightPlan={flightPlan}
+      project={project}
+      displayObjects={displayObjects.map((o) => ({
+        key: o.key,
+        size: o.size,
+        lastModifiedIso: o.lastModified.toISOString(),
+        etag: o.etag,
+        split: splitByKey[o.key] ?? null,
+      }))}
+      geotiffKey={geotiffKey ?? null}
+      reportPdfKey={reportPdfKey ?? null}
+      geotiffDownloadUrl={geotiffDownloadUrl}
+      reportPdfViewUrl={reportPdfViewUrl}
+      latestOdmTask={latestOdmTask ?? null}
+      splitByKey={splitByKey}
+      canWrite={canWrite}
+      formattedTime={formatInTz(flight.timestamp, project.timezone)}
+      localTimestamp={toLocalInputValue(flight.timestamp, project.timezone)}
+    />
   )
 }

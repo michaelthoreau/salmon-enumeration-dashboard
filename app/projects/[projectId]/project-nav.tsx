@@ -40,7 +40,7 @@ export default function ProjectNav({ projectId, projectName, projectDescription,
 
   return (
     <div className="bg-white border-b border-gray-200">
-      <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 flex items-center h-11 gap-3">
+      <div className="w-full px-6 flex items-center h-11 gap-3">
 
         {/* Project breadcrumb dropdown */}
         <div className="relative" ref={dropdownRef}>
