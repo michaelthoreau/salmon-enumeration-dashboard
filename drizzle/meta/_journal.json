@@ -29,6 +29,13 @@
       "when": 1780031510445,
       "tag": "0003_cynical_katie_power",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1780289776772,
+      "tag": "0004_georef_tasks",
+      "breakpoints": true
     }
   ]
 }

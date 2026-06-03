@@ -1,7 +1,7 @@
 import { notFound } from 'next/navigation'
 import Link from 'next/link'
 import { db } from '@/lib/db'
-import { flights, flightPlans, projects, files as filesTable, odmTasks } from '@/lib/schema'
+import { flights, flightPlans, projects, files as filesTable, odmTasks, georefTasks } from '@/lib/schema'
 import { eq, desc } from 'drizzle-orm'
 import { getSession } from '@/lib/session'
 import { listFlightObjects } from '@/lib/s3'
@@ -9,6 +9,7 @@ import FlightUploader from './flight-uploader'
 import FileLightbox from './file-lightbox'
 import EditFlightButton from './edit-flight-button'
 import OdmPanel from './odm-panel'
+import GeorefPanel from './georef-panel'
 import OrthoMap from './ortho-map'
 
 interface PageProps {
@@ -68,6 +69,14 @@ export default async function FlightDetailPage({ params }: PageProps) {
     .orderBy(desc(odmTasks.createdAt))
     .limit(1)
 
+  // Most recent georef task for this flight (if any)
+  const [latestGeorefTask] = await db
+    .select()
+    .from(georefTasks)
+    .where(eq(georefTasks.flightId, flightId))
+    .orderBy(desc(georefTasks.createdAt))
+    .limit(1)
+
   return (
     <div className="space-y-8">
       <div>
@@ -116,6 +125,25 @@ export default async function FlightDetailPage({ params }: PageProps) {
                   status: latestOdmTask.status,
                   outputKey: latestOdmTask.outputKey ?? null,
                   reportKey: latestOdmTask.reportKey ?? null,
+                }
+              : null
+          }
+        />
+      )}
+
+      {canWrite && (
+        <GeorefPanel
+          flightId={flightId}
+          projectId={projectId}
+          flightPlanId={flightPlanId}
+          initialTask={
+            latestGeorefTask
+              ? {
+                  taskId: latestGeorefTask.id,
+                  status: latestGeorefTask.status,
+                  outputKey: latestGeorefTask.outputKey ?? null,
+                  error: latestGeorefTask.error ?? null,
+                  totalImages: latestGeorefTask.totalImages ?? null,
                 }
               : null
           }

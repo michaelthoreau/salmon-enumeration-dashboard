@@ -40,3 +40,9 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 .env*.local
+*__pycache__*
+*.JPG
+AGENTS.md
+CLAUDE.md
+data.db
+test-results/
