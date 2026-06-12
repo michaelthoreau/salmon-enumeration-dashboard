@@ -87,7 +87,38 @@ export async function restoreFlightPlan(_prev: State, formData: FormData): Promi
   if (!id) return { error: 'Flight plan ID is required.' }
 
   await db.update(flightPlans).set({ deletedAt: null }).where(eq(flightPlans.id, id))
-
   revalidatePath(`/projects/${projectId}/flight-plans`)
   return { success: 'Flight plan restored.' }
+}
+
+export async function updateFlightPlanLocation(
+  flightPlanId: string,
+  locationJson: string | null
+): Promise<{ error?: string; success?: string }> {
+  const session = await getSession()
+  if (!session || session.role === 'read') return { error: 'Unauthorized.' }
+
+  await db
+    .update(flightPlans)
+    .set({ location: locationJson })
+    .where(eq(flightPlans.id, flightPlanId))
+
+  revalidatePath(`/projects`)
+  return { success: 'Flight plan location updated.' }
+}
+
+export async function toggleFlightPlanDashboardVisibility(
+  flightPlanId: string,
+  showOnDashboard: boolean
+): Promise<{ error?: string; success?: string }> {
+  const session = await getSession()
+  if (!session || session.role !== 'admin') return { error: 'Unauthorized.' }
+
+  await db
+    .update(flightPlans)
+    .set({ showOnDashboard })
+    .where(eq(flightPlans.id, flightPlanId))
+
+  revalidatePath(`/projects`)
+  return { success: 'Dashboard visibility updated.' }
 }

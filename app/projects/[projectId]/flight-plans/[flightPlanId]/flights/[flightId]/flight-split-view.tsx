@@ -12,6 +12,7 @@ import EditFlightButton from './edit-flight-button'
 import OdmPanel from './odm-panel'
 import OrthoMap from './ortho-map'
 import { assignFileSplit, syncFlightFiles } from '@/app/actions/files'
+import { updateFlightPlanLocation } from '@/app/actions/flight-plans'
 import type { Split, flights, flightPlans, projects, odmTasks } from '@/lib/schema'
 import type { InferSelectModel } from 'drizzle-orm'
 
@@ -389,6 +390,12 @@ export default function FlightSplitView({
                 outputKey={geotiffKey}
                 fitBoundsTrigger={zoomTrigger}
                 className="h-full w-full rounded-none border-none"
+                editable={canWrite}
+                flightPlanId={flightPlanId}
+                initialLocation={flightPlan.location}
+                onSaveLocation={async (locationJson) => {
+                  await updateFlightPlanLocation(flightPlanId, locationJson)
+                }}
               />
             </div>
           )}

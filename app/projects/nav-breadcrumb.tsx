@@ -11,17 +11,26 @@ function prettify(slug: string): string {
 const SEGMENTS = [
   { pattern: /^\/projects$/, crumbs: () => [{ label: 'Projects', href: '/projects' }] },
   {
+    pattern: /^\/projects\/([^/]+)$/,
+    crumbs: (m: RegExpMatchArray) => [
+      { label: 'Projects', href: '/projects' },
+      { label: prettify(m[1]), href: `/projects/${m[1]}` },
+    ],
+  },
+  {
     pattern: /^\/projects\/([^/]+)\/flight-plans$/,
     crumbs: (m: RegExpMatchArray) => [
       { label: 'Projects', href: '/projects' },
-      { label: prettify(m[1]), href: `/projects/${m[1]}/flight-plans` },
+      { label: prettify(m[1]), href: `/projects/${m[1]}` },
+      { label: 'Flight Plans', href: null },
     ],
   },
   {
     pattern: /^\/projects\/([^/]+)\/flight-plans\/([^/]+)\/flights$/,
     crumbs: (m: RegExpMatchArray) => [
       { label: 'Projects', href: '/projects' },
-      { label: prettify(m[1]), href: `/projects/${m[1]}/flight-plans` },
+      { label: prettify(m[1]), href: `/projects/${m[1]}` },
+      { label: 'Flight Plans', href: `/projects/${m[1]}/flight-plans` },
       { label: prettify(m[2]), href: `/projects/${m[1]}/flight-plans/${m[2]}/flights` },
     ],
   },
@@ -29,7 +38,7 @@ const SEGMENTS = [
     pattern: /^\/projects\/([^/]+)\/dataset$/,
     crumbs: (m: RegExpMatchArray) => [
       { label: 'Projects', href: '/projects' },
-      { label: prettify(m[1]), href: `/projects/${m[1]}/flight-plans` },
+      { label: prettify(m[1]), href: `/projects/${m[1]}` },
       { label: 'Dataset', href: null },
     ],
   },
@@ -37,7 +46,7 @@ const SEGMENTS = [
     pattern: /^\/projects\/([^/]+)\/labeling$/,
     crumbs: (m: RegExpMatchArray) => [
       { label: 'Projects', href: '/projects' },
-      { label: prettify(m[1]), href: `/projects/${m[1]}/flight-plans` },
+      { label: prettify(m[1]), href: `/projects/${m[1]}` },
       { label: 'Labeling', href: null },
     ],
   },
@@ -45,7 +54,7 @@ const SEGMENTS = [
     pattern: /^\/projects\/([^/]+)\/labeling\/([^/]+)$/,
     crumbs: (m: RegExpMatchArray) => [
       { label: 'Projects', href: '/projects' },
-      { label: prettify(m[1]), href: `/projects/${m[1]}/flight-plans` },
+      { label: prettify(m[1]), href: `/projects/${m[1]}` },
       { label: 'Labeling', href: `/projects/${m[1]}/labeling` },
       { label: 'Task', href: null },
     ],
@@ -54,7 +63,8 @@ const SEGMENTS = [
     pattern: /^\/projects\/([^/]+)\/flight-plans\/([^/]+)\/flights\/([^/]+)$/,
     crumbs: (m: RegExpMatchArray) => [
       { label: 'Projects', href: '/projects' },
-      { label: prettify(m[1]), href: `/projects/${m[1]}/flight-plans` },
+      { label: prettify(m[1]), href: `/projects/${m[1]}` },
+      { label: 'Flight Plans', href: `/projects/${m[1]}/flight-plans` },
       { label: prettify(m[2]), href: `/projects/${m[1]}/flight-plans/${m[2]}/flights` },
       { label: 'Flight', href: null },
     ],
