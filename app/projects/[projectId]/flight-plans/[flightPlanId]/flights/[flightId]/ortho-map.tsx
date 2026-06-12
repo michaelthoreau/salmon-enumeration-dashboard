@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { cn } from '@/lib/utils'
-import { MapPin, Map, Check, X, RotateCcw, Trash2, Edit } from 'lucide-react'
+import { MapPin, Map, Check, X, RotateCcw, Trash2, Edit, ChevronDown } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import 'maplibre-gl/dist/maplibre-gl.css'
 
@@ -107,6 +107,7 @@ export default function OrthoMap({
   const [errorMsg, setErrorMsg] = useState('')
 
   // ── Drawing states ─────────────────────────────────────────────────────────
+  const [panelOpen, setPanelOpen] = useState(false)
   const [isEditing, setIsEditing] = useState<'pin' | 'polygon' | null>(null)
   const [pin, setPin] = useState<[number, number] | null>(null)
   const [points, setPoints] = useState<[number, number][]>([])
@@ -178,6 +179,7 @@ export default function OrthoMap({
             id: 'location-fill',
             type: 'fill',
             source: 'location-source',
+            layout: { visibility: 'none' },
             paint: {
               'fill-color': '#3b82f6',
               'fill-opacity': 0.2,
@@ -189,6 +191,7 @@ export default function OrthoMap({
             id: 'location-line',
             type: 'line',
             source: 'location-source',
+            layout: { visibility: 'none' },
             paint: {
               'line-color': '#2563eb',
               'line-width': 2.5,
@@ -200,6 +203,7 @@ export default function OrthoMap({
             id: 'location-point',
             type: 'circle',
             source: 'location-source',
+            layout: { visibility: 'none' },
             paint: {
               'circle-color': '#2563eb',
               'circle-radius': 6,
@@ -372,6 +376,23 @@ export default function OrthoMap({
     }
   }, [pin, points, status])
 
+  // Show/hide location layer on map based on panelOpen/isEditing state
+  useEffect(() => {
+    if (!mapRef.current || !mapReadyRef.current) return
+    const map = mapRef.current
+    const visibility = (panelOpen || isEditing !== null) ? 'visible' : 'none'
+
+    if (map.getLayer('location-fill')) {
+      map.setLayoutProperty('location-fill', 'visibility', visibility)
+    }
+    if (map.getLayer('location-line')) {
+      map.setLayoutProperty('location-line', 'visibility', visibility)
+    }
+    if (map.getLayer('location-point')) {
+      map.setLayoutProperty('location-point', 'visibility', visibility)
+    }
+  }, [panelOpen, isEditing, status])
+
   // ── Save/Cancel handlers ───────────────────────────────────────────────────
   async function handleSave() {
     if (!onSaveLocation) return
@@ -462,98 +483,121 @@ export default function OrthoMap({
 
       {/* ─── Draw Panel Overlay ─── */}
       {editable && status === 'ready' && (
-        <div className="absolute top-4 left-4 z-40 bg-white/95 backdrop-blur-sm px-4 py-3 rounded-2xl shadow-xl border border-gray-200/80 flex flex-col gap-3 min-w-[200px]">
-          {isEditing === null ? (
-            <div className="space-y-2.5">
-              <p className="text-xs font-semibold text-gray-700 select-none">
-                Flight Plan Location
-              </p>
-              <div className="flex flex-col gap-1.5">
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="w-full justify-start text-xs font-medium gap-2 h-8 hover:bg-gray-50"
-                  onClick={() => setIsEditing('pin')}
-                >
-                  <MapPin className="w-3.5 h-3.5 text-blue-500" />
-                  <span>Set Location Pin</span>
-                </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="w-full justify-start text-xs font-medium gap-2 h-8 hover:bg-gray-50"
-                  onClick={() => setIsEditing('polygon')}
-                >
-                  <Map className="w-3.5 h-3.5 text-indigo-500" />
-                  <span>Draw Location Area</span>
-                </Button>
-                {hasSavedLocation && (
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    className="w-full justify-start text-xs font-medium gap-2 h-8 text-red-600 hover:text-red-700 hover:bg-red-50"
-                    onClick={handleClearSaved}
-                    disabled={isSaving}
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                    <span>Clear Location</span>
-                  </Button>
-                )}
-              </div>
-            </div>
+        <div className="absolute top-4 left-4 z-40 pointer-events-auto">
+          {!panelOpen && isEditing === null ? (
+            <Button
+              size="sm"
+              variant="outline"
+              className="bg-white/95 border border-gray-200/80 hover:bg-gray-50 text-xs font-semibold gap-2 h-9 rounded-xl shadow-md"
+              onClick={() => setPanelOpen(true)}
+            >
+              <MapPin className="w-4 h-4 text-blue-600" />
+              <span>Flight Plan Location</span>
+              <ChevronDown className="w-3.5 h-3.5 text-gray-500 ml-0.5" />
+            </Button>
           ) : (
-            <div className="space-y-3">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-bold text-gray-800 animate-pulse select-none flex items-center gap-1.5">
-                  <span className="w-1.5 h-1.5 rounded-full bg-blue-600" />
-                  {isEditing === 'pin' ? 'Dropping Pin...' : 'Drawing Area...'}
-                </span>
-                <span className="text-[10px] text-gray-400 font-medium">Click on map</span>
-              </div>
-
-              {isEditing === 'polygon' && (
-                <div className="text-[10px] text-gray-500 bg-gray-50 p-2 rounded-lg border border-gray-100 flex justify-between items-center select-none font-medium">
-                  <span>Points: {points.length}</span>
-                  {points.length > 0 && (
-                    <Button
-                      size="icon"
-                      variant="ghost"
-                      className="w-5 h-5 hover:bg-gray-200 rounded-md"
-                      onClick={() => setPoints((prev) => prev.slice(0, -1))}
-                      title="Undo last point"
+            <div className="bg-white/95 backdrop-blur-sm px-4 py-3 rounded-2xl shadow-xl border border-gray-200/80 flex flex-col gap-3 min-w-[220px]">
+              {isEditing === null ? (
+                <div className="space-y-2.5">
+                  <div className="flex items-center justify-between pb-1.5 border-b border-gray-100">
+                    <p className="text-xs font-semibold text-gray-700 select-none">
+                      Flight Plan Location
+                    </p>
+                    <button
+                      onClick={() => setPanelOpen(false)}
+                      className="p-1 hover:bg-gray-100 rounded-md transition-colors text-gray-400 hover:text-gray-600"
                     >
-                      <RotateCcw className="w-3 h-3 text-gray-600" />
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                  <div className="flex flex-col gap-1.5">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="w-full justify-start text-xs font-medium gap-2 h-8 hover:bg-gray-50"
+                      onClick={() => setIsEditing('pin')}
+                    >
+                      <MapPin className="w-3.5 h-3.5 text-blue-500" />
+                      <span>Set Location Pin</span>
                     </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="w-full justify-start text-xs font-medium gap-2 h-8 hover:bg-gray-50"
+                      onClick={() => setIsEditing('polygon')}
+                    >
+                      <Map className="w-3.5 h-3.5 text-indigo-500" />
+                      <span>Draw Location Area</span>
+                    </Button>
+                    {hasSavedLocation && (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="w-full justify-start text-xs font-medium gap-2 h-8 text-red-600 hover:text-red-700 hover:bg-red-50"
+                        onClick={handleClearSaved}
+                        disabled={isSaving}
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                        <span>Clear Location</span>
+                      </Button>
+                    )}
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-gray-800 animate-pulse select-none flex items-center gap-1.5">
+                      <span className="w-1.5 h-1.5 rounded-full bg-blue-600" />
+                      {isEditing === 'pin' ? 'Dropping Pin...' : 'Drawing Area...'}
+                    </span>
+                    <span className="text-[10px] text-gray-400 font-medium">Click on map</span>
+                  </div>
+
+                  {isEditing === 'polygon' && (
+                    <div className="text-[10px] text-gray-500 bg-gray-50 p-2 rounded-lg border border-gray-100 flex justify-between items-center select-none font-medium">
+                      <span>Points: {points.length}</span>
+                      {points.length > 0 && (
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          className="w-5 h-5 hover:bg-gray-200 rounded-md"
+                          onClick={() => setPoints((prev) => prev.slice(0, -1))}
+                          title="Undo last point"
+                        >
+                          <RotateCcw className="w-3 h-3 text-gray-600" />
+                        </Button>
+                      )}
+                    </div>
                   )}
+
+                  <div className="flex gap-2 border-t border-gray-100 pt-3">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="flex-1 text-xs h-8 border-gray-200/80 hover:bg-gray-50"
+                      onClick={handleCancel}
+                      disabled={isSaving}
+                    >
+                      <X className="w-3.5 h-3.5 mr-1 text-gray-500" />
+                      Cancel
+                    </Button>
+                    <Button
+                      size="sm"
+                      className={cn(
+                        'flex-1 text-xs h-8 text-white font-semibold',
+                        canSave
+                          ? 'bg-blue-600 hover:bg-blue-700 shadow-sm shadow-blue-200'
+                          : 'bg-gray-300 cursor-not-allowed hover:bg-gray-300'
+                      )}
+                      onClick={handleSave}
+                      disabled={!canSave || isSaving}
+                    >
+                      <Check className="w-3.5 h-3.5 mr-1" />
+                      {isSaving ? 'Saving...' : 'Save'}
+                    </Button>
+                  </div>
                 </div>
               )}
-
-              <div className="flex gap-2 border-t border-gray-100 pt-3">
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="flex-1 text-xs h-8 border-gray-200/80 hover:bg-gray-50"
-                  onClick={handleCancel}
-                  disabled={isSaving}
-                >
-                  <X className="w-3.5 h-3.5 mr-1 text-gray-500" />
-                  Cancel
-                </Button>
-                <Button
-                  size="sm"
-                  className={cn(
-                    'flex-1 text-xs h-8 text-white font-semibold',
-                    canSave
-                      ? 'bg-blue-600 hover:bg-blue-700 shadow-sm shadow-blue-200'
-                      : 'bg-gray-300 cursor-not-allowed hover:bg-gray-300'
-                  )}
-                  onClick={handleSave}
-                  disabled={!canSave || isSaving}
-                >
-                  <Check className="w-3.5 h-3.5 mr-1" />
-                  {isSaving ? 'Saving...' : 'Save'}
-                </Button>
-              </div>
             </div>
           )}
         </div>
