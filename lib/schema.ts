@@ -126,6 +126,7 @@ export const odmTasks = sqliteTable('odm_tasks', {
   createdBy: text('created_by').notNull(), // userId
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
   completedAt: integer('completed_at', { mode: 'timestamp' }),
+  bounds: text('bounds'),
 })
 
 // ─── Georef Processing Tasks ──────────────────────────────────────────────────
@@ -142,6 +143,7 @@ export const georefTasks = sqliteTable('georef_tasks', {
   createdBy: text('created_by').notNull(), // userId
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
   completedAt: integer('completed_at', { mode: 'timestamp' }),
+  bounds: text('bounds'),
 })
 
 // ─── API Keys ──────────────────────────────────────────────────────────────────
