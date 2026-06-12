@@ -29,7 +29,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Flight not found' }, { status: 404 })
   }
 
-  const { etag } = await headObject(key)
+  const { etag, contentLength } = await headObject(key)
 
   await db
     .insert(files)
@@ -38,12 +38,13 @@ export async function POST(request: NextRequest) {
       flightId,
       key,
       etag,
+      size: contentLength,
       uploadedAt: new Date(),
       uploadedBy: session.userId,
     })
     .onConflictDoUpdate({
       target: files.key,
-      set: { etag, uploadedAt: new Date(), uploadedBy: session.userId },
+      set: { etag, size: contentLength, uploadedAt: new Date(), uploadedBy: session.userId },
     })
 
   return NextResponse.json({ ok: true, etag })

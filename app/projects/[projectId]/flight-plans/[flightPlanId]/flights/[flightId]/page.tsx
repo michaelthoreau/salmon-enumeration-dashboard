@@ -44,16 +44,30 @@ export default async function FlightDetailPage({ params }: PageProps) {
   const [project] = await db.select().from(projects).where(eq(projects.id, projectId))
   if (!project || project.deletedAt) notFound()
 
-  // S3 is source of truth for file listing
-  let objects: { key: string; size: number; lastModified: Date; etag: string }[] = []
-  try {
-    objects = await listFlightObjects(projectId, flightPlanId, flightId)
-  } catch {
-    // S3 unavailable — show empty state, don't crash
+  // DB is the source of truth for file listing
+  const dbFiles = await db.select().from(filesTable).where(eq(filesTable.flightId, flightId))
+
+  // If any file is missing its size (e.g. legacy files), get file sizes from S3
+  let s3Objects: { key: string; size: number; lastModified: Date; etag: string }[] = []
+  if (dbFiles.some((f) => f.size === null)) {
+    try {
+      s3Objects = await listFlightObjects(projectId, flightPlanId, flightId)
+      
+      // Update missing sizes in DB asynchronously/synchronously
+      for (const file of dbFiles) {
+        if (file.size === null) {
+          const matched = s3Objects.find((o) => o.key === file.key)
+          if (matched) {
+            file.size = matched.size
+            await db.update(filesTable).set({ size: matched.size }).where(eq(filesTable.id, file.id))
+          }
+        }
+      }
+    } catch (err) {
+      console.error('Failed to list S3 objects to recover missing file sizes:', err)
+    }
   }
 
-  const dbFiles = await db.select().from(filesTable).where(eq(filesTable.flightId, flightId))
-  const splitByKeyMap = new Map(dbFiles.map(f => [f.key, f.split ?? null]))
   const splitByKey = Object.fromEntries(dbFiles.map(f => [f.key, f.split ?? null]))
 
   // Most recent ODM task for this flight (if any)
@@ -65,11 +79,11 @@ export default async function FlightDetailPage({ params }: PageProps) {
     .limit(1)
 
   // Filter out any generated ODM outputs from the main file list
-  const displayObjects = objects.filter((o) => !o.key.includes('/odm/'))
+  const displayObjects = dbFiles.filter((o) => !o.key.includes('/odm/'))
 
   // Find processed outputs in S3 list, fallback to db records if S3 fails
-  const geotiffKey = objects.find((o) => o.key.includes('/odm/') && (o.key.endsWith('.tif') || o.key.endsWith('.tiff')))?.key || latestOdmTask?.outputKey
-  const reportPdfKey = objects.find((o) => o.key.includes('/odm/') && o.key.endsWith('.pdf'))?.key || latestOdmTask?.reportKey
+  const geotiffKey = s3Objects.find((o) => o.key.includes('/odm/') && (o.key.endsWith('.tif') || o.key.endsWith('.tiff')))?.key || latestOdmTask?.outputKey
+  const reportPdfKey = s3Objects.find((o) => o.key.includes('/odm/') && o.key.endsWith('.pdf'))?.key || latestOdmTask?.reportKey
 
   let geotiffDownloadUrl = ''
   let reportPdfViewUrl = ''
@@ -99,8 +113,8 @@ export default async function FlightDetailPage({ params }: PageProps) {
       project={project}
       displayObjects={displayObjects.map((o) => ({
         key: o.key,
-        size: o.size,
-        lastModifiedIso: o.lastModified.toISOString(),
+        size: o.size ?? 0,
+        lastModifiedIso: o.uploadedAt.toISOString(),
         etag: o.etag,
         split: splitByKey[o.key] ?? null,
       }))}

@@ -32,12 +32,13 @@ export async function assignFileSplit(
     const segments = key.split('/')
     const flightId = segments[2]
     if (!flightId) return { error: 'Could not derive flightId from key' }
-    const { etag } = await headObject(key)
+    const { etag, contentLength } = await headObject(key)
     await db.insert(files).values({
       id: randomUUID(),
       flightId,
       key,
       etag,
+      size: contentLength,
       split,
       uploadedAt: new Date(),
       uploadedBy: session.userId,

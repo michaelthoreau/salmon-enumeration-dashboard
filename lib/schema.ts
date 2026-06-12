@@ -72,6 +72,7 @@ export const files = sqliteTable('files', {
   uploadedBy: text('uploaded_by').notNull(), // userId
   imageWidth: integer('image_width'),   // cached pixel dimensions (null = unknown)
   imageHeight: integer('image_height'),
+  size: integer('size'),
 })
 
 // ─── File Points ──────────────────────────────────────────────────────────────
