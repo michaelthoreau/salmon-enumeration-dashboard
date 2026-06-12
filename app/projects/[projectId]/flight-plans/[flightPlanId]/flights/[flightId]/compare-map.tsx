@@ -45,6 +45,12 @@ export default function CompareMap({
   const [sliderPosition, setSliderPosition] = useState(50)
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading')
   const [errorMsg, setErrorMsg] = useState('')
+  const [showDiff, setShowDiff] = useState(false)
+  const [colormap, setColormap] = useState<'red-green' | 'red-blue' | 'grayscale'>('red-green')
+  const [threshold, setThreshold] = useState(15)
+  const [sensitivity, setSensitivity] = useState(180)
+
+  const maxDiff = 300 - sensitivity
 
   const isDraggingRef = useRef(false)
   const boundsRef = useRef<[number, number, number, number] | null>(null)
@@ -243,7 +249,13 @@ export default function CompareMap({
         }
 
         if (cancelled || !mapAfterRef.current) return
-        const tileUrl = `/api/tiles/{z}/{x}/{y}?key=${encodeURIComponent(flightB.outputKey)}`
+        
+        let tileUrl: string
+        if (showDiff && flightA) {
+          tileUrl = `/api/tiles/diff/{z}/{x}/{y}?key1=${encodeURIComponent(flightA.outputKey)}&key2=${encodeURIComponent(flightB.outputKey)}&colormap=${colormap}&threshold=${threshold}&maxDiff=${maxDiff}`
+        } else {
+          tileUrl = `/api/tiles/{z}/{x}/{y}?key=${encodeURIComponent(flightB.outputKey)}`
+        }
 
         map.addSource('ortho-after', {
           type: 'raster',
@@ -264,7 +276,7 @@ export default function CompareMap({
     applyLayerB()
     return () => { cancelled = true }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [flightBId])
+  }, [flightBId, flightAId, showDiff, colormap, threshold, maxDiff])
 
   // ── Slider dragging logic ──────────────────────────────────────────────────
   const startDragging = useCallback((e: React.MouseEvent) => {
@@ -371,9 +383,11 @@ export default function CompareMap({
 
       {/* Right Selector (Centered in the Right half - Fixed at 75%) */}
       <div
-        className="absolute top-4 left-3/4 -translate-x-1/2 z-40 bg-white/95 backdrop-blur-sm px-4 py-2 rounded-xl shadow-lg border border-gray-200/80 flex flex-col gap-0.5 items-center min-w-[160px] pointer-events-auto"
+        className="absolute top-4 left-3/4 -translate-x-1/2 z-40 bg-white/95 backdrop-blur-sm px-4 py-3 rounded-2xl shadow-xl border border-gray-200/80 flex flex-col gap-1 items-center min-w-[200px] pointer-events-auto"
       >
-        <span className="text-[9px] font-semibold text-amber-600 uppercase tracking-wider">After (Right)</span>
+        <span className="text-[9px] font-semibold text-amber-600 uppercase tracking-wider">
+          {showDiff && flightAId !== 'none' && flightBId !== 'none' ? 'Difference (R - L)' : 'After (Right)'}
+        </span>
         <div className="flex items-center gap-1.5 w-full mt-0.5">
           <select
             value={flightBId}
@@ -399,6 +413,76 @@ export default function CompareMap({
             <Maximize2 className="w-3.5 h-3.5" />
           </button>
         </div>
+
+        {flightAId !== 'none' && flightBId !== 'none' && (
+          <div className="flex flex-col gap-2.5 mt-2.5 pt-2.5 border-t border-gray-100 w-full animate-in fade-in slide-in-from-top-1 duration-150">
+            <div className="flex items-center gap-2 justify-center">
+              <input
+                type="checkbox"
+                id="diff-mode-toggle"
+                checked={showDiff}
+                onChange={(e) => setShowDiff(e.target.checked)}
+                className="w-3.5 h-3.5 rounded border-gray-300 text-amber-600 focus:ring-amber-500 cursor-pointer"
+              />
+              <label htmlFor="diff-mode-toggle" className="text-[10px] font-bold text-gray-700 cursor-pointer select-none">
+                Show Difference (R - L)
+              </label>
+            </div>
+
+            {showDiff && (
+              <div className="flex flex-col gap-2.5 border-t border-gray-100/50 pt-2.5 w-full">
+                {/* Colormap Selector */}
+                <div className="flex flex-col gap-0.5 w-full">
+                  <label htmlFor="diff-colormap" className="text-[8px] font-bold text-gray-400 uppercase tracking-wider">
+                    Colormap
+                  </label>
+                  <select
+                    id="diff-colormap"
+                    value={colormap}
+                    onChange={(e) => setColormap(e.target.value as any)}
+                    className="text-[10px] font-semibold text-gray-700 bg-gray-50 border border-gray-200 rounded-md px-2 py-0.5 focus:ring-1 focus:ring-amber-500 focus:outline-none cursor-pointer w-full"
+                  >
+                    <option value="red-green">Red / Green (Loss / Gain)</option>
+                    <option value="red-blue">Red / Blue (Loss / Gain)</option>
+                    <option value="grayscale">Grayscale Difference</option>
+                  </select>
+                </div>
+
+                {/* Noise Filter Slider */}
+                <div className="flex flex-col gap-0.5 w-full">
+                  <div className="flex justify-between text-[8px] font-bold text-gray-400 uppercase tracking-wider">
+                    <span>Noise Filter</span>
+                    <span className="text-gray-600 font-mono font-bold">{threshold}</span>
+                  </div>
+                  <input
+                    type="range"
+                    min="0"
+                    max="50"
+                    value={threshold}
+                    onChange={(e) => setThreshold(Number(e.target.value))}
+                    className="w-full h-1 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-amber-600"
+                  />
+                </div>
+
+                {/* Sensitivity Slider */}
+                <div className="flex flex-col gap-0.5 w-full">
+                  <div className="flex justify-between text-[8px] font-bold text-gray-400 uppercase tracking-wider">
+                    <span>Sensitivity</span>
+                    <span className="text-gray-600 font-mono font-bold">{sensitivity}</span>
+                  </div>
+                  <input
+                    type="range"
+                    min="50"
+                    max="250"
+                    value={sensitivity}
+                    onChange={(e) => setSensitivity(Number(e.target.value))}
+                    className="w-full h-1 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-amber-600"
+                  />
+                </div>
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Exit Button */}
