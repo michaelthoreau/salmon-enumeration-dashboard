@@ -102,6 +102,16 @@ export const labelingTasks = sqliteTable('labeling_tasks', {
   completedBy: text('completed_by'), // userId; null = incomplete
   createdBy: text('created_by').notNull(), // userId
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
+  queueId: text('queue_id'), // FK → labeling_queues.id (nullable)
+})
+
+export const labelingQueues = sqliteTable('labeling_queues', {
+  id: text('id').primaryKey(), // UUID
+  name: text('name').notNull(),
+  projectId: text('project_id').notNull(), // FK → projects.id
+  assignedTo: text('assigned_to'), // FK → users.id (nullable)
+  createdBy: text('created_by').notNull(), // userId
+  createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
 })
 
 // ─── Labeling Task Points ─────────────────────────────────────────────────────

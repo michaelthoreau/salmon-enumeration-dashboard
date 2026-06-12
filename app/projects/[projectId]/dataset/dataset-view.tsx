@@ -151,38 +151,52 @@ export default function DatasetView({ entries: initialEntries, taskCountByFileId
   const [collapsedFlights, setCollapsedFlights] = useState<Set<string>>(new Set())
   const [activeImageKey, setActiveImageKey] = useState<string | null>(null)
   const [activeDownloadUrl, setActiveDownloadUrl] = useState('')
+  const [lightboxImages, setLightboxImages] = useState<DatasetEntry[]>([])
+  const [excludeWithTasks, setExcludeWithTasks] = useState(false)
 
   // Filter entries by active tab (use live splits map, not initial data)
   const filtered = useMemo(() => {
     return initialEntries.filter(e => {
       const s = splits.get(e.key) ?? null
-      if (activeTab === 'unassigned') return s === null
-      return s === activeTab
+      if (activeTab === 'unassigned') { if (s !== null) return false }
+      else { if (s !== activeTab) return false }
+      if (excludeWithTasks && isImageKey(e.key) && (taskCountByFileId.get(e.fileId) ?? 0) > 0) return false
+      return true
     })
-  }, [initialEntries, splits, activeTab])
+  }, [initialEntries, splits, activeTab, excludeWithTasks, taskCountByFileId])
 
   const activeEntry = useMemo(() => initialEntries.find(e => e.key === activeImageKey) ?? null, [initialEntries, activeImageKey])
   const filteredImages = useMemo(() => filtered.filter(e => isImageKey(e.key)), [filtered])
-  const activeIndex = useMemo(() => filteredImages.findIndex(e => e.key === activeImageKey), [filteredImages, activeImageKey])
+
+  const lightboxList = useMemo(() => {
+    return lightboxImages.length > 0 ? lightboxImages : filteredImages
+  }, [lightboxImages, filteredImages])
+
+  const activeIndex = useMemo(() => {
+    return lightboxList.findIndex(e => e.key === activeImageKey)
+  }, [lightboxList, activeImageKey])
 
   const handlePrev = useCallback(() => {
     if (activeIndex > 0) {
-      setActiveImageKey(filteredImages[activeIndex - 1].key)
+      setActiveImageKey(lightboxList[activeIndex - 1].key)
     }
-  }, [activeIndex, filteredImages])
+  }, [activeIndex, lightboxList])
 
   const handleNext = useCallback(() => {
-    if (activeIndex < filteredImages.length - 1) {
-      setActiveImageKey(filteredImages[activeIndex + 1].key)
+    if (activeIndex < lightboxList.length - 1) {
+      setActiveImageKey(lightboxList[activeIndex + 1].key)
     }
-  }, [activeIndex, filteredImages])
+  }, [activeIndex, lightboxList])
 
   useEffect(() => {
     if (!activeImageKey) return
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'ArrowLeft') handlePrev()
       if (e.key === 'ArrowRight') handleNext()
-      if (e.key === 'Escape') setActiveImageKey(null)
+      if (e.key === 'Escape') {
+        setActiveImageKey(null)
+        setLightboxImages([])
+      }
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
@@ -366,6 +380,16 @@ export default function DatasetView({ entries: initialEntries, taskCountByFileId
               </span>
             </button>
           ))}
+          {/* Hide files that already have tasks */}
+          <label className="ml-3 flex items-center gap-1.5 cursor-pointer select-none text-xs text-gray-500 hover:text-gray-700 pb-1">
+            <input
+              type="checkbox"
+              className="rounded"
+              checked={excludeWithTasks}
+              onChange={e => setExcludeWithTasks(e.target.checked)}
+            />
+            Hide images with tasks
+          </label>
         </div>
 
         {/* Actions — always in this spot, content changes with selection */}
@@ -509,6 +533,7 @@ export default function DatasetView({ entries: initialEntries, taskCountByFileId
                               onClick={() => {
                                 if (isImageKey(entry.key)) {
                                   setActiveImageKey(entry.key)
+                                  setLightboxImages(filteredImages)
                                 }
                               }}
                             >
@@ -737,7 +762,7 @@ export default function DatasetView({ entries: initialEntries, taskCountByFileId
       </Dialog>
 
       {/* Lightbox Dialog */}
-      <Dialog open={!!activeImageKey} onOpenChange={o => { if (!o) { setActiveImageKey(null); setActiveDownloadUrl('') } }}>
+      <Dialog open={!!activeImageKey} onOpenChange={o => { if (!o) { setActiveImageKey(null); setActiveDownloadUrl(''); setLightboxImages([]) } }}>
         <DialogContent className="sm:max-w-6xl h-[85vh] p-0 overflow-hidden flex flex-col bg-gray-950 text-white border border-gray-800 rounded-2xl">
           {activeEntry && (
             <>
@@ -751,7 +776,7 @@ export default function DatasetView({ entries: initialEntries, taskCountByFileId
                 </div>
                 <div className="flex items-center gap-4 mr-8">
                   <span className="text-xs text-gray-400">
-                    {activeIndex !== -1 ? `${activeIndex + 1} of ${filteredImages.length}` : ''}
+                    {activeIndex !== -1 ? `${activeIndex + 1} of ${lightboxList.length}` : ''}
                   </span>
                 </div>
               </div>
@@ -778,7 +803,7 @@ export default function DatasetView({ entries: initialEntries, taskCountByFileId
                 />
 
                 {/* Next Button */}
-                {activeIndex < filteredImages.length - 1 && (
+                {activeIndex < lightboxList.length - 1 && (
                   <button
                     onClick={handleNext}
                     className="absolute right-4 z-20 p-2 rounded-full bg-gray-900/60 hover:bg-gray-800/80 text-gray-300 hover:text-white transition-colors cursor-pointer"
