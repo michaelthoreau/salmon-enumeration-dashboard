@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSession } from '@/lib/session'
 import { deleteObject } from '@/lib/s3'
+import { db } from '@/lib/db'
+import { files } from '@/lib/schema'
+import { eq } from 'drizzle-orm'
 
 export async function DELETE(request: NextRequest) {
   const session = await getSession()
@@ -14,5 +17,6 @@ export async function DELETE(request: NextRequest) {
   }
 
   await deleteObject(key)
+  await db.delete(files).where(eq(files.key, key))
   return NextResponse.json({ ok: true })
 }
