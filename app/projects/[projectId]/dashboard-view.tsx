@@ -3,9 +3,9 @@
 import { useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { MapPin, Map, Calendar, Eye, EyeOff, Settings, Sparkles, Navigation } from 'lucide-react'
+import { MapPin, Map, Calendar, Eye, EyeOff, Settings, Sparkles, Navigation, ArrowRight } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { Button } from '@/components/ui/button'
+import { Button, buttonVariants } from '@/components/ui/button'
 import { toggleFlightPlanDashboardVisibility } from '@/app/actions/flight-plans'
 import 'maplibre-gl/dist/maplibre-gl.css'
 
@@ -433,35 +433,48 @@ export default function ProjectDashboardView({ projectId, projectName, plans, is
                     </div>
 
                     {/* Flight Dates and Summary */}
-                    <div className="border-t border-gray-100 pt-3.5 flex flex-col gap-2">
-                      <div className="flex items-center justify-between text-xs text-gray-500 font-medium">
-                        <span className="flex items-center gap-1">
-                          <Calendar className="w-3.5 h-3.5 text-gray-400" />
-                          <span>Logged Dates ({plan.flightCount})</span>
-                        </span>
+                    <div className="border-t border-gray-100 pt-3.5 flex items-center justify-between gap-4">
+                      <div className="flex-1 min-w-0 space-y-2">
+                        <div className="flex items-center text-xs text-gray-500 font-medium">
+                          <span className="flex items-center gap-1">
+                            <Calendar className="w-3.5 h-3.5 text-gray-400" />
+                            <span>Logged Dates ({plan.flightCount})</span>
+                          </span>
+                        </div>
+
+                        {plan.flightDates.length > 0 ? (
+                          <div className="flex flex-wrap gap-1.5">
+                            {plan.flightDates.slice(0, 3).map((date, idx) => (
+                              <span
+                                key={idx}
+                                className="inline-flex items-center rounded-md bg-gray-50 border border-gray-200/60 px-2 py-0.5 text-[10px] text-gray-600 font-medium font-mono"
+                              >
+                                {date}
+                              </span>
+                            ))}
+                            {plan.flightDates.length > 3 && (
+                              <span className="inline-flex items-center rounded-md bg-gray-50 border border-gray-200/60 px-2 py-0.5 text-[10px] text-gray-500 font-medium font-mono">
+                                +{plan.flightDates.length - 3} more
+                              </span>
+                            )}
+                          </div>
+                        ) : (
+                          <span className="text-[10px] text-gray-400 italic font-medium leading-none block">
+                            No flights logged yet.
+                          </span>
+                        )}
                       </div>
 
-                      {plan.flightDates.length > 0 ? (
-                        <div className="flex flex-wrap gap-1.5">
-                          {plan.flightDates.slice(0, 5).map((date, idx) => (
-                            <span
-                              key={idx}
-                              className="inline-flex items-center rounded-md bg-gray-50 border border-gray-200/60 px-2 py-0.5 text-[10px] text-gray-600 font-medium font-mono"
-                            >
-                              {date}
-                            </span>
-                          ))}
-                          {plan.flightDates.length > 5 && (
-                            <span className="inline-flex items-center rounded-md bg-gray-50 border border-gray-200/60 px-2 py-0.5 text-[10px] text-gray-500 font-medium font-mono">
-                              +{plan.flightDates.length - 5} more
-                            </span>
-                          )}
-                        </div>
-                      ) : (
-                        <span className="text-[10px] text-gray-400 italic font-medium leading-none">
-                          No flights logged in this flight plan yet.
-                        </span>
-                      )}
+                      <Link
+                        href={`/projects/${projectId}/flight-plans/${plan.id}/flights`}
+                        className={cn(
+                          buttonVariants({ variant: 'outline', size: 'sm' }),
+                          "text-xs font-semibold gap-1.5 h-8 flex-shrink-0"
+                        )}
+                      >
+                        <span>Open</span>
+                        <ArrowRight className="w-3.5 h-3.5 text-gray-500 group-hover:translate-x-0.5 transition-transform" />
+                      </Link>
                     </div>
                   </div>
                 )
