@@ -218,28 +218,26 @@ export default function FlightSplitView({
         style={{ width: `${sidebarWidth}px` }}
         className="h-full overflow-y-auto no-scrollbar border-r border-gray-200 bg-white p-6 space-y-6 flex-shrink-0 flex flex-col"
       >
-        {/* Back Button */}
-        <Link
-          href={`/projects/${projectId}/flight-plans/${flightPlanId}/flights`}
-          className={cn(
-            buttonVariants({ variant: 'outline' }),
-            "justify-start px-4 self-start gap-2"
-          )}
-        >
-          <ArrowLeft className="w-3.5 h-3.5" />
-          <span>Back to {flightPlan.name}</span>
-        </Link>
         {/* Header */}
         <div>
           <div className="flex items-start justify-between gap-4">
-            <div>
-              <h1 className="text-xl font-semibold text-gray-900 leading-tight">
-                {formattedTime}
-              </h1>
-              <p className="text-[10px] text-gray-400 mt-1 font-mono">
-                {flight.timestamp.toISOString()}
-              </p>
-              {flight.notes && <p className="text-sm text-gray-500 mt-2">{flight.notes}</p>}
+            <div className="flex items-start gap-2 -ml-1">
+              <Link
+                href={`/projects/${projectId}/flight-plans/${flightPlanId}/flights`}
+                className="p-1 hover:bg-gray-100 rounded-md transition-colors text-gray-500 hover:text-gray-900 mt-0.5 flex-shrink-0"
+                title={`Back to ${flightPlan.name}`}
+              >
+                <ArrowLeft className="w-5 h-5" />
+              </Link>
+              <div>
+                <h1 className="text-xl font-semibold text-gray-900 leading-tight">
+                  {formattedTime}
+                </h1>
+                <p className="text-[10px] text-gray-400 mt-1 font-mono">
+                  {flight.timestamp.toISOString()}
+                </p>
+                {flight.notes && <p className="text-sm text-gray-500 mt-2">{flight.notes}</p>}
+              </div>
             </div>
             {canWrite && (
               <EditFlightButton

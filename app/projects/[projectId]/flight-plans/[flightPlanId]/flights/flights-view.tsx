@@ -201,26 +201,23 @@ export default function FlightsView({
         style={{ width: `${sidebarWidth}px` }}
         className="h-full overflow-y-auto no-scrollbar border-r border-gray-200 bg-white p-6 space-y-6 flex-shrink-0 flex flex-col"
       >
-        {/* Back Button */}
-        <Link
-          href={`/projects/${projectId}/flight-plans`}
-          className={cn(
-            buttonVariants({ variant: 'outline' }),
-            "justify-start px-4 self-start gap-2"
-          )}
-        >
-          <ArrowLeft className="w-3.5 h-3.5" />
-          <span>Back to {projectName}</span>
-        </Link>
-
         {/* Flight Plan Header */}
-        <div>
-          <h1 className="text-xl font-semibold text-gray-900 leading-tight">
-            {flightPlan.name}
-          </h1>
-          {flightPlan.description && (
-            <p className="text-sm text-gray-500 mt-2">{flightPlan.description}</p>
-          )}
+        <div className="flex items-start gap-2 -ml-1">
+          <Link
+            href={`/projects/${projectId}/flight-plans`}
+            className="p-1 hover:bg-gray-100 rounded-md transition-colors text-gray-500 hover:text-gray-900 mt-0.5 flex-shrink-0"
+            title={`Back to ${projectName}`}
+          >
+            <ArrowLeft className="w-5 h-5" />
+          </Link>
+          <div>
+            <h1 className="text-xl font-semibold text-gray-900 leading-tight">
+              {flightPlan.name}
+            </h1>
+            {flightPlan.description && (
+              <p className="text-sm text-gray-500 mt-2">{flightPlan.description}</p>
+            )}
+          </div>
         </div>
 
         {/* Log Flight Button */}
