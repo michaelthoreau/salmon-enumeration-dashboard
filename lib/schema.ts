@@ -48,6 +48,8 @@ export const flightPlans = sqliteTable('flight_plans', {
   createdBy: text('created_by').notNull(),
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
   deletedAt: integer('deleted_at', { mode: 'timestamp' }),
+  showOnDashboard: integer('show_on_dashboard', { mode: 'boolean' }).notNull().default(true),
+  location: text('location'), // JSON string representing GeoJSON Geometry (Point or Polygon)
 })
 
 export const flights = sqliteTable('flights', {

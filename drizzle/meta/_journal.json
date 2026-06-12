@@ -57,6 +57,13 @@
       "when": 1781225829134,
       "tag": "0007_solid_loa",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1781228744495,
+      "tag": "0008_add_flight_plan_dashboard_and_location",
+      "breakpoints": true
     }
   ]
 }

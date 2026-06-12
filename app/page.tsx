@@ -37,7 +37,7 @@ export default async function Home() {
               {active.map((project) => (
                 <Link
                   key={project.id}
-                  href={`/projects/${project.id}/flight-plans`}
+                  href={`/projects/${project.id}`}
                   className="group relative bg-white rounded-2xl border border-gray-200 p-8 hover:border-blue-300 hover:shadow-md transition-all flex flex-col gap-4"
                 >
                   <div className="flex-1">
