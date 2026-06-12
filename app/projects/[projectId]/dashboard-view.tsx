@@ -325,7 +325,6 @@ export default function ProjectDashboardView({ projectId, projectName, plans, is
       <div className="flex items-center justify-between pb-4 border-b border-gray-200">
         <div>
           <div className="flex items-center gap-2">
-            <span className="text-2xl">📊</span>
             <h1 className="text-2xl font-bold text-gray-900 leading-tight">
               {projectName} Dashboard
             </h1>
