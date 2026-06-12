@@ -10,6 +10,9 @@
 !.yarn/releases
 !.yarn/versions
 
+modal/__pycache__/*
+*.pyc
+
 # testing
 /coverage
 

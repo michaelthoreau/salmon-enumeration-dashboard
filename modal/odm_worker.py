@@ -198,10 +198,19 @@ def web() -> FastAPI:
                     status_code=502,
                     detail=f"ODM init failed ({r.status_code}): {r.text}",
                 )
-            body = r.json()
+            try:
+                body = r.json()
+            except Exception:
+                raise HTTPException(
+                    status_code=502,
+                    detail=f"ODM init response is not valid JSON. Response: {r.text[:500]}",
+                )
             odm_uuid: str = body.get("uuid", "")
             if not odm_uuid:
-                raise HTTPException(status_code=502, detail="ODM init: no uuid returned")
+                raise HTTPException(
+                    status_code=502,
+                    detail=f"ODM init: no uuid returned. Response: {body}",
+                )
 
         # Seed the progress entry before the background task touches it
         _progress[odm_uuid] = {
