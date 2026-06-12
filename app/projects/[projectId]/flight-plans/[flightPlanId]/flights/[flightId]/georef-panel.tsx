@@ -103,7 +103,7 @@ export default function GeorefPanel({
       }, delay)
     }
 
-    schedule(POLL_INTERVAL_MS)
+    schedule(0)
     return () => { cancelled = true }
   }, [task?.taskId, task?.status]) // eslint-disable-line react-hooks/exhaustive-deps
 
