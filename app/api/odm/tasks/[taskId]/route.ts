@@ -142,7 +142,28 @@ export async function GET(req: NextRequest, { params }: RouteParams): Promise<Ne
       const collected = await collectOdmOutputs(task.odmUuid, task.flightId)
       outputKey = collected.outputKey
       reportKey = collected.reportKey ?? null
-      await db.update(odmTasks).set({ outputKey, reportKey }).where(eq(odmTasks.id, taskId))
+
+      // Pre-fetch bounds from the tile server
+      let boundsStr: string | null = null
+      try {
+        const url = process.env.MODAL_TILE_SERVER_URL
+        const token = process.env.MODAL_TILE_TOKEN
+        if (url && token && outputKey) {
+          const targetUrl = `${url}/info?key=${encodeURIComponent(outputKey)}` + (process.env.S3_BUCKET_NAME ? `&bucket=${encodeURIComponent(process.env.S3_BUCKET_NAME)}` : '')
+          const infoRes = await fetch(targetUrl, {
+            headers: { Authorization: `Bearer ${token}` },
+            signal: AbortSignal.timeout(30_000),
+          })
+          if (infoRes.ok) {
+            boundsStr = await infoRes.text()
+            console.log(`[ODM Tasks API] Pre-fetched bounds for task ${taskId}:`, boundsStr)
+          }
+        }
+      } catch (err) {
+        console.error('[ODM Tasks API] Failed to pre-fetch bounds:', err)
+      }
+
+      await db.update(odmTasks).set({ outputKey, reportKey, bounds: boundsStr }).where(eq(odmTasks.id, taskId))
     } catch (err) {
       // Non-fatal: client can retry on next poll
       console.error('ODM output collection failed:', err)

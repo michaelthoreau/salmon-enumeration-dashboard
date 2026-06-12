@@ -1,5 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSession } from '@/lib/session'
+import { db } from '@/lib/db'
+import { odmTasks, georefTasks } from '@/lib/schema'
+import { eq } from 'drizzle-orm'
 
 function getTileServer(): { url: string; token: string } {
   const url = process.env.MODAL_TILE_SERVER_URL
@@ -14,6 +17,40 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
   const key = request.nextUrl.searchParams.get('key')
   if (!key) return NextResponse.json({ error: 'Missing key' }, { status: 400 })
+
+  // 1. Check if bounds are already cached in the database
+  let cachedInfo: string | null = null
+  let matchingTaskType: 'odm' | 'georef' | null = null
+  let matchingTaskId: string | null = null
+
+  try {
+    const [odmMatch] = await db
+      .select({ id: odmTasks.id, bounds: odmTasks.bounds })
+      .from(odmTasks)
+      .where(eq(odmTasks.outputKey, key))
+    if (odmMatch) {
+      cachedInfo = odmMatch.bounds
+      matchingTaskType = 'odm'
+      matchingTaskId = odmMatch.id
+    } else {
+      const [georefMatch] = await db
+        .select({ id: georefTasks.id, bounds: georefTasks.bounds })
+        .from(georefTasks)
+        .where(eq(georefTasks.outputKey, key))
+      if (georefMatch) {
+        cachedInfo = georefMatch.bounds
+        matchingTaskType = 'georef'
+        matchingTaskId = georefMatch.id
+      }
+    }
+  } catch (err) {
+    console.error('[Tiles Info] DB lookup failed:', err)
+  }
+
+  if (cachedInfo) {
+    console.log(`[Tiles Info] Returning cached bounds from DB for key: ${key}`)
+    return NextResponse.json(JSON.parse(cachedInfo))
+  }
 
   const { url, token } = getTileServer()
   const bucket = process.env.S3_BUCKET_NAME || ''
@@ -40,7 +77,23 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error: `Tile server error: ${res.status}`, detail: text }, { status: 502 })
   }
 
-  const data = (await res.json()) as unknown
+  const data = (await res.json()) as any
   console.log(`[Tiles Info] Successfully loaded tile info.`);
+
+  // 2. Cache it in the database asynchronously if we found a matching task
+  if (matchingTaskId && data) {
+    try {
+      const boundsStr = JSON.stringify(data)
+      if (matchingTaskType === 'odm') {
+        await db.update(odmTasks).set({ bounds: boundsStr }).where(eq(odmTasks.id, matchingTaskId))
+      } else if (matchingTaskType === 'georef') {
+        await db.update(georefTasks).set({ bounds: boundsStr }).where(eq(georefTasks.id, matchingTaskId))
+      }
+      console.log(`[Tiles Info] Cached bounds in DB for ${matchingTaskType} task: ${matchingTaskId}`)
+    } catch (err) {
+      console.error('[Tiles Info] Failed to save bounds cache to DB:', err)
+    }
+  }
+
   return NextResponse.json(data)
 }

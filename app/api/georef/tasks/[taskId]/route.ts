@@ -94,11 +94,32 @@ export async function GET(req: NextRequest, { params }: RouteParams): Promise<Ne
 
   // Sync terminal states back to DB
   if (workerData.status === 'completed' && workerData.output_key) {
+    let boundsStr: string | null = null
+    try {
+      const url = process.env.MODAL_TILE_SERVER_URL
+      const token = process.env.MODAL_TILE_TOKEN
+      const outputKey = workerData.output_key
+      if (url && token && outputKey) {
+        const targetUrl = `${url}/info?key=${encodeURIComponent(outputKey)}` + (process.env.S3_BUCKET_NAME ? `&bucket=${encodeURIComponent(process.env.S3_BUCKET_NAME)}` : '')
+        const infoRes = await fetch(targetUrl, {
+          headers: { Authorization: `Bearer ${token}` },
+          signal: AbortSignal.timeout(30_000),
+        })
+        if (infoRes.ok) {
+          boundsStr = await infoRes.text()
+          console.log(`[Georef Tasks API] Pre-fetched bounds for task ${taskId}:`, boundsStr)
+        }
+      }
+    } catch (err) {
+      console.error('[Georef Tasks API] Failed to pre-fetch bounds:', err)
+    }
+
     await db
       .update(georefTasks)
       .set({
         status: 'completed',
         outputKey: workerData.output_key,
+        bounds: boundsStr,
         completedAt: new Date(),
       })
       .where(eq(georefTasks.id, taskId))
