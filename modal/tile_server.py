@@ -36,7 +36,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 image = (
     modal.Image.debian_slim(python_version="3.11")
-    .pip_install("fastapi[standard]", "rio-tiler[http]")
+    .pip_install("fastapi[standard]", "rio-tiler[http]", "Pillow")
 )
 
 app = modal.App("salmon-tile-server", image=image)
@@ -131,6 +131,125 @@ def web() -> FastAPI:
             return Response(status_code=204)
         except Exception as exc:
             raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+        return Response(content=content, media_type="image/png")
+
+    # ── GET /diff-tiles/{z}/{x}/{y} ───────────────────────────────────────────
+
+    @web_app.get("/diff-tiles/{z}/{x}/{y}")
+    async def diff_tile(
+        z: int,
+        x: int,
+        y: int,
+        key1: str = Query(...),
+        key2: str = Query(...),
+        colormap: str = Query("red-green"),
+        threshold: float = Query(15.0),
+        max_diff: float = Query(120.0),
+        bucket: str | None = Query(None),
+        _: None = Depends(_require_auth),
+    ) -> Response:
+        from rio_tiler.errors import TileOutsideBounds
+        from rio_tiler.io import COGReader
+        import numpy as np
+        from PIL import Image
+        import io
+
+        # Fetch Left Tile (key1)
+        try:
+            with rasterio.Env(**_gdal_env):
+                with COGReader(_s3_url(key1, bucket)) as cog1:
+                    img1 = cog1.tile(x, y, z)
+        except TileOutsideBounds:
+            img1 = None
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"Error reading key1: {exc}") from exc
+
+        # Fetch Right Tile (key2)
+        try:
+            with rasterio.Env(**_gdal_env):
+                with COGReader(_s3_url(key2, bucket)) as cog2:
+                    img2 = cog2.tile(x, y, z)
+        except TileOutsideBounds:
+            img2 = None
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"Error reading key2: {exc}") from exc
+
+        # If both are outside bounds, return transparent (empty tile)
+        if img1 is None and img2 is None:
+            return Response(status_code=204)
+
+        # Standard width/height of tiles (typically 256)
+        width = img1.width if img1 else img2.width
+        height = img1.height if img1 else img2.height
+        count = img1.count if img1 else img2.count
+
+        # Extract data & masks
+        if img1:
+            data1 = img1.data.astype(np.float32)
+            mask1 = img1.mask
+        else:
+            data1 = np.zeros((count, height, width), dtype=np.float32)
+            mask1 = np.zeros((height, width), dtype=np.uint8)
+
+        if img2:
+            data2 = img2.data.astype(np.float32)
+            mask2 = img2.mask
+        else:
+            data2 = np.zeros((count, height, width), dtype=np.float32)
+            mask2 = np.zeros((height, width), dtype=np.uint8)
+
+        # Convert to Grayscale
+        if count >= 3:
+            gray1 = 0.2989 * data1[0] + 0.5870 * data1[1] + 0.1140 * data1[2]
+            gray2 = 0.2989 * data2[0] + 0.5870 * data2[1] + 0.1140 * data2[2]
+        else:
+            gray1 = data1[0]
+            gray2 = data2[0]
+
+        # Diff calculation: Right - Left
+        diff = gray2 - gray1
+        diff_abs = np.abs(diff)
+
+        # Filter noise below threshold
+        diff_sig = np.where(diff_abs < threshold, 0.0, diff)
+        diff_sig_abs = np.abs(diff_sig)
+
+        # Output mask: only show diff where both orthophotos overlap
+        out_mask = ((mask1 > 0) & (mask2 > 0)).astype(np.uint8) * 255
+
+        # Check if the output is completely transparent
+        if not np.any(out_mask):
+            return Response(status_code=204)
+
+        # Map to Alpha: opacity scales with diff magnitude
+        alpha_channel = np.clip((diff_sig_abs / max_diff) * 255.0, 0, 255).astype(np.uint8)
+        alpha_channel = np.minimum(alpha_channel, out_mask)
+
+        # Map color channels based on selected colormap
+        out_r = np.zeros((height, width), dtype=np.uint8)
+        out_g = np.zeros((height, width), dtype=np.uint8)
+        out_b = np.zeros((height, width), dtype=np.uint8)
+
+        if colormap == "red-blue":
+            out_r = np.where(diff_sig < 0, np.clip(100 + diff_sig_abs * 1.5, 0, 255), 0).astype(np.uint8)
+            out_b = np.where(diff_sig > 0, np.clip(100 + diff_sig_abs * 1.5, 0, 255), 0).astype(np.uint8)
+        elif colormap == "grayscale":
+            val = np.clip(diff_sig_abs * 2.0, 0, 255).astype(np.uint8)
+            out_r = val
+            out_g = val
+            out_b = val
+        else:  # Default: red-green
+            out_r = np.where(diff_sig < 0, np.clip(100 + diff_sig_abs * 1.5, 0, 255), 0).astype(np.uint8)
+            out_g = np.where(diff_sig > 0, np.clip(100 + diff_sig_abs * 1.5, 0, 255), 0).astype(np.uint8)
+
+        # Merge channels into RGBA PNG
+        rgba = np.stack([out_r, out_g, out_b, alpha_channel], axis=-1)
+        pil_img = Image.fromarray(rgba, mode="RGBA")
+
+        buf = io.BytesIO()
+        pil_img.save(buf, format="PNG")
+        content = buf.getvalue()
 
         return Response(content=content, media_type="image/png")
 
