@@ -1,10 +1,10 @@
 'use server'
 
 import { db } from '@/lib/db'
-import { files } from '@/lib/schema'
-import { eq } from 'drizzle-orm'
+import { files, flightPlans, flights } from '@/lib/schema'
+import { eq, and, isNull } from 'drizzle-orm'
 import { getSession } from '@/lib/session'
-import { headObject } from '@/lib/s3'
+import { headObject, listFlightObjects } from '@/lib/s3'
 import { randomUUID } from 'crypto'
 import type { Split } from '@/lib/schema'
 
@@ -46,4 +46,158 @@ export async function assignFileSplit(
   }
 
   return { ok: true }
+}
+
+export async function syncFlightFiles(
+  projectId: string,
+  flightPlanId: string,
+  flightId: string,
+): Promise<{ ok: boolean; added: number; removed: number; error?: string }> {
+  const session = await getSession()
+  if (!session || (session.role !== 'read-write' && session.role !== 'admin')) {
+    return { ok: false, added: 0, removed: 0, error: 'Unauthorized' }
+  }
+
+  try {
+    const s3Objects = await listFlightObjects(projectId, flightPlanId, flightId)
+    const s3Images = s3Objects.filter((o) => {
+      const lower = o.key.toLowerCase()
+      return (
+        (lower.endsWith('.jpg') ||
+          lower.endsWith('.jpeg') ||
+          lower.endsWith('.png') ||
+          lower.endsWith('.tif') ||
+          lower.endsWith('.tiff')) &&
+        !o.key.includes('/odm/')
+      )
+    })
+
+    const dbFiles = await db.select().from(files).where(eq(files.flightId, flightId))
+
+    const s3Keys = new Set(s3Images.map((o) => o.key))
+    const dbKeys = new Set(dbFiles.map((f) => f.key))
+
+    const missingInDb = s3Images.filter((o) => !dbKeys.has(o.key))
+    const orphanedInDb = dbFiles.filter((f) => !s3Keys.has(f.key))
+
+    let added = 0
+    let removed = 0
+
+    for (const file of missingInDb) {
+      await db.insert(files).values({
+        id: randomUUID(),
+        flightId,
+        key: file.key,
+        etag: file.etag,
+        size: file.size,
+        uploadedAt: file.lastModified,
+        uploadedBy: session.userId,
+      })
+      added++
+    }
+
+    for (const row of orphanedInDb) {
+      await db.delete(files).where(eq(files.id, row.id))
+      removed++
+    }
+
+    return { ok: true, added, removed }
+  } catch (err) {
+    console.error('Failed to sync flight files:', err)
+    return { ok: false, added: 0, removed: 0, error: String(err) }
+  }
+}
+
+export async function syncProjectFiles(
+  projectId: string,
+): Promise<{
+  ok: boolean
+  results: { flightId: string; added: number; removed: number; flightLabel: string }[]
+  error?: string
+}> {
+  const session = await getSession()
+  if (!session || (session.role !== 'read-write' && session.role !== 'admin')) {
+    return { ok: false, results: [], error: 'Unauthorized' }
+  }
+
+  try {
+    const activeFlights = await db
+      .select({
+        flightId: flights.id,
+        flightTimestamp: flights.timestamp,
+        flightPlanId: flightPlans.id,
+        flightPlanName: flightPlans.name,
+      })
+      .from(flights)
+      .innerJoin(flightPlans, eq(flights.flightPlanId, flightPlans.id))
+      .where(
+        and(
+          eq(flightPlans.projectId, projectId),
+          isNull(flights.deletedAt),
+          isNull(flightPlans.deletedAt),
+        ),
+      )
+
+    const results: { flightId: string; added: number; removed: number; flightLabel: string }[] = []
+
+    for (const flight of activeFlights) {
+      const flightLabel = `${flight.flightPlanName} (${new Date(flight.flightTimestamp).toLocaleDateString()})`
+      
+      const s3Objects = await listFlightObjects(projectId, flight.flightPlanId, flight.flightId)
+      const s3Images = s3Objects.filter((o) => {
+        const lower = o.key.toLowerCase()
+        return (
+          (lower.endsWith('.jpg') ||
+            lower.endsWith('.jpeg') ||
+            lower.endsWith('.png') ||
+            lower.endsWith('.tif') ||
+            lower.endsWith('.tiff')) &&
+          !o.key.includes('/odm/')
+        )
+      })
+
+      const dbFiles = await db.select().from(files).where(eq(files.flightId, flight.flightId))
+
+      const s3Keys = new Set(s3Images.map((o) => o.key))
+      const dbKeys = new Set(dbFiles.map((f) => f.key))
+
+      const missingInDb = s3Images.filter((o) => !dbKeys.has(o.key))
+      const orphanedInDb = dbFiles.filter((f) => !s3Keys.has(f.key))
+
+      let added = 0
+      let removed = 0
+
+      for (const file of missingInDb) {
+        await db.insert(files).values({
+          id: randomUUID(),
+          flightId: flight.flightId,
+          key: file.key,
+          etag: file.etag,
+          size: file.size,
+          uploadedAt: file.lastModified,
+          uploadedBy: session.userId,
+        })
+        added++
+      }
+
+      for (const row of orphanedInDb) {
+        await db.delete(files).where(eq(files.id, row.id))
+        removed++
+      }
+
+      if (added > 0 || removed > 0) {
+        results.push({
+          flightId: flight.flightId,
+          added,
+          removed,
+          flightLabel,
+        })
+      }
+    }
+
+    return { ok: true, results }
+  } catch (err) {
+    console.error('Failed to sync project files:', err)
+    return { ok: false, results: [], error: String(err) }
+  }
 }
