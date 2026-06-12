@@ -26,6 +26,7 @@ export default async function DatasetPage({ params }: PageProps) {
       uploadedAt: files.uploadedAt,
       imageWidth: files.imageWidth,
       imageHeight: files.imageHeight,
+      size: files.size,
       flightId: flights.id,
       flightTimestamp: flights.timestamp,
       flightPlanName: flightPlans.name,
@@ -41,6 +42,7 @@ export default async function DatasetPage({ params }: PageProps) {
     split: r.split ?? null,
     imageWidth: r.imageWidth ?? null,
     imageHeight: r.imageHeight ?? null,
+    size: r.size ?? null,
     flightTimestampIso: r.flightTimestamp.toISOString(),
     uploadedAtIso: r.uploadedAt.toISOString(),
   }))

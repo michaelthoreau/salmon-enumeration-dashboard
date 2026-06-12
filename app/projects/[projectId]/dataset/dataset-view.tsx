@@ -6,6 +6,7 @@ import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { buttonVariants } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
+import { ChevronLeftIcon, ChevronRightIcon, DownloadIcon } from 'lucide-react'
 
 import type { Split } from '@/lib/schema'
 import { assignFileSplit } from '@/app/actions/files'
@@ -24,6 +25,18 @@ function splitSelectClass(split: Split | null): string {
   if (split === 'val')   return 'bg-amber-50 border-amber-300 text-amber-700'
   if (split === 'test')  return 'bg-green-50 border-green-300 text-green-700'
   return 'bg-white border-gray-200 text-gray-400'
+}
+
+function thumbnailUrl(key: string, etag: string, size: number): string {
+  return `/api/files/thumbnail?key=${encodeURIComponent(key)}&etag=${encodeURIComponent(etag)}&size=${size}`
+}
+
+function formatBytes(bytes: number | null): string {
+  if (bytes === null) return '—'
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`
+  return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} GB`
 }
 
 const TABS = ['unassigned', 'train', 'val', 'test'] as const
@@ -110,6 +123,7 @@ export interface DatasetEntry {
   split: Split | null
   imageWidth: number | null
   imageHeight: number | null
+  size: number | null
   flightId: string
   flightTimestampIso: string
   flightPlanName: string
@@ -135,6 +149,55 @@ export default function DatasetView({ entries: initialEntries, taskCountByFileId
   const [taskDialog, setTaskDialog] = useState<TaskDialogState | null>(null)
   const [maxPerImage, setMaxPerImage] = useState<number | null>(null)
   const [collapsedFlights, setCollapsedFlights] = useState<Set<string>>(new Set())
+  const [activeImageKey, setActiveImageKey] = useState<string | null>(null)
+  const [activeDownloadUrl, setActiveDownloadUrl] = useState('')
+
+  // Filter entries by active tab (use live splits map, not initial data)
+  const filtered = useMemo(() => {
+    return initialEntries.filter(e => {
+      const s = splits.get(e.key) ?? null
+      if (activeTab === 'unassigned') return s === null
+      return s === activeTab
+    })
+  }, [initialEntries, splits, activeTab])
+
+  const activeEntry = useMemo(() => initialEntries.find(e => e.key === activeImageKey) ?? null, [initialEntries, activeImageKey])
+  const filteredImages = useMemo(() => filtered.filter(e => isImageKey(e.key)), [filtered])
+  const activeIndex = useMemo(() => filteredImages.findIndex(e => e.key === activeImageKey), [filteredImages, activeImageKey])
+
+  const handlePrev = useCallback(() => {
+    if (activeIndex > 0) {
+      setActiveImageKey(filteredImages[activeIndex - 1].key)
+    }
+  }, [activeIndex, filteredImages])
+
+  const handleNext = useCallback(() => {
+    if (activeIndex < filteredImages.length - 1) {
+      setActiveImageKey(filteredImages[activeIndex + 1].key)
+    }
+  }, [activeIndex, filteredImages])
+
+  useEffect(() => {
+    if (!activeImageKey) return
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'ArrowLeft') handlePrev()
+      if (e.key === 'ArrowRight') handleNext()
+      if (e.key === 'Escape') setActiveImageKey(null)
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [activeImageKey, handlePrev, handleNext])
+
+  useEffect(() => {
+    if (!activeImageKey) return
+    let active = true
+    fetch(`/api/files/presign?key=${encodeURIComponent(activeImageKey)}&download=1`)
+      .then(r => r.ok ? r.json() as Promise<{ url: string }> : null)
+      .then(data => {
+        if (active && data) setActiveDownloadUrl(data.url)
+      })
+    return () => { active = false }
+  }, [activeImageKey])
 
   const toggleFlight = useCallback((flightId: string) => {
     setCollapsedFlights(prev => {
@@ -240,12 +303,7 @@ export default function DatasetView({ entries: initialEntries, taskCountByFileId
     }
   }, [taskDialog, router])
 
-  // Filter entries by active tab (use live splits map, not initial data)
-  const filtered = initialEntries.filter(e => {
-    const s = splits.get(e.key) ?? null
-    if (activeTab === 'unassigned') return s === null
-    return s === activeTab
-  })
+  // filtered is defined at the top of the component
 
   // Counts for tab badges
   const counts: Record<Tab, number> = {
@@ -440,7 +498,20 @@ export default function DatasetView({ entries: initialEntries, taskCountByFileId
                             <td className="px-4 py-2.5" onClick={() => setSelected(prev => { const n = new Set(prev); n.has(entry.key) ? n.delete(entry.key) : n.add(entry.key); return n })}>
                               <input type="checkbox" className="rounded pointer-events-none" checked={selected.has(entry.key)} onChange={() => {}} />
                             </td>
-                            <td className="px-4 py-2.5 font-mono text-xs text-gray-700 max-w-xs truncate" title={filename}>
+                            <td
+                              className={cn(
+                                'px-4 py-2.5 font-mono text-xs max-w-xs truncate transition-all duration-100',
+                                isImageKey(entry.key)
+                                  ? 'text-blue-600 hover:text-blue-800 hover:underline cursor-pointer font-medium'
+                                  : 'text-gray-700'
+                              )}
+                              title={filename}
+                              onClick={() => {
+                                if (isImageKey(entry.key)) {
+                                  setActiveImageKey(entry.key)
+                                }
+                              }}
+                            >
                               {filename}
                             </td>
                             <td className="px-4 py-2.5">
@@ -662,6 +733,120 @@ export default function DatasetView({ entries: initialEntries, taskCountByFileId
               {splitDialogHasConflict ? 'Confirm reassignment' : 'Assign'}
             </Button>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Lightbox Dialog */}
+      <Dialog open={!!activeImageKey} onOpenChange={o => { if (!o) { setActiveImageKey(null); setActiveDownloadUrl('') } }}>
+        <DialogContent className="sm:max-w-6xl h-[85vh] p-0 overflow-hidden flex flex-col bg-gray-950 text-white border border-gray-800 rounded-2xl">
+          {activeEntry && (
+            <>
+              {/* Header */}
+              <div className="px-6 py-3 border-b border-gray-800 flex items-center justify-between shrink-0 bg-gray-950 z-10">
+                <div className="flex flex-col">
+                  <span className="text-xs text-gray-500 font-semibold uppercase tracking-wider">Image Preview</span>
+                  <span className="text-sm font-mono text-gray-200 truncate max-w-lg mt-0.5" title={activeEntry.key.split('/').pop()}>
+                    {activeEntry.key.split('/').pop()}
+                  </span>
+                </div>
+                <div className="flex items-center gap-4 mr-8">
+                  <span className="text-xs text-gray-400">
+                    {activeIndex !== -1 ? `${activeIndex + 1} of ${filteredImages.length}` : ''}
+                  </span>
+                </div>
+              </div>
+
+              {/* Viewport / Stage */}
+              <div className="flex-1 min-h-0 relative flex items-center justify-center bg-gray-950 group">
+                {/* Prev Button */}
+                {activeIndex > 0 && (
+                  <button
+                    onClick={handlePrev}
+                    className="absolute left-4 z-20 p-2 rounded-full bg-gray-900/60 hover:bg-gray-800/80 text-gray-300 hover:text-white transition-colors cursor-pointer"
+                    aria-label="Previous image"
+                  >
+                    <ChevronLeftIcon className="w-6 h-6" />
+                  </button>
+                )}
+
+                {/* Main Image */}
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={thumbnailUrl(activeEntry.key, activeEntry.etag, 1200)}
+                  alt={activeEntry.key.split('/').pop()}
+                  className="max-w-full max-h-full object-contain select-none pointer-events-none"
+                />
+
+                {/* Next Button */}
+                {activeIndex < filteredImages.length - 1 && (
+                  <button
+                    onClick={handleNext}
+                    className="absolute right-4 z-20 p-2 rounded-full bg-gray-900/60 hover:bg-gray-800/80 text-gray-300 hover:text-white transition-colors cursor-pointer"
+                    aria-label="Next image"
+                  >
+                    <ChevronRightIcon className="w-6 h-6" />
+                  </button>
+                )}
+              </div>
+
+              {/* Footer metadata & Split selection */}
+              <div className="px-6 py-3 border-t border-gray-800 flex items-center justify-between shrink-0 bg-gray-900 text-gray-300">
+                <div className="flex flex-wrap items-center gap-x-6 gap-y-2 text-xs text-gray-400">
+                  <div>
+                    <span className="text-gray-500 font-medium">Flight Plan: </span>
+                    <span className="text-gray-300 font-medium">{activeEntry.flightPlanName}</span>
+                  </div>
+                  <div>
+                    <span className="text-gray-500 font-medium">Size: </span>
+                    <span className="text-gray-300 font-medium">{formatBytes(activeEntry.size)}</span>
+                  </div>
+                  {activeEntry.imageWidth && activeEntry.imageHeight && (
+                    <div>
+                      <span className="text-gray-500 font-medium">Dimensions: </span>
+                      <span className="text-gray-300 font-medium">{activeEntry.imageWidth}×{activeEntry.imageHeight} px</span>
+                    </div>
+                  )}
+                </div>
+
+                <div className="flex items-center gap-3">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-gray-400">Dataset Split:</span>
+                    {canWrite ? (
+                      <select
+                        value={splits.get(activeEntry.key) ?? 'none'}
+                        onChange={e => handleSplitChange(activeEntry.key, e.target.value as SplitChoice)}
+                        className={cn(
+                          'text-xs rounded border px-2 py-0.5 font-medium focus:outline-none focus:ring-1 cursor-pointer transition-colors',
+                          splitSelectClass(splits.get(activeEntry.key) ?? null)
+                        )}
+                      >
+                        <option value="none">Unassigned</option>
+                        <option value="train">Train</option>
+                        <option value="val">Validation</option>
+                        <option value="test">Testing</option>
+                      </select>
+                    ) : (
+                      <SplitBadge split={splits.get(activeEntry.key) ?? null} />
+                    )}
+                  </div>
+
+                  {activeDownloadUrl && (
+                    <a
+                      href={activeDownloadUrl}
+                      download
+                      className={cn(
+                        buttonVariants({ variant: 'outline', size: 'xs' }),
+                        'bg-gray-800 border-gray-700 hover:bg-gray-700 hover:text-white text-gray-200 gap-1.5'
+                      )}
+                    >
+                      <DownloadIcon className="w-3.5 h-3.5" />
+                      Download
+                    </a>
+                  )}
+                </div>
+              </div>
+            </>
+          )}
         </DialogContent>
       </Dialog>
     </>
