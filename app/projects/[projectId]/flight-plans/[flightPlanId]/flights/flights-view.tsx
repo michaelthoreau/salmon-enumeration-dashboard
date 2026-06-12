@@ -204,9 +204,9 @@ export default function FlightsView({
         {/* Flight Plan Header */}
         <div className="flex items-start gap-2 -ml-1">
           <Link
-            href={`/projects/${projectId}/flight-plans`}
+            href={`/projects/${projectId}`}
             className="p-1 hover:bg-gray-100 rounded-md transition-colors text-gray-500 hover:text-gray-900 mt-0.5 flex-shrink-0"
-            title={`Back to ${projectName}`}
+            title={`Back to project dashboard`}
           >
             <ArrowLeft className="w-5 h-5" />
           </Link>

@@ -194,7 +194,7 @@ export default function ProjectDashboardView({ projectId, projectName, plans, is
               'circle-stroke-color': '#ffffff',
               'circle-stroke-width': 2,
             },
-            filter: ['==', 'id', ''],
+            filter: ['all', ['==', 'id', ''], ['==', '$type', 'Point']],
           })
 
           // Zoom to show all features
@@ -277,7 +277,7 @@ export default function ProjectDashboardView({ projectId, projectName, plans, is
       map.setFilter('flight-plans-highlight-line', ['==', 'id', hoveredPlanId || ''])
     }
     if (map.getLayer('flight-plans-highlight-point')) {
-      map.setFilter('flight-plans-highlight-point', ['==', 'id', hoveredPlanId || ''])
+      map.setFilter('flight-plans-highlight-point', ['all', ['==', 'id', hoveredPlanId || ''], ['==', '$type', 'Point']])
     }
   }, [hoveredPlanId, mapReady])
 
