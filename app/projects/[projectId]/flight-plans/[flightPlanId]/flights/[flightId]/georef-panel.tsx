@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback, useRef } from 'react'
+import { useRouter } from 'next/navigation'
 import { MapPinIcon } from 'lucide-react'
 
 async function openPresignedUrl(key: string): Promise<void> {
@@ -49,6 +50,7 @@ export default function GeorefPanel({
   flightPlanId,
   initialTask,
 }: GeorefPanelProps) {
+  const router = useRouter()
   const [task, setTask] = useState<GeorefTask | null>(null)
   const [starting, setStarting] = useState(false)
   const [startError, setStartError] = useState<string | null>(null)
@@ -94,6 +96,8 @@ export default function GeorefPanel({
           consecutiveErrors = 0
           if (!TERMINAL_STATUSES.has(data.status)) {
             schedule(POLL_INTERVAL_MS)
+          } else {
+            router.refresh()
           }
         }
       }, delay)
@@ -125,6 +129,7 @@ export default function GeorefPanel({
         outputKey: null,
         error: null,
       })
+      router.refresh()
     } finally {
       setStarting(false)
     }

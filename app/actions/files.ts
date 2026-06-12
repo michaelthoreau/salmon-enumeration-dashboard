@@ -201,3 +201,46 @@ export async function syncProjectFiles(
     return { ok: false, results: [], error: String(err) }
   }
 }
+
+export async function getProjectFlightsForSync(
+  projectId: string,
+): Promise<{
+  ok: boolean
+  flights: { flightId: string; flightPlanId: string; flightLabel: string }[]
+  error?: string
+}> {
+  const session = await getSession()
+  if (!session || (session.role !== 'read-write' && session.role !== 'admin')) {
+    return { ok: false, flights: [], error: 'Unauthorized' }
+  }
+
+  try {
+    const activeFlights = await db
+      .select({
+        flightId: flights.id,
+        flightPlanId: flights.flightPlanId,
+        flightTimestamp: flights.timestamp,
+        flightPlanName: flightPlans.name,
+      })
+      .from(flights)
+      .innerJoin(flightPlans, eq(flights.flightPlanId, flightPlans.id))
+      .where(
+        and(
+          eq(flightPlans.projectId, projectId),
+          isNull(flights.deletedAt),
+          isNull(flightPlans.deletedAt),
+        ),
+      )
+
+    const mapped = activeFlights.map((r) => ({
+      flightId: r.flightId,
+      flightPlanId: r.flightPlanId,
+      flightLabel: `${r.flightPlanName} (${new Date(r.flightTimestamp).toLocaleDateString()})`,
+    }))
+
+    return { ok: true, flights: mapped }
+  } catch (err) {
+    console.error('Failed to get project flights for sync:', err)
+    return { ok: false, flights: [], error: String(err) }
+  }
+}
