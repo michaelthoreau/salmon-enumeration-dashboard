@@ -315,23 +315,40 @@ export default function DatasetView({ entries: initialEntries, taskCountByFileId
           {selected.size > 0 ? (
             <>
               <span className="text-xs text-gray-500">{selected.size} selected</span>
-              {canWrite && activeTab === 'unassigned' && (
+              {canWrite && (
                 <>
-                  {(['train', 'val', 'test'] as Split[]).map(s => (
+                  {(['train', 'val', 'test'] as Split[]).map(s => {
+                    if (activeTab === s) return null
+                    return (
+                      <button
+                        key={s}
+                        onClick={async () => {
+                          const keys = Array.from(selected)
+                          setSplits(prev => { const n = new Map(prev); keys.forEach(k => n.set(k, s)); return n })
+                          setSelected(new Set())
+                          await Promise.all(keys.map(k => assignFileSplit(k, s)))
+                          router.refresh()
+                        }}
+                        className={cn(buttonVariants({ variant: 'outline', size: 'sm' }))}
+                      >
+                        {activeTab === 'unassigned' ? `Add to ${s}` : `Move to ${s}`}
+                      </button>
+                    )
+                  })}
+                  {activeTab !== 'unassigned' && (
                     <button
-                      key={s}
                       onClick={async () => {
                         const keys = Array.from(selected)
-                        setSplits(prev => { const n = new Map(prev); keys.forEach(k => n.set(k, s)); return n })
+                        setSplits(prev => { const n = new Map(prev); keys.forEach(k => n.set(k, null)); return n })
                         setSelected(new Set())
-                        await Promise.all(keys.map(k => assignFileSplit(k, s)))
+                        await Promise.all(keys.map(k => assignFileSplit(k, null)))
                         router.refresh()
                       }}
-                      className={cn(buttonVariants({ variant: 'outline', size: 'sm' }))}
+                      className={cn(buttonVariants({ variant: 'outline', size: 'sm' }), 'text-red-600 hover:text-red-700 hover:bg-red-50 border-red-200 hover:border-red-300')}
                     >
-                      Add to {s}
+                      Remove from split
                     </button>
-                  ))}
+                  )}
                 </>
               )}
               {canWrite && activeTab !== 'unassigned' && selectedImageEntries.length > 0 && (
