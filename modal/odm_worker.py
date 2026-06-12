@@ -72,11 +72,9 @@ class ProcessRequest(BaseModel):
     bucket: str  # S3 bucket name — passed from the Next.js app so both sides agree
 
 
-# ── In-memory upload progress ──────────────────────────────────────────────────
-# Keyed by odm_uuid.  Works reliably within a single warm container — good
-# enough for our use case (one flight at a time, small team).
-
-_progress: dict[str, dict[str, Any]] = {}
+# ── Persistent upload progress using modal.Dict ────────────────────────────────
+# Keyed by odm_uuid. Shared across all worker containers.
+_progress = modal.Dict.from_name("salmon-odm-progress", create_if_missing=True)
 
 CONCURRENT_UPLOADS = 5  # simultaneous S3→ODM pipelines
 
@@ -124,6 +122,23 @@ def web() -> FastAPI:
         )
         loop = asyncio.get_event_loop()
         sem = asyncio.Semaphore(CONCURRENT_UPLOADS)
+        progress_lock = asyncio.Lock()
+
+        async def update_progress(uploaded_inc=0, new_error=None, new_err_msg=None, committed=False):
+            async with progress_lock:
+                entry = _progress.get(odm_uuid)
+                if entry:
+                    if uploaded_inc:
+                        entry["uploaded"] += uploaded_inc
+                    if new_error:
+                        errors = list(entry.get("errors", []))
+                        errors.append(new_error)
+                        entry["errors"] = errors
+                    if new_err_msg is not None:
+                        entry["error"] = new_err_msg
+                    if committed:
+                        entry["committed"] = True
+                    _progress[odm_uuid] = entry
 
         async def upload_one(img: ImageSpec) -> None:
             async with sem:
@@ -145,32 +160,29 @@ def web() -> FastAPI:
                             files={"images": (img.filename, buf.read(), content_type)},
                         )
                         if r.status_code != 200:
-                            _progress[odm_uuid]["errors"].append(
-                                f"{img.filename}: ODM returned {r.status_code}"
-                            )
+                            await update_progress(new_error=f"{img.filename}: ODM returned {r.status_code}")
                 except Exception as exc:
-                    _progress[odm_uuid]["errors"].append(f"{img.filename}: {exc}")
+                    await update_progress(new_error=f"{img.filename}: {exc}")
                 finally:
-                    _progress[odm_uuid]["uploaded"] += 1
+                    await update_progress(uploaded_inc=1)
 
         await asyncio.gather(*[upload_one(img) for img in images])
 
-        errors = _progress[odm_uuid]["errors"]
+        entry = _progress.get(odm_uuid)
+        errors = entry.get("errors", []) if entry else []
         if errors:
             sample = "; ".join(errors[:5])
-            _progress[odm_uuid]["error"] = f"{len(errors)} upload error(s): {sample}"
+            await update_progress(new_err_msg=f"{len(errors)} upload error(s): {sample}")
             return
 
         # Commit — kicks off ODM processing
         async with httpx.AsyncClient(timeout=30) as client:
             r = await client.post(odm_url(f"/task/new/commit/{odm_uuid}"))
             if r.status_code != 200:
-                _progress[odm_uuid]["error"] = (
-                    f"ODM commit failed ({r.status_code}): {r.text}"
-                )
+                await update_progress(new_err_msg=f"ODM commit failed ({r.status_code}): {r.text}")
                 return
 
-        _progress[odm_uuid]["committed"] = True
+        await update_progress(committed=True)
 
     # ── POST /process ──────────────────────────────────────────────────────
     @web_app.post("/process")
@@ -189,7 +201,7 @@ def web() -> FastAPI:
                 odm_url("/task/new/init"),
                 data={
                     "name": req.task_name,
-                    "options": '[{"name":"cog","value":true},{"name":"fast-orthophoto","value":true},{"name":"skip-3dmodel","value":true}]',
+                    "options": '[{"name":"cog","value":true},{"name":"fast-orthophoto","value":true},{"name":"skip-3dmodel","value":true},{"name":"orthophoto-resolution","value":1.0}]',
                     "outputs": '["odm_orthophoto/odm_orthophoto.tif","odm_report/report.pdf"]',
                 },
             )
