@@ -117,6 +117,8 @@ export default async function FlightDetailPage({ params }: PageProps) {
         lastModifiedIso: o.uploadedAt.toISOString(),
         etag: o.etag,
         split: splitByKey[o.key] ?? null,
+        latitude: o.latitude,
+        longitude: o.longitude,
       }))}
       geotiffKey={geotiffKey ?? null}
       reportPdfKey={reportPdfKey ?? null}

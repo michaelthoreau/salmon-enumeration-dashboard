@@ -5,6 +5,7 @@ import { files, flights } from '@/lib/schema'
 import { eq } from 'drizzle-orm'
 import { headObject } from '@/lib/s3'
 import { randomUUID } from 'crypto'
+import { extractExifGps } from '@/lib/exif'
 
 export async function POST(request: NextRequest) {
   const session = await getSession()
@@ -30,6 +31,7 @@ export async function POST(request: NextRequest) {
   }
 
   const { etag, contentLength } = await headObject(key)
+  const coords = await extractExifGps(key)
 
   await db
     .insert(files)
@@ -41,10 +43,19 @@ export async function POST(request: NextRequest) {
       size: contentLength,
       uploadedAt: new Date(),
       uploadedBy: session.userId,
+      latitude: coords?.latitude ?? null,
+      longitude: coords?.longitude ?? null,
     })
     .onConflictDoUpdate({
       target: files.key,
-      set: { etag, size: contentLength, uploadedAt: new Date(), uploadedBy: session.userId },
+      set: {
+        etag,
+        size: contentLength,
+        uploadedAt: new Date(),
+        uploadedBy: session.userId,
+        latitude: coords?.latitude ?? null,
+        longitude: coords?.longitude ?? null,
+      },
     })
 
   return NextResponse.json({ ok: true, etag })

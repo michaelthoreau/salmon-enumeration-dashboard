@@ -2,12 +2,14 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { cn } from '@/lib/utils'
-import { MapPin, Map, Check, X, RotateCcw, Trash2, Edit, ChevronDown } from 'lucide-react'
+import { MapPin, Map, Check, X, RotateCcw, Trash2, Edit, ChevronDown, Image as ImageIcon } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import 'maplibre-gl/dist/maplibre-gl.css'
 
 interface OrthoMapProps {
-  outputKey: string
+  outputKey?: string | null
+  photos?: { key: string; name: string; latitude: number | null; longitude: number | null; etag: string; size: number }[]
+  onSelectPhoto?: (key: string) => void
   className?: string
   fitBoundsTrigger?: number
   onViewportChange?: (viewport: { center: [number, number]; zoom: number }) => void
@@ -89,7 +91,9 @@ function getGeoJSON(pin: [number, number] | null, points: [number, number][]) {
 }
 
 export default function OrthoMap({
-  outputKey,
+  outputKey = null,
+  photos = [],
+  onSelectPhoto,
   className,
   fitBoundsTrigger,
   onViewportChange,
@@ -112,6 +116,12 @@ export default function OrthoMap({
   const [pin, setPin] = useState<[number, number] | null>(null)
   const [points, setPoints] = useState<[number, number][]>([])
   const [isSaving, setIsSaving] = useState(false)
+  const [showPhotos, setShowPhotos] = useState(!outputKey)
+
+  // Sync showPhotos state if outputKey transitions from null to loaded
+  useEffect(() => {
+    setShowPhotos(!outputKey)
+  }, [outputKey])
 
   // Load initial location
   useEffect(() => {
@@ -212,6 +222,98 @@ export default function OrthoMap({
             },
             filter: ['==', '$type', 'Point'],
           })
+
+          // Add photo markers source and layers
+          map.addSource('photo-source', {
+            type: 'geojson',
+            data: { type: 'FeatureCollection', features: [] },
+          })
+
+          map.addLayer({
+            id: 'photo-layer',
+            type: 'circle',
+            source: 'photo-source',
+            layout: { visibility: showPhotos ? 'visible' : 'none' },
+            paint: {
+              'circle-color': '#3b82f6',
+              'circle-radius': 6,
+              'circle-stroke-color': '#ffffff',
+              'circle-stroke-width': 1.5,
+            },
+          })
+
+          map.addLayer({
+            id: 'photo-hover-layer',
+            type: 'circle',
+            source: 'photo-source',
+            layout: { visibility: showPhotos ? 'visible' : 'none' },
+            paint: {
+              'circle-color': '#2563eb',
+              'circle-radius': 9,
+              'circle-stroke-color': '#ffffff',
+              'circle-stroke-width': 2,
+              'circle-opacity': 0.8,
+            },
+            filter: ['==', 'key', ''],
+          })
+
+          // Hover handlers for photos
+          map.on('mouseenter', 'photo-layer', (e: any) => {
+            map.getCanvas().style.cursor = 'pointer'
+            const features = map.queryRenderedFeatures(e.point, { layers: ['photo-layer'] })
+            if (features.length > 0) {
+              const hoveredKey = features[0].properties?.key
+              map.setFilter('photo-hover-layer', ['==', 'key', hoveredKey || ''])
+            }
+          })
+
+          map.on('mouseleave', 'photo-layer', () => {
+            map.getCanvas().style.cursor = ''
+            map.setFilter('photo-hover-layer', ['==', 'key', ''])
+          })
+
+          // Click handler for photos showing a thumbnail popup with an navigation link
+          map.on('click', 'photo-layer', (e: any) => {
+            const features = map.queryRenderedFeatures(e.point, { layers: ['photo-layer'] })
+            if (features.length > 0) {
+              const feature = features[0]
+              const coordinates = (feature.geometry as any).coordinates.slice()
+              const { key, name, etag } = feature.properties
+
+              while (Math.abs(e.lngLat.lng - coordinates[0]) > 180) {
+                coordinates[0] += e.lngLat.lng > coordinates[0] ? 360 : -360
+              }
+
+              const thumbUrl = `/api/files/thumbnail?key=${encodeURIComponent(key)}&etag=${encodeURIComponent(etag)}&size=320`
+              const popupId = `view-photo-btn-${key.replace(/[^a-zA-Z0-9]/g, '-')}`
+
+              const popupHtml = `
+                <div class="p-2 font-sans select-none" style="min-width: 140px;">
+                  <img src="${thumbUrl}" class="w-32 h-20 object-cover rounded-md mb-2 shadow-sm border border-gray-100" />
+                  <div class="font-mono text-[10px] text-gray-700 truncate max-w-[128px] mb-2" title="${name}">${name}</div>
+                  <button id="${popupId}" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-1.5 px-2 rounded-lg text-[10px] text-center shadow-sm transition-colors cursor-pointer">
+                    View Image
+                  </button>
+                </div>
+              `
+
+              const popup = new maplibre.Popup({ closeButton: true, closeOnClick: true, className: 'custom-photo-popup' })
+                .setLngLat(coordinates)
+                .setHTML(popupHtml)
+                .addTo(map)
+
+              popup.on('open', () => {
+                const btn = document.getElementById(popupId)
+                if (btn) {
+                  btn.onclick = (event) => {
+                    event.preventDefault()
+                    onSelectPhoto?.(key)
+                    popup.remove()
+                  }
+                }
+              })
+            }
+          })
         })
       } catch (err) {
         if (!cancelled) {
@@ -242,6 +344,35 @@ export default function OrthoMap({
 
     async function applyLayer() {
       setStatus('loading')
+      
+      // Wait for the map to be ready (style loaded)
+      await new Promise<void>((resolve) => {
+        if (mapReadyRef.current && mapRef.current) return resolve()
+        const check = setInterval(() => {
+          if (cancelled || !mapRef.current) {
+            clearInterval(check)
+            return
+          }
+          if (mapReadyRef.current) {
+            clearInterval(check)
+            resolve()
+          }
+        }, 100)
+      })
+
+      if (cancelled || !mapRef.current) return
+      const map = mapRef.current
+
+      // Remove existing ortho layer/source if present
+      if (map.getLayer('ortho-layer')) map.removeLayer('ortho-layer')
+      if (map.getSource('ortho')) map.removeSource('ortho')
+
+      if (!outputKey) {
+        boundsRef.current = null
+        setStatus('ready')
+        return
+      }
+
       try {
         const infoRes = await fetch(`/api/tiles/info?key=${encodeURIComponent(outputKey)}`)
         if (!infoRes.ok) throw new Error(`Failed to load tile info (${infoRes.status})`)
@@ -255,28 +386,6 @@ export default function OrthoMap({
 
         const tileUrl = `/api/tiles/{z}/{x}/{y}?key=${encodeURIComponent(outputKey)}`
 
-        // Wait for the map to be ready (style loaded)
-        await new Promise<void>((resolve) => {
-          if (mapReadyRef.current && mapRef.current) return resolve()
-          const check = setInterval(() => {
-            if (cancelled || !mapRef.current) {
-              clearInterval(check)
-              return
-            }
-            if (mapReadyRef.current) {
-              clearInterval(check)
-              resolve()
-            }
-          }, 100)
-        })
-
-        if (cancelled || !mapRef.current) return
-        const map = mapRef.current
-
-        // Remove existing ortho layer/source if present
-        if (map.getLayer('ortho-layer')) map.removeLayer('ortho-layer')
-        if (map.getSource('ortho')) map.removeSource('ortho')
-
         map.addSource('ortho', {
           type: 'raster',
           tiles: [tileUrl],
@@ -285,6 +394,14 @@ export default function OrthoMap({
           maxzoom,
         })
         map.addLayer({ id: 'ortho-layer', type: 'raster', source: 'ortho' })
+
+        // Move photo layers to the top above the orthophoto layer
+        if (map.getLayer('photo-hover-layer')) {
+          map.moveLayer('photo-hover-layer')
+        }
+        if (map.getLayer('photo-layer')) {
+          map.moveLayer('photo-layer')
+        }
 
         // Move location layers to the top if they exist
         if (map.getLayer('location-fill')) {
@@ -326,11 +443,116 @@ export default function OrthoMap({
 
   // ── Fit bounds when fitBoundsTrigger changes ────────────────────────────────
   useEffect(() => {
-    if (fitBoundsTrigger && fitBoundsTrigger > 0 && mapRef.current && boundsRef.current) {
-      mapRef.current.resize()
-      mapRef.current.fitBounds(boundsRef.current, { padding: 20, animate: true, duration: 300 })
+    if (fitBoundsTrigger && fitBoundsTrigger > 0 && mapRef.current) {
+      const map = mapRef.current
+      map.resize()
+      if (boundsRef.current) {
+        map.fitBounds(boundsRef.current, { padding: 20, animate: true, duration: 300 })
+      } else if (photos && photos.length > 0) {
+        const validPhotos = photos.filter(
+          (p) => typeof p.latitude === 'number' && typeof p.longitude === 'number'
+        )
+        if (validPhotos.length > 0) {
+          const bounds = validPhotos.reduce(
+            (acc, curr) => {
+              return [
+                Math.min(acc[0], curr.longitude!),
+                Math.min(acc[1], curr.latitude!),
+                Math.max(acc[2], curr.longitude!),
+                Math.max(acc[3], curr.latitude!),
+              ]
+            },
+            [
+              validPhotos[0].longitude!,
+              validPhotos[0].latitude!,
+              validPhotos[0].longitude!,
+              validPhotos[0].latitude!,
+            ]
+          ) as [number, number, number, number]
+
+          const isSinglePoint = bounds[0] === bounds[2] && bounds[1] === bounds[3]
+          if (isSinglePoint) {
+            map.easeTo({ center: [bounds[0], bounds[1]], zoom: 16, duration: 300 })
+          } else {
+            map.fitBounds(bounds, { padding: 40, animate: true, duration: 300 })
+          }
+        }
+      }
     }
   }, [fitBoundsTrigger])
+
+  // ── Initial fit bounds for photos / initialLocation when outputKey is null ─
+  useEffect(() => {
+    if (status !== 'ready' || !mapRef.current || outputKey) return
+    if (initialFitDoneRef.current) return
+
+    const map = mapRef.current
+    map.resize()
+
+    // 1. Check if we have initialLocation (flight plan pin/polygon)
+    if (initialLocation) {
+      try {
+        const geo = JSON.parse(initialLocation)
+        if (geo.type === 'Point') {
+          map.jumpTo({ center: geo.coordinates, zoom: 16 })
+          initialFitDoneRef.current = true
+          return
+        } else if (geo.type === 'Polygon') {
+          const coords = geo.coordinates[0] as [number, number][]
+          const bounds = coords.reduce(
+            (acc, curr) => {
+              return [
+                Math.min(acc[0], curr[0]),
+                Math.min(acc[1], curr[1]),
+                Math.max(acc[2], curr[0]),
+                Math.max(acc[3], curr[1]),
+              ]
+            },
+            [coords[0][0], coords[0][1], coords[0][0], coords[0][1]]
+          ) as [number, number, number, number]
+
+          map.fitBounds(bounds, { padding: 20, animate: false })
+          initialFitDoneRef.current = true
+          return
+        }
+      } catch (e) {
+        console.error('[OrthoMap] failed to parse initialLocation for fit:', e)
+      }
+    }
+
+    // 2. Check if we have photo locations
+    if (photos && photos.length > 0) {
+      const validPhotos = photos.filter(
+        (p) => typeof p.latitude === 'number' && typeof p.longitude === 'number'
+      )
+      if (validPhotos.length > 0) {
+        const bounds = validPhotos.reduce(
+          (acc, curr) => {
+            return [
+              Math.min(acc[0], curr.longitude!),
+              Math.min(acc[1], curr.latitude!),
+              Math.max(acc[2], curr.longitude!),
+              Math.max(acc[3], curr.latitude!),
+            ]
+          },
+          [
+            validPhotos[0].longitude!,
+            validPhotos[0].latitude!,
+            validPhotos[0].longitude!,
+            validPhotos[0].latitude!,
+          ]
+        ) as [number, number, number, number]
+
+        const isSinglePoint = bounds[0] === bounds[2] && bounds[1] === bounds[3]
+        if (isSinglePoint) {
+          map.jumpTo({ center: [bounds[0], bounds[1]], zoom: 16 })
+        } else {
+          map.fitBounds(bounds, { padding: 40, animate: false })
+        }
+        initialFitDoneRef.current = true
+      }
+    }
+  }, [status, outputKey, initialLocation, photos])
 
   // ── Handle Map Clicks for drawing ──────────────────────────────────────────
   useEffect(() => {
@@ -392,6 +614,48 @@ export default function OrthoMap({
       map.setLayoutProperty('location-point', 'visibility', visibility)
     }
   }, [panelOpen, isEditing, status])
+
+  // Show/hide photo layer based on showPhotos state
+  useEffect(() => {
+    if (!mapRef.current || !mapReadyRef.current) return
+    const map = mapRef.current
+    const visibility = showPhotos ? 'visible' : 'none'
+
+    if (map.getLayer('photo-layer')) {
+      map.setLayoutProperty('photo-layer', 'visibility', visibility)
+    }
+    if (map.getLayer('photo-hover-layer')) {
+      map.setLayoutProperty('photo-hover-layer', 'visibility', visibility)
+    }
+  }, [showPhotos, status])
+
+  // Update photo markers GeoJSON source
+  useEffect(() => {
+    if (!mapRef.current || !mapReadyRef.current || !photos) return
+    const source = mapRef.current.getSource('photo-source')
+    if (source) {
+      const features = photos
+        .filter((p) => typeof p.latitude === 'number' && typeof p.longitude === 'number')
+        .map((p) => ({
+          type: 'Feature' as const,
+          geometry: {
+            type: 'Point' as const,
+            coordinates: [p.longitude!, p.latitude!],
+          },
+          properties: {
+            key: p.key,
+            name: p.name,
+            etag: p.etag,
+            size: p.size,
+          },
+        }))
+
+      source.setData({
+        type: 'FeatureCollection',
+        features,
+      })
+    }
+  }, [photos, status])
 
   // ── Save/Cancel handlers ───────────────────────────────────────────────────
   async function handleSave() {
@@ -480,6 +744,37 @@ export default function OrthoMap({
         </div>
       )}
       <div ref={containerRef} className="w-full h-full" />
+
+      {/* ─── Floating Photos Toggle Checkbox ─── */}
+      {status === 'ready' && photos && photos.length > 0 && (
+        <div className="absolute top-4 right-4 z-40 bg-white/95 backdrop-blur-sm px-3.5 py-2.5 rounded-2xl shadow-xl border border-gray-200/80 flex flex-col gap-1.5 select-none pointer-events-auto min-w-[170px]">
+          <div className="flex items-center gap-2.5">
+            <input
+              type="checkbox"
+              id="show-photos-toggle"
+              checked={showPhotos}
+              disabled={!photos.some(p => typeof p.latitude === 'number' && typeof p.longitude === 'number')}
+              onChange={(e) => setShowPhotos(e.target.checked)}
+              className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+            />
+            <label
+              htmlFor="show-photos-toggle"
+              className={cn(
+                "text-xs font-semibold cursor-pointer flex items-center gap-1.5",
+                photos.some(p => typeof p.latitude === 'number' && typeof p.longitude === 'number') ? "text-gray-700" : "text-gray-400 cursor-not-allowed"
+              )}
+            >
+              <ImageIcon className="w-3.5 h-3.5 text-gray-500" />
+              <span>Show Photos on Map</span>
+            </label>
+          </div>
+          {!photos.some(p => typeof p.latitude === 'number' && typeof p.longitude === 'number') && (
+            <p className="text-[9px] text-amber-600 font-medium leading-tight max-w-[170px] mt-0.5">
+              Click <span className="font-bold">Sync S3</span> in the sidebar to extract GPS data.
+            </p>
+          )}
+        </div>
+      )}
 
       {/* ─── Draw Panel Overlay ─── */}
       {editable && status === 'ready' && (

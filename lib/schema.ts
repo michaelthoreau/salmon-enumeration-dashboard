@@ -75,6 +75,8 @@ export const files = sqliteTable('files', {
   imageWidth: integer('image_width'),   // cached pixel dimensions (null = unknown)
   imageHeight: integer('image_height'),
   size: integer('size'),
+  latitude: real('latitude'),
+  longitude: real('longitude'),
 })
 
 // ─── File Points ──────────────────────────────────────────────────────────────

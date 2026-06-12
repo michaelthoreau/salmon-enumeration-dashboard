@@ -7,6 +7,7 @@ import { getSession } from '@/lib/session'
 import { headObject, listFlightObjects } from '@/lib/s3'
 import { randomUUID } from 'crypto'
 import type { Split } from '@/lib/schema'
+import { extractExifGps } from '@/lib/exif'
 
 const VALID_SPLITS = new Set<string>(['train', 'val', 'test'])
 
@@ -33,6 +34,7 @@ export async function assignFileSplit(
     const flightId = segments[2]
     if (!flightId) return { error: 'Could not derive flightId from key' }
     const { etag, contentLength } = await headObject(key)
+    const coords = await extractExifGps(key)
     await db.insert(files).values({
       id: randomUUID(),
       flightId,
@@ -42,6 +44,8 @@ export async function assignFileSplit(
       split,
       uploadedAt: new Date(),
       uploadedBy: session.userId,
+      latitude: coords?.latitude ?? null,
+      longitude: coords?.longitude ?? null,
     })
   }
 
@@ -84,6 +88,7 @@ export async function syncFlightFiles(
     let removed = 0
 
     for (const file of missingInDb) {
+      const coords = await extractExifGps(file.key)
       await db.insert(files).values({
         id: randomUUID(),
         flightId,
@@ -92,6 +97,8 @@ export async function syncFlightFiles(
         size: file.size,
         uploadedAt: file.lastModified,
         uploadedBy: session.userId,
+        latitude: coords?.latitude ?? null,
+        longitude: coords?.longitude ?? null,
       })
       added++
     }
@@ -99,6 +106,21 @@ export async function syncFlightFiles(
     for (const row of orphanedInDb) {
       await db.delete(files).where(eq(files.id, row.id))
       removed++
+    }
+
+    // Backfill coordinates for existing files in DB
+    const needsBackfill = dbFiles.filter(
+      (f) => f.latitude === null && f.longitude === null &&
+             (f.key.toLowerCase().endsWith('.jpg') || f.key.toLowerCase().endsWith('.jpeg'))
+    )
+    for (const f of needsBackfill) {
+      const coords = await extractExifGps(f.key)
+      if (coords) {
+        await db
+          .update(files)
+          .set({ latitude: coords.latitude, longitude: coords.longitude })
+          .where(eq(files.id, f.id))
+      }
     }
 
     return { ok: true, added, removed }
@@ -168,6 +190,7 @@ export async function syncProjectFiles(
       let removed = 0
 
       for (const file of missingInDb) {
+        const coords = await extractExifGps(file.key)
         await db.insert(files).values({
           id: randomUUID(),
           flightId: flight.flightId,
@@ -176,6 +199,8 @@ export async function syncProjectFiles(
           size: file.size,
           uploadedAt: file.lastModified,
           uploadedBy: session.userId,
+          latitude: coords?.latitude ?? null,
+          longitude: coords?.longitude ?? null,
         })
         added++
       }
@@ -185,7 +210,22 @@ export async function syncProjectFiles(
         removed++
       }
 
-      if (added > 0 || removed > 0) {
+      // Backfill coordinates for existing files in DB for this flight
+      const needsBackfill = dbFiles.filter(
+        (f) => f.latitude === null && f.longitude === null &&
+               (f.key.toLowerCase().endsWith('.jpg') || f.key.toLowerCase().endsWith('.jpeg'))
+      )
+      for (const f of needsBackfill) {
+        const coords = await extractExifGps(f.key)
+        if (coords) {
+          await db
+            .update(files)
+            .set({ latitude: coords.latitude, longitude: coords.longitude })
+            .where(eq(files.id, f.id))
+        }
+      }
+
+      if (added > 0 || removed > 0 || needsBackfill.length > 0) {
         results.push({
           flightId: flight.flightId,
           added,

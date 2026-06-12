@@ -52,6 +52,8 @@ interface FileEntry {
   lastModifiedIso: string
   etag: string
   split: Split | null
+  latitude?: number | null
+  longitude?: number | null
 }
 
 interface FlightSplitViewProps {
@@ -342,17 +344,15 @@ export default function FlightSplitView({
           <div className="flex gap-4 h-full">
             <button
               onClick={() => setActiveTab('map')}
-              disabled={!geotiffKey}
               className={cn(
                 'flex items-center gap-1.5 px-1 h-full text-sm font-medium border-b-2 transition-colors',
-                !geotiffKey && 'text-gray-300 cursor-not-allowed',
-                geotiffKey && activeTab === 'map'
+                activeTab === 'map'
                   ? 'border-blue-600 text-blue-600'
-                  : geotiffKey && 'border-transparent text-gray-500 hover:text-gray-800'
+                  : 'border-transparent text-gray-500 hover:text-gray-800'
               )}
             >
               <MapIcon className="w-4 h-4" />
-              Orthophoto Map
+              Flight Map
             </button>
             <button
               onClick={() => setActiveTab('images')}
@@ -367,7 +367,7 @@ export default function FlightSplitView({
               Flight Images ({images.length})
             </button>
           </div>
-          {activeTab === 'map' && geotiffKey && (
+          {activeTab === 'map' && (
             <button
               onClick={() => setZoomTrigger((prev) => prev + 1)}
               className={cn(
@@ -384,10 +384,25 @@ export default function FlightSplitView({
         {/* Tab Contents */}
         <div className="flex-1 min-h-0 overflow-hidden relative">
           {/* Map Tab */}
-          {activeTab === 'map' && geotiffKey && (
+          {activeTab === 'map' && (
             <div className="w-full h-full relative">
               <OrthoMap
                 outputKey={geotiffKey}
+                photos={images.map((img) => ({
+                  key: img.key,
+                  name: img.key.split('/').pop() || img.key,
+                  latitude: img.latitude ?? null,
+                  longitude: img.longitude ?? null,
+                  etag: img.etag,
+                  size: img.size,
+                }))}
+                onSelectPhoto={(key) => {
+                  const found = images.find((img) => img.key === key)
+                  if (found) {
+                    setActiveTab('images')
+                    setActiveImage(found)
+                  }
+                }}
                 fitBoundsTrigger={zoomTrigger}
                 className="h-full w-full rounded-none border-none"
                 editable={canWrite}
