@@ -4,14 +4,14 @@ import { useState, useRef, useEffect, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { cn } from '@/lib/utils'
-import { buttonVariants } from '@/components/ui/button'
-import { MapIcon, ImageIcon, DownloadIcon, ArrowLeft, Maximize2 } from 'lucide-react'
+import { Button, buttonVariants } from '@/components/ui/button'
+import { MapIcon, ImageIcon, DownloadIcon, ArrowLeft, Maximize2, RefreshCw } from 'lucide-react'
 import FlightUploader from './flight-uploader'
 import FileLightbox from './file-lightbox'
 import EditFlightButton from './edit-flight-button'
 import OdmPanel from './odm-panel'
 import OrthoMap from './ortho-map'
-import { assignFileSplit } from '@/app/actions/files'
+import { assignFileSplit, syncFlightFiles } from '@/app/actions/files'
 import type { Split, flights, flightPlans, projects, odmTasks } from '@/lib/schema'
 import type { InferSelectModel } from 'drizzle-orm'
 
@@ -95,6 +95,42 @@ export default function FlightSplitView({
   const [zoomTrigger, setZoomTrigger] = useState(0)
   const [activeTab, setActiveTab] = useState<'map' | 'images'>(geotiffKey ? 'map' : 'images')
   const isResizingRef = useRef(false)
+
+  const [isSyncing, setIsSyncing] = useState(false)
+  const [syncStatus, setSyncStatus] = useState<{ type: 'success' | 'error'; message: string } | null>(null)
+
+  const handleSync = useCallback(async () => {
+    setIsSyncing(true)
+    setSyncStatus(null)
+    try {
+      const result = await syncFlightFiles(projectId, flightPlanId, flightId)
+      if (result.ok) {
+        if (result.added === 0 && result.removed === 0) {
+          setSyncStatus({ type: 'success', message: 'All files are already synchronized with S3.' })
+        } else {
+          setSyncStatus({
+            type: 'success',
+            message: `Sync complete: Registered ${result.added} missing file(s) and removed ${result.removed} orphaned database record(s).`
+          })
+        }
+        router.refresh()
+      } else {
+        setSyncStatus({ type: 'error', message: result.error ?? 'Sync failed.' })
+      }
+    } catch (err) {
+      setSyncStatus({ type: 'error', message: err instanceof Error ? err.message : String(err) })
+    } finally {
+      setIsSyncing(false)
+    }
+  }, [projectId, flightPlanId, flightId, router])
+
+  // Clear sync status after 6 seconds
+  useEffect(() => {
+    if (syncStatus) {
+      const timer = setTimeout(() => setSyncStatus(null), 6000)
+      return () => clearTimeout(timer)
+    }
+  }, [syncStatus])
 
   // Automatically switch to map tab once the processing finishes and geotiffKey becomes available
   useEffect(() => {
@@ -218,14 +254,38 @@ export default function FlightSplitView({
           </div>
         </div>
 
-        {/* Uploader Section */}
+        {/* Uploader & Sync Section */}
         {canWrite && (
-          <section className="border-t border-gray-100 pt-4">
-            <FlightUploader
-              flightId={flightId}
-              defaultOpen={false}
-              hasFiles={displayObjects.length > 0}
-            />
+          <section className="border-t border-gray-100 pt-4 space-y-3">
+            <div className="grid grid-cols-2 gap-2">
+              <FlightUploader
+                flightId={flightId}
+                defaultOpen={false}
+                hasFiles={displayObjects.length > 0}
+              />
+              <Button
+                variant="outline"
+                className="w-full flex items-center justify-center gap-2"
+                onClick={handleSync}
+                disabled={isSyncing}
+              >
+                <RefreshCw className={cn("w-4 h-4 text-gray-500", isSyncing && "animate-spin")} />
+                <span>{isSyncing ? 'Syncing...' : 'Sync S3'}</span>
+              </Button>
+            </div>
+
+            {syncStatus && (
+              <div
+                className={cn(
+                  "p-3 rounded-lg border text-xs animate-in fade-in slide-in-from-top-1 duration-200",
+                  syncStatus.type === 'success'
+                    ? "bg-green-50 text-green-700 border-green-200"
+                    : "bg-red-50 text-red-700 border-red-200"
+                )}
+              >
+                {syncStatus.message}
+              </div>
+            )}
           </section>
         )}
 

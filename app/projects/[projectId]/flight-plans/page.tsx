@@ -8,6 +8,7 @@ import { cn } from '@/lib/utils'
 import { buttonVariants } from '@/components/ui/button'
 import CreateFlightPlanForm from './create-flight-plan-form'
 import { DeleteFlightPlanButton, RestoreFlightPlanButton, EditFlightPlanButton } from './flight-plan-actions'
+import SyncProjectButton from './sync-project-button'
 
 interface PageProps {
   params: Promise<{ projectId: string }>
@@ -17,6 +18,7 @@ export default async function FlightPlansPage({ params }: PageProps) {
   const { projectId } = await params
   const session = await getSession()
   const isAdmin = session?.role === 'admin'
+  const canWrite = session?.role === 'read-write' || session?.role === 'admin'
 
   const [project] = await db.select().from(projects).where(eq(projects.id, projectId))
   if (!project) notFound()
@@ -38,7 +40,10 @@ export default async function FlightPlansPage({ params }: PageProps) {
             Flight plans{' '}
             <span className="text-sm font-normal text-gray-500">({active.length})</span>
           </h2>
-          {isAdmin && <CreateFlightPlanForm projectId={projectId} />}
+          <div className="flex items-center gap-2">
+            {canWrite && <SyncProjectButton projectId={projectId} />}
+            {isAdmin && <CreateFlightPlanForm projectId={projectId} />}
+          </div>
         </div>
         <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
           {active.length === 0 ? (
