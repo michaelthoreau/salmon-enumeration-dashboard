@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback, useRef } from 'react'
+import { useRouter } from 'next/navigation'
 
 async function openPresignedUrl(key: string, download = false): Promise<void> {
   const qs = download ? `&download=1` : ''
@@ -62,6 +63,7 @@ function formatDuration(ms: number): string {
 }
 
 export default function OdmPanel({ flightId, projectId, flightPlanId, initialTask }: OdmPanelProps) {
+  const router = useRouter()
   const [task, setTask] = useState<OdmTask | null>(() => {
     if (!initialTask) return null
     return {
@@ -92,6 +94,7 @@ export default function OdmPanel({ flightId, projectId, flightPlanId, initialTas
       })
       if (res.ok) {
         setTask((prev) => (prev ? { ...prev, status: 'canceled' } : null))
+        router.refresh()
       } else {
         const data = await res.json()
         alert(data.error ?? 'Failed to cancel task')
@@ -161,6 +164,8 @@ export default function OdmPanel({ flightId, projectId, flightPlanId, initialTas
           consecutiveErrors = 0
           if (!TERMINAL_STATUSES.has(data.status)) {
             schedule(POLL_INTERVAL_MS)
+          } else {
+            router.refresh()
           }
         }
       }, delay)
@@ -199,6 +204,7 @@ export default function OdmPanel({ flightId, projectId, flightPlanId, initialTas
         outputKey: null,
         reportKey: null,
       })
+      router.refresh()
     } finally {
       setStarting(false)
     }
