@@ -74,7 +74,7 @@ from pydantic import BaseModel
 
 image = (
     modal.Image.debian_slim(python_version="3.11")
-    .apt_install("gdal-bin", "libgdal-dev", "g++")
+    .apt_install("gdal-bin", "libgdal-dev", "g++", "libgl1", "libglib2.0-0")
     .pip_install(
         "fastapi[standard]",
         "boto3",
@@ -113,6 +113,7 @@ class GeorefRequest(BaseModel):
     images: list[ImageSpec]
     bucket: str
     output_prefix: str      # S3 key prefix for outputs, e.g. "proj/plan/flight/georef/"
+    dewarp: bool = True     # Apply lens dewarping if available
 
 
 # ── In-memory task state ───────────────────────────────────────────────────────
@@ -169,6 +170,33 @@ def _gps_to_decimal(dms: tuple, ref: str) -> float:
     return dec
 
 
+def _parse_dewarp_data(dewarp_str: str) -> dict[str, float] | None:
+    """Parse a DJI DewarpData XMP string into a dict of parameters."""
+    if not dewarp_str:
+        return None
+    try:
+        parts = dewarp_str.split(';')
+        if len(parts) < 2:
+            return None
+        vals = [float(x) for x in parts[1].split(',')]
+        if len(vals) < 9:
+            return None
+        return {
+            "fx": vals[0],
+            "fy": vals[1],
+            "cx": vals[2],
+            "cy": vals[3],
+            "k1": vals[4],
+            "k2": vals[5],
+            "p1": vals[6],
+            "p2": vals[7],
+            "k3": vals[8]
+        }
+    except Exception as exc:
+        print(f"[dewarp] Error parsing DewarpData string '{dewarp_str}': {exc}")
+        return None
+
+
 def _parse_dji_metadata(jpeg_bytes: bytes) -> dict[str, Any]:
     """
     Extract all georeferencing-relevant metadata from a DJI JPEG.
@@ -178,6 +206,7 @@ def _parse_dji_metadata(jpeg_bytes: bytes) -> dict[str, Any]:
       gimbal_yaw, gimbal_pitch, gimbal_roll,
       focal_px, cx, cy,
       img_width, img_height  (ints)
+      dewarp_flag (int), dewarp_data (str)
     Missing values default to None.
     """
     import piexif
@@ -238,6 +267,11 @@ def _parse_dji_metadata(jpeg_bytes: bytes) -> dict[str, Any]:
         result["focal_px"] = _f("CalibratedFocalLength")
         result["cx"] = _f("CalibratedOpticalCenterX")
         result["cy"] = _f("CalibratedOpticalCenterY")
+
+        # Dewarp fields
+        dewarp_flag_val = _f("DewarpFlag")
+        result["dewarp_flag"] = int(dewarp_flag_val) if dewarp_flag_val is not None else None
+        result["dewarp_data"] = dji.get("DewarpData")
 
     return result
 
@@ -360,6 +394,7 @@ def _warp_to_geotiff(
     width: int,
     height: int,
     out_path: str,
+    dewarp_params: dict[str, float] = None,
 ) -> None:
     """
     Create a EPSG:4326 GeoTIFF at *out_path* from raw JPEG bytes.
@@ -374,6 +409,41 @@ def _warp_to_geotiff(
 
     with tempfile.TemporaryDirectory() as tmpdir:
         input_jpg = os.path.join(tmpdir, "input.jpg")
+        
+        # If dewarp parameters are provided, undistort using OpenCV first
+        if dewarp_params:
+            try:
+                import cv2
+                import numpy as np
+                print("[warp] Undistorting image with OpenCV before warping...")
+                nparr = np.frombuffer(jpeg_bytes, np.uint8)
+                img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+                if img is not None:
+                    fx = dewarp_params["fx"]
+                    fy = dewarp_params["fy"]
+                    cx_abs = width / 2.0 + dewarp_params["cx"]
+                    cy_abs = height / 2.0 + dewarp_params["cy"]
+                    camera_matrix = np.array([
+                        [fx, 0, cx_abs],
+                        [0, fy, cy_abs],
+                        [0, 0, 1]
+                    ], dtype=np.float32)
+                    dist_coeffs = np.array([
+                        dewarp_params["k1"],
+                        dewarp_params["k2"],
+                        dewarp_params["p1"],
+                        dewarp_params["p2"],
+                        dewarp_params["k3"]
+                    ], dtype=np.float32)
+                    undistorted_img = cv2.undistort(img, camera_matrix, dist_coeffs)
+                    _, encoded_img = cv2.imencode(".jpg", undistorted_img)
+                    jpeg_bytes = encoded_img.tobytes()
+                    print("[warp] Image undistorted successfully.")
+                else:
+                    print("[warp] Warning: OpenCV failed to decode image. Proceeding with raw image.")
+            except Exception as e:
+                print(f"[warp] Error during undistortion: {e}. Proceeding with raw image.")
+
         with open(input_jpg, "wb") as f:
             f.write(jpeg_bytes)
 
@@ -491,12 +561,13 @@ async def _process_images(
     images: list[ImageSpec],
     bucket: str,
     output_prefix: str,
+    dewarp: bool = True,
 ) -> None:
     """Background task: georef each image, merge, upload COG to S3."""
     import boto3
     import numpy as np
 
-    print(f"[process] starting task_id={task_id} total={len(images)} bucket={bucket} prefix={output_prefix}")
+    print(f"[process] starting task_id={task_id} total={len(images)} bucket={bucket} prefix={output_prefix} dewarp={dewarp}")
     state = _tasks[task_id]
     s3 = boto3.client(
         region_name=os.environ["AWS_REGION"],
@@ -529,9 +600,29 @@ async def _process_images(
                 gimbal_pitch = meta.get("gimbal_pitch")
                 gimbal_yaw = meta.get("gimbal_yaw")
                 gimbal_roll = meta.get("gimbal_roll")
-                focal_px = meta.get("focal_px")
-                cx = meta.get("cx")
-                cy = meta.get("cy")
+                
+                # Check dewarp options
+                dewarp_flag = meta.get("dewarp_flag")
+                dewarp_data_str = meta.get("dewarp_data")
+                should_undistort = dewarp and dewarp_flag == 0 and dewarp_data_str is not None
+                
+                dewarp_params = None
+                if should_undistort:
+                    dewarp_params = _parse_dewarp_data(dewarp_data_str)
+                    if dewarp_params:
+                        focal_px = dewarp_params["fx"]
+                        cx = width / 2.0 + dewarp_params["cx"]
+                        cy = height / 2.0 + dewarp_params["cy"]
+                        print(f"[process] Applying dewarp parameters: fx={focal_px}, cx={cx}, cy={cy}")
+                    else:
+                        print(f"[process] Failed to parse DewarpData string: {dewarp_data_str}")
+                        should_undistort = False
+
+                if not should_undistort:
+                    focal_px = meta.get("focal_px")
+                    cx = meta.get("cx")
+                    cy = meta.get("cy")
+                    print(f"[process] No dewarping applied (dewarp={dewarp}, flag={dewarp_flag}). Using EXIF fallback: focal={focal_px}, cx={cx}, cy={cy}")
 
                 if any(v is None for v in [lat, lon, width, height, gimbal_yaw, gimbal_pitch, gimbal_roll, focal_px]):
                     errors.append(f"{img_spec.filename}: missing required metadata — skipped")
@@ -557,8 +648,8 @@ async def _process_images(
                 tile_path = os.path.join(tmpdir, f"tile_{idx:05d}.tif")
                 await loop.run_in_executor(
                     None,
-                    lambda jp=jpeg_bytes, co=corners, w=width, h=height, tp=tile_path:
-                        _warp_to_geotiff(jp, co, w, h, tp),
+                    lambda jp=jpeg_bytes, co=corners, w=width, h=height, tp=tile_path, dp=dewarp_params:
+                        _warp_to_geotiff(jp, co, w, h, tp, dewarp_params=dp),
                 )
                 tile_paths.append(tile_path)
 
@@ -628,7 +719,7 @@ async def georeference(
     background_tasks: BackgroundTasks,
     _: None = Depends(_require_auth),
 ) -> dict:
-    print(f"[georeference] task_id={req.task_id} images={len(req.images)} bucket={req.bucket} prefix={req.output_prefix}")
+    print(f"[georeference] task_id={req.task_id} images={len(req.images)} bucket={req.bucket} prefix={req.output_prefix} dewarp={req.dewarp}")
     if req.task_id in _tasks:
         print(f"[georeference] task_id={req.task_id} already exists, status={_tasks[req.task_id]['status']}")
         return {"task_id": req.task_id, "status": _tasks[req.task_id]["status"]}
@@ -646,6 +737,7 @@ async def georeference(
         req.images,
         req.bucket,
         req.output_prefix,
+        req.dewarp,
     )
     return {"task_id": req.task_id}
 
@@ -687,7 +779,7 @@ def web() -> FastAPI:
     timeout=300,
     memory=2048,
 )
-def georeference_single_image(jpeg_bytes: bytes) -> bytes:
+def georeference_single_image(jpeg_bytes: bytes, dewarp: bool = True) -> bytes:
     """
     Modal function to georeference a single image and return its GeoTIFF bytes.
     Useful for local debugging and CLI invocation.
@@ -695,7 +787,7 @@ def georeference_single_image(jpeg_bytes: bytes) -> bytes:
     import tempfile
     import os
 
-    print("[worker] Starting single-image georeference...")
+    print(f"[worker] Starting single-image georeference (dewarp={dewarp})...")
     meta = _parse_dji_metadata(jpeg_bytes)
 
     lat = meta.get("lat")
@@ -705,11 +797,31 @@ def georeference_single_image(jpeg_bytes: bytes) -> bytes:
     gimbal_pitch = meta.get("gimbal_pitch")
     gimbal_yaw = meta.get("gimbal_yaw")
     gimbal_roll = meta.get("gimbal_roll")
-    focal_px = meta.get("focal_px")
-    cx = meta.get("cx")
-    cy = meta.get("cy")
+    
+    # Check dewarp options
+    dewarp_flag = meta.get("dewarp_flag")
+    dewarp_data_str = meta.get("dewarp_data")
+    should_undistort = dewarp and dewarp_flag == 0 and dewarp_data_str is not None
+    
+    dewarp_params = None
+    if should_undistort:
+        dewarp_params = _parse_dewarp_data(dewarp_data_str)
+        if dewarp_params:
+            focal_px = dewarp_params["fx"]
+            cx = width / 2.0 + dewarp_params["cx"]
+            cy = height / 2.0 + dewarp_params["cy"]
+            print(f"[worker] Applying dewarp parameters: fx={focal_px}, cx={cx}, cy={cy}")
+        else:
+            print(f"[worker] Failed to parse DewarpData: {dewarp_data_str}")
+            should_undistort = False
 
-    print(f"[worker] Metadata parsed: lat={lat}, lon={lon}, width={width}, height={height}, yaw={gimbal_yaw}, pitch={gimbal_pitch}, roll={gimbal_roll}")
+    if not should_undistort:
+        focal_px = meta.get("focal_px")
+        cx = meta.get("cx")
+        cy = meta.get("cy")
+        print(f"[worker] Using EXIF calibration fallback: focal={focal_px}, cx={cx}, cy={cy}")
+
+    print(f"[worker] Metadata values: lat={lat}, lon={lon}, width={width}, height={height}, yaw={gimbal_yaw}, pitch={gimbal_pitch}, roll={gimbal_roll}")
 
     if any(v is None for v in [lat, lon, width, height, gimbal_yaw, gimbal_pitch, gimbal_roll, focal_px]):
         raise ValueError(f"Missing required georeferencing metadata: {meta}")
@@ -730,8 +842,8 @@ def georeference_single_image(jpeg_bytes: bytes) -> bytes:
 
     with tempfile.TemporaryDirectory() as tmpdir:
         out_path = os.path.join(tmpdir, "output.tif")
-        print(f"[worker] Warping image to GeoTIFF at {out_path}...")
-        _warp_to_geotiff(jpeg_bytes, corners, width, height, out_path)
+        print(f"[worker] Warping image to GeoTIFF at {out_path} (dewarp={dewarp_params is not None})...")
+        _warp_to_geotiff(jpeg_bytes, corners, width, height, out_path, dewarp_params=dewarp_params)
 
         with open(out_path, "rb") as fh:
             geotiff_bytes = fh.read()
@@ -741,11 +853,12 @@ def georeference_single_image(jpeg_bytes: bytes) -> bytes:
 
 
 @app.local_entrypoint()
-def test_georef(img_path: str = "DJI_20260612171254_0242_V.JPG"):
+def test_georef(img_path: str = "DJI_20260612171254_0242_V.JPG", dewarp: bool = True):
     """
     Local entrypoint run via `modal run modal/georef_worker.py`.
     Sends the local test image to Modal, georeferences it, and saves the GeoTIFF locally.
     Specify custom image path with: --img-path <path_to_image>
+    Specify whether to dewarp with: --dewarp or --no-dewarp
     """
     import os
     print(f"[local] Reading local test image from {img_path}...")
@@ -756,15 +869,16 @@ def test_georef(img_path: str = "DJI_20260612171254_0242_V.JPG"):
         print(f"[local] Error: Test image {img_path} not found in current directory.")
         return
 
-    print(f"[local] Image size: {len(jpeg_bytes)} bytes. Calling georeference_single_image on Modal...")
+    print(f"[local] Image size: {len(jpeg_bytes)} bytes. Calling georeference_single_image on Modal (dewarp={dewarp})...")
     try:
-        geotiff_bytes = georeference_single_image.remote(jpeg_bytes)
+        geotiff_bytes = georeference_single_image.remote(jpeg_bytes, dewarp=dewarp)
     except Exception as exc:
         print(f"[local] Modal function execution failed: {exc}")
         return
 
     base_name, _ = os.path.splitext(os.path.basename(img_path))
-    out_path = f"{base_name}_ref.tif"
+    suffix = "" if dewarp else "_warped"
+    out_path = f"{base_name}{suffix}_ref.tif"
     print(f"[local] Received GeoTIFF. Saving to {out_path}...")
     with open(out_path, "wb") as fh:
         fh.write(geotiff_bytes)
