@@ -853,34 +853,98 @@ def georeference_single_image(jpeg_bytes: bytes, dewarp: bool = True) -> bytes:
 
 
 @app.local_entrypoint()
-def test_georef(img_path: str = "DJI_20260612171254_0242_V.JPG", dewarp: bool = True):
+def test_georef(
+    img_path: str = None,
+    dir_path: str = None,
+    dewarp: bool = True,
+):
     """
     Local entrypoint run via `modal run modal/georef_worker.py`.
-    Sends the local test image to Modal, georeferences it, and saves the GeoTIFF locally.
-    Specify custom image path with: --img-path <path_to_image>
-    Specify whether to dewarp with: --dewarp or --no-dewarp
+    Sends a local image or directory of images to Modal for georeferencing.
+
+    Examples:
+      Single image:
+        modal run modal/georef_worker.py --img-path DJI_20260612171254_0242_V.JPG
+      Entire folder:
+        modal run modal/georef_worker.py --dir-path path/to/images
+      Specify whether to dewarp with: --dewarp or --no-dewarp
     """
     import os
-    print(f"[local] Reading local test image from {img_path}...")
-    try:
-        with open(img_path, "rb") as fh:
-            jpeg_bytes = fh.read()
-    except FileNotFoundError:
-        print(f"[local] Error: Test image {img_path} not found in current directory.")
-        return
+    import glob
 
-    print(f"[local] Image size: {len(jpeg_bytes)} bytes. Calling georeference_single_image on Modal (dewarp={dewarp})...")
-    try:
-        geotiff_bytes = georeference_single_image.remote(jpeg_bytes, dewarp=dewarp)
-    except Exception as exc:
-        print(f"[local] Modal function execution failed: {exc}")
-        return
+    if not img_path and not dir_path:
+        # Default fallback to the default test image if nothing is specified
+        img_path = "DJI_20260612171254_0242_V.JPG"
 
-    base_name, _ = os.path.splitext(os.path.basename(img_path))
-    suffix = "" if dewarp else "_warped"
-    out_path = f"{base_name}{suffix}_ref.tif"
-    print(f"[local] Received GeoTIFF. Saving to {out_path}...")
-    with open(out_path, "wb") as fh:
-        fh.write(geotiff_bytes)
-    print(f"[local] Success! Saved georeferenced output to {out_path} ({len(geotiff_bytes)} bytes)")
+    if img_path:
+        print(f"[local] Reading local test image from {img_path}...")
+        try:
+            with open(img_path, "rb") as fh:
+                jpeg_bytes = fh.read()
+        except FileNotFoundError:
+            print(f"[local] Error: Test image {img_path} not found.")
+            return
+
+        print(f"[local] Image size: {len(jpeg_bytes)} bytes. Calling georeference_single_image on Modal (dewarp={dewarp})...")
+        try:
+            geotiff_bytes = georeference_single_image.remote(jpeg_bytes, dewarp=dewarp)
+        except Exception as exc:
+            print(f"[local] Modal function execution failed: {exc}")
+            return
+
+        base_name, _ = os.path.splitext(os.path.basename(img_path))
+        suffix = "" if dewarp else "_warped"
+        out_path = f"{base_name}{suffix}_ref.tif"
+        print(f"[local] Received GeoTIFF. Saving to {out_path}...")
+        with open(out_path, "wb") as fh:
+            fh.write(geotiff_bytes)
+        print(f"[local] Success! Saved georeferenced output to {out_path} ({len(geotiff_bytes)} bytes)")
+
+    elif dir_path:
+        if not os.path.isdir(dir_path):
+            print(f"[local] Error: Directory '{dir_path}' does not exist.")
+            return
+
+        # Find all images in the folder (case-insensitive glob)
+        files = []
+        for ext in ("*.jpg", "*.jpeg", "*.JPG", "*.JPEG", "*.png", "*.PNG"):
+            files.extend(glob.glob(os.path.join(dir_path, ext)))
+
+        if not files:
+            print(f"[local] No JPEGs or PNGs found in directory '{dir_path}'.")
+            return
+
+        print(f"[local] Found {len(files)} images in '{dir_path}'. Processing sequential georeferencing...")
+
+        # Create output directory relative to source: dir_path/ref/
+        ref_dir = os.path.join(dir_path, "ref")
+        os.makedirs(ref_dir, exist_ok=True)
+        print(f"[local] Outputs will be saved to '{ref_dir}/'")
+
+        for idx, file_path in enumerate(sorted(files)):
+            filename = os.path.basename(file_path)
+            print(f"[local] [{idx+1}/{len(files)}] Reading {filename}...")
+            try:
+                with open(file_path, "rb") as fh:
+                    jpeg_bytes = fh.read()
+            except Exception as e:
+                print(f"[local] Error reading {filename}: {e} — skipping")
+                continue
+
+            print(f"[local] Calling Modal for {filename} (dewarp={dewarp})...")
+            try:
+                geotiff_bytes = georeference_single_image.remote(jpeg_bytes, dewarp=dewarp)
+            except Exception as exc:
+                print(f"[local] Failed to georeference {filename} on Modal: {exc}")
+                continue
+
+            base_name, _ = os.path.splitext(filename)
+            suffix = "" if dewarp else "_warped"
+            out_path = os.path.join(ref_dir, f"{base_name}{suffix}_ref.tif")
+            
+            with open(out_path, "wb") as fh:
+                fh.write(geotiff_bytes)
+            print(f"[local] Successfully saved output to {out_path}")
+
+        print("[local] Folder processing completed successfully!")
 
