@@ -93,7 +93,7 @@ export default function LabelingView({ projectId, tasks: initialTasks, queues: i
   const [queues, setQueues] = useState<QueueRow[]>(initialQueues)
 
   const [taskFilter, setTaskFilter] = useState<TaskFilter>('incomplete')
-  const [queueFilter, setQueueFilter] = useState<QueueFilter>('__all')
+  const [queueFilter, setQueueFilter] = useState<QueueFilter>('__unassigned')
   const [selected, setSelected] = useState<Set<string>>(new Set())
 
   // ── Dialog state ─────────────────────────────────────────────────────────
@@ -139,13 +139,11 @@ export default function LabelingView({ projectId, tasks: initialTasks, queues: i
 
   const filteredTasks = useMemo(() => {
     let result = tasks
-    // Queue filter
     if (queueFilter === '__unassigned') {
       result = result.filter(t => !t.queueId)
-    } else if (queueFilter !== '__all') {
+    } else {
       result = result.filter(t => t.queueId === queueFilter)
     }
-    // Status filter
     if (taskFilter === 'incomplete') result = result.filter(t => !t.completedBy)
     else if (taskFilter === 'complete') result = result.filter(t => !!t.completedBy)
     return result
@@ -263,7 +261,7 @@ export default function LabelingView({ projectId, tasks: initialTasks, queues: i
       setTasks(prev => prev.map(t =>
         t.queueId === deleteQueueId ? { ...t, queueId: null } : t
       ))
-      if (queueFilter === deleteQueueId) setQueueFilter('__all')
+      if (queueFilter === deleteQueueId) setQueueFilter('__unassigned')
     }
     setDeleteQueueBusy(false)
     setDeleteQueueId(null)
@@ -272,9 +270,9 @@ export default function LabelingView({ projectId, tasks: initialTasks, queues: i
 
   // ── Tab counts ────────────────────────────────────────────────────────────
   const tabCounts = useMemo(() => {
-    let base = tasks
-    if (queueFilter === '__unassigned') base = base.filter(t => !t.queueId)
-    else if (queueFilter !== '__all') base = base.filter(t => t.queueId === queueFilter)
+    const base = queueFilter === '__unassigned'
+      ? tasks.filter(t => !t.queueId)
+      : tasks.filter(t => t.queueId === queueFilter)
     return {
       incomplete: base.filter(t => !t.completedBy).length,
       complete: base.filter(t => !!t.completedBy).length,
@@ -300,16 +298,7 @@ export default function LabelingView({ projectId, tasks: initialTasks, queues: i
           )}
         </div>
 
-        {/* All tasks */}
-        <SidebarItem
-          active={queueFilter === '__all'}
-          onClick={() => setQueueFilter('__all')}
-          icon={<LayersIcon className="w-3.5 h-3.5" />}
-          label="All tasks"
-          count={totalCount}
-        />
-
-        {/* Unassigned */}
+        {/* Not in a queue */}
         <SidebarItem
           active={queueFilter === '__unassigned'}
           onClick={() => setQueueFilter('__unassigned')}

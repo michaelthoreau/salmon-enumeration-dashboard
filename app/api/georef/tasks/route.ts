@@ -84,6 +84,15 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error: 'No images found for this flight' }, { status: 400 })
   }
 
+  // Sort objects alphabetically by filename (representing sequential/chronological order)
+  objects.sort((a, b) => {
+    const aName = a.key.split('/').pop() || ''
+    const bName = b.key.split('/').pop() || ''
+    return aName.localeCompare(bName, undefined, { numeric: true, sensitivity: 'base' })
+  })
+
+  const firstObject = objects[0]
+
   const workerUrl = process.env.MODAL_GEOREF_WORKER_URL
   const workerToken = process.env.MODAL_GEOREF_WORKER_TOKEN
   if (!workerUrl || !workerToken) {
@@ -96,10 +105,10 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   // Use our DB task ID also as the Modal task_id for idempotency
   const taskId = randomUUID()
   const outputPrefix = `${projectId}/${flightPlanId}/${flightId}/georef`
-  const images = objects.map((o) => ({
-    key: o.key,
-    filename: o.key.split('/').pop() ?? o.key,
-  }))
+  const images = [{
+    key: firstObject.key,
+    filename: firstObject.key.split('/').pop() ?? firstObject.key,
+  }]
 
   console.log(`[georef POST] taskId=${taskId} images=${images.length} workerUrl=${workerUrl} tokenLen=${workerToken.length}`)
 

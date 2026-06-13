@@ -13,7 +13,7 @@ async function openPresignedUrl(key: string): Promise<void> {
 
 interface GeorefTask {
   taskId: string
-  status: 'running' | 'completed' | 'failed'
+  status: 'pending' | 'running' | 'completed' | 'failed'
   processed: number
   total: number
   outputKey: string | null
@@ -39,6 +39,7 @@ const MAX_POLL_INTERVAL_MS = 30_000
 const TERMINAL_STATUSES = new Set<GeorefTask['status']>(['completed', 'failed'])
 
 const STATUS_BADGE: Record<GeorefTask['status'], string> = {
+  pending: 'bg-amber-100 text-amber-800',
   running: 'bg-blue-100 text-blue-800',
   completed: 'bg-green-100 text-green-800',
   failed: 'bg-red-100 text-red-800',
@@ -189,13 +190,15 @@ export default function GeorefPanel({
           </div>
 
           {/* Progress bar */}
-          {task.status === 'running' && (
+          {(task.status === 'running' || task.status === 'pending') && (
             <div className="px-4 py-3 border-b border-gray-200">
               <div className="flex items-center justify-between mb-1.5">
                 <span className="text-xs text-gray-500">
-                  {task.total > 0
-                    ? `Georeferencing… ${task.processed} / ${task.total}`
-                    : 'Georeferencing images…'}
+                  {task.status === 'pending'
+                    ? 'Pending…'
+                    : task.total > 0
+                      ? `Georeferencing… ${task.processed} / ${task.total}`
+                      : 'Georeferencing images…'}
                 </span>
                 {task.total > 0 && (
                   <span className="text-xs font-mono text-gray-500">

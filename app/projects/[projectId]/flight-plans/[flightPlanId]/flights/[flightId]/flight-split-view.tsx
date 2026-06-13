@@ -10,16 +10,18 @@ import FlightUploader from './flight-uploader'
 import FileLightbox from './file-lightbox'
 import EditFlightButton from './edit-flight-button'
 import OdmPanel from './odm-panel'
+import GeorefPanel from './georef-panel'
 import OrthoMap from './ortho-map'
 import { assignFileSplit, syncFlightFiles } from '@/app/actions/files'
 import { updateFlightPlanLocation } from '@/app/actions/flight-plans'
-import type { Split, flights, flightPlans, projects, odmTasks } from '@/lib/schema'
+import type { Split, flights, flightPlans, projects, odmTasks, georefTasks } from '@/lib/schema'
 import type { InferSelectModel } from 'drizzle-orm'
 
 type Flight = InferSelectModel<typeof flights>
 type FlightPlan = InferSelectModel<typeof flightPlans>
 type Project = InferSelectModel<typeof projects>
 type OdmTask = InferSelectModel<typeof odmTasks>
+type GeorefTask = InferSelectModel<typeof georefTasks>
 
 const IMAGE_EXTS = new Set(['jpg', 'jpeg', 'png', 'webp', 'gif'])
 
@@ -69,6 +71,7 @@ interface FlightSplitViewProps {
   geotiffDownloadUrl: string
   reportPdfViewUrl: string
   latestOdmTask: OdmTask | null
+  latestGeorefTask: GeorefTask | null
   splitByKey: Record<string, Split | null>
   canWrite: boolean
   formattedTime: string
@@ -88,6 +91,7 @@ export default function FlightSplitView({
   geotiffDownloadUrl,
   reportPdfViewUrl,
   latestOdmTask,
+  latestGeorefTask,
   splitByKey,
   canWrite,
   formattedTime,
@@ -307,6 +311,28 @@ export default function FlightSplitView({
                     outputKey: latestOdmTask.outputKey ?? null,
                     reportKey: latestOdmTask.reportKey ?? null,
                   }
+                  : null
+              }
+            />
+          </section>
+        )}
+
+        {/* Quick Georeference Panel */}
+        {canWrite && (
+          <section className="border-t border-gray-100 pt-4">
+            <GeorefPanel
+              flightId={flightId}
+              projectId={projectId}
+              flightPlanId={flightPlanId}
+              initialTask={
+                latestGeorefTask
+                  ? {
+                      taskId: latestGeorefTask.id,
+                      status: latestGeorefTask.status,
+                      outputKey: latestGeorefTask.outputKey ?? null,
+                      error: latestGeorefTask.error ?? null,
+                      totalImages: latestGeorefTask.totalImages,
+                    }
                   : null
               }
             />
