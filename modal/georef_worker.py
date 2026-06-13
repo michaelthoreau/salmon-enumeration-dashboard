@@ -73,19 +73,17 @@ from pydantic import BaseModel
 # ── Container image ────────────────────────────────────────────────────────────
 
 image = (
-    modal.Image.micromamba(python_version="3.11")
-    .micromamba_install(
-        "gdal",
-        "rasterio",
-        "numpy",
-        channels=["conda-forge"],
-    )
+    modal.Image.debian_slim(python_version="3.11")
+    .apt_install("gdal-bin", "libgdal-dev", "g++")
     .pip_install(
         "fastapi[standard]",
         "boto3",
         "Pillow",
         "piexif",
         "pyproj",
+        "cameratransform",
+        "opencv-python-headless",
+        "rasterio",
     )
 )
 
@@ -281,111 +279,70 @@ def _compute_footprint(
     height: int,
 ) -> list[tuple[float, float]]:
     """
-    Return the four ground corners (lat, lon) for a DJI image.
+    Return the four ground corners (lat, lon) for a DJI image using CameraTransform.
 
     Corners are in image order: TL, TR, BR, BL.
-
-    Coordinate conventions
-    ──────────────────────
-    Camera frame   x = image right, y = image down, z = optical axis (into scene)
-    NED frame      x = North, y = East, z = Down
-
-    The fixed rotation from camera frame to a "level North-facing" camera is:
-        R_fix = [[0, -1, 0], [0, 0, -1], [1, 0, 0]]
-    i.e. camera-z → NED-x (North) when pointing forward, camera-x → NED-y (East),
-    camera-y → NED-z-neg (up).
-
-    For DJI gimbal the world-frame orientation is encoded as ZYX Euler angles
-    (yaw around NED-z, pitch around rotated-y, roll around rotated-x) following
-    the standard aerospace body-to-NED convention.  DJI yaw is clockwise from
-    North (positive = right turn), same as the standard NED heading angle.
-
-    NOTE on roll=180 (inverted mount)
-    DJI M4D downward payload: the camera is physically inverted (roll≈±180°).
-    The drone applies an electronic flip so images appear normal to the user.
-    We model the *physical* camera before electronic correction, then swap the
-    sign of the roll so the resulting footprint corners match the displayed
-    image orientation (TL of the displayed image maps to the TL ground corner).
     """
+    import cameratransform as ct
     import numpy as np
 
-    # Convert DJI angles to radians.
-    # Yaw is clockwise from North → positive in NED right-hand convention when
-    # expressed as rotation around Down (+z NED).
-    yaw_rad = math.radians(gimbal_yaw)
-    pitch_rad = math.radians(gimbal_pitch)
-    # For the electronic-flip correction: negate roll so displayed corners match.
-    roll_rad = math.radians(-gimbal_roll)
+    print(f"[georef] Running CameraTransform footprint calculation:")
+    print(f"[georef]   Camera center (lat, lon): {lat:.7f}, {lon:.7f}")
+    print(f"[georef]   AGL altitude (RelativeAltitude): {agl:.3f} m")
+    print(f"[georef]   Gimbal orientation - Yaw: {gimbal_yaw:.3f}°, Pitch: {gimbal_pitch:.3f}°, Roll: {gimbal_roll:.3f}°")
+    print(f"[georef]   Camera parameters - Focal: {focal_px:.3f} px, Center cx: {cx:.3f}, cy: {cy:.3f}")
+    print(f"[georef]   Image size: {width} x {height}")
 
-    # Fixed rotation: camera frame → "body-neutral" frame (aligned with NED when
-    # all gimbal angles are zero and camera faces forward horizontally).
-    # Camera x (right) → NED y (East)
-    # Camera y (down)  → NED -z (Up, negated)  → well, body z = Down, so camera y → -NED_z
-    # Actually simplest: R_fix aligns the camera's optical axis with body forward (+x NED).
-    # Then the ZYX gimbal rotation rotates body→NED.
-    R_fix = np.array([
-        [0,  0,  1],   # NED North  ← camera z (optical axis)
-        [1,  0,  0],   # NED East   ← camera x (image right)
-        [0, -1,  0],   # NED Down   ← camera -y (image up = -image down)
-    ], dtype=float)
+    # Set up Rectilinear Projection
+    proj = ct.RectilinearProjection(
+        focallength_px=focal_px,
+        image=(width, height)
+    )
+    if cx is not None:
+        proj.center_x_px = cx
+    if cy is not None:
+        proj.center_y_px = cy
 
-    # Aerospace ZYX body-to-NED rotation
-    R_body_to_ned = _rot_z(yaw_rad) @ _rot_y(pitch_rad) @ _rot_x(roll_rad)
+    # Set up Spatial Orientation:
+    # - elevation_m is camera AGL height
+    # - tilt_deg is pitch + 90 (nadir = 0)
+    # - roll_deg is negated roll to match standard camera roll rotation
+    # - heading_deg is yaw (0 is North)
+    orientation = ct.SpatialOrientation(
+        elevation_m=agl,
+        tilt_deg=gimbal_pitch + 90.0,
+        roll_deg=-gimbal_roll,
+        heading_deg=gimbal_yaw
+    )
 
-    # Full camera-to-NED rotation
-    R = R_body_to_ned @ R_fix
+    # Initialize Camera and position it on Earth
+    cam = ct.Camera(proj, orientation)
+    cam.setGPSpos(lat, lon, agl)
 
-    # Metres per degree (approximate flat-earth near the image centre)
-    m_per_deg_lat = 111_320.0
-    m_per_deg_lon = 111_320.0 * math.cos(math.radians(lat))
+    # Define corners in image pixel coordinates
+    pixel_corners = [
+        (0, 0),
+        (width, 0),
+        (width, height),
+        (0, height)
+    ]
 
-    # Four corners in image coordinates (col, row)
-    pixel_corners = [(0, 0), (width, 0), (width, height), (0, height)]
-    ground_corners: list[tuple[float, float]] = []
-
-    for (u, v) in pixel_corners:
-        # Normalised direction vector in camera frame
-        ray_cam = np.array([(u - cx) / focal_px, (v - cy) / focal_px, 1.0])
-
-        # Rotate into NED
-        ray_ned = R @ ray_cam  # (North, East, Down) direction
-
-        # Intersect with ground plane at depth = agl along the Down axis
-        # Ground plane: NED-z = agl  →  Down component of the ray hits at
-        # ray_ned[2] * t = agl  →  t = agl / ray_ned[2]
-        down_component = ray_ned[2]
-        if down_component <= 0.01:
-            # Ray barely / not pointing downward — degenerate (very tilted camera).
-            # Fall back to nadir projection for this corner.
-            down_component = 1.0
-
-        t = agl / down_component
-        d_north = ray_ned[0] * t
-        d_east = ray_ned[1] * t
-
-        ground_lat = lat + d_north / m_per_deg_lat
-        ground_lon = lon + d_east / m_per_deg_lon
-        ground_corners.append((ground_lat, ground_lon))
+    # Convert pixel coordinates to geographic coordinates on ground plane (Z=0)
+    ground_corners = []
+    print("[georef] Corner coordinates conversion (Image -> GPS):")
+    for pt in pixel_corners:
+        res = cam.gpsFromImage(pt, Z=0)
+        # res is [lat, lon, alt]
+        ground_corners.append((res[0], res[1]))
+        print(f"[georef]   Pixel {pt} -> Lat: {res[0]:.7f}, Lon: {res[1]:.7f}")
 
     return ground_corners
 
 
 def _estimate_agl(meta: dict[str, Any]) -> float:
     """
-    Best available AGL estimate in metres.
-
-    Preference order:
-    1. LRF (laser rangefinder) distance — available on M4D, most accurate
-       for nadir shots where the laser points straight down.
-    2. RelativeAltitude from XMP — altitude above the home/take-off point.
-    3. AbsoluteAltitude — WGS-84 ellipsoidal height (least useful without a DEM,
-       but better than nothing for flat terrain near sea level).
+    Best available AGL estimate in metres, prioritizing RelativeAltitude.
     """
-    pitch = meta.get("gimbal_pitch")
-    lrf = meta.get("lrf_dist")
-    # Only trust the LRF when camera is very close to nadir
-    if lrf and lrf > 0 and pitch is not None and abs(pitch + 90) < 5:
-        return lrf
     rel = meta.get("alt_rel")
     if rel and rel > 0:
         return rel
@@ -409,42 +366,59 @@ def _warp_to_geotiff(
 
     corners: [(lat, lon), ...] for TL, TR, BR, BL in image order.
     Uses GDAL GCPs then a polynomial warp (order=1) to preserve the
-    affine footprint exactly.
+    affine footprint exactly. Uses GDAL CLI via subprocess for robustness.
     """
-    from osgeo import gdal, osr
-    import numpy as np
-    from PIL import Image
+    import subprocess
+    import tempfile
+    import os
 
-    img = Image.open(io.BytesIO(jpeg_bytes)).convert("RGB")
-    arr = np.array(img)
+    with tempfile.TemporaryDirectory() as tmpdir:
+        input_jpg = os.path.join(tmpdir, "input.jpg")
+        with open(input_jpg, "wb") as f:
+            f.write(jpeg_bytes)
 
-    # Write a raw mem-driver raster
-    mem_drv = gdal.GetDriverByName("MEM")
-    src_ds = mem_drv.Create("", width, height, 3, gdal.GDT_Byte)
-    for band_idx in range(3):
-        src_ds.GetRasterBand(band_idx + 1).WriteArray(arr[:, :, band_idx])
+        gcp_tif = os.path.join(tmpdir, "gcp.tif")
 
-    # Four GCPs: TL, TR, BR, BL  (pixel space → geographic space)
-    pixel_coords = [(0, 0), (width, 0), (width, height), (0, height)]
-    gcps = []
-    for i, ((lat, lon), (px, py)) in enumerate(zip(corners, pixel_coords)):
-        gcps.append(gdal.GCP(lon, lat, 0.0, px, py, f"corner_{i}", str(i)))
+        # For gdal_translate, format is: -gcp pixel line easting northing
+        # corners order: TL, TR, BR, BL
+        # Note: easting is longitude (corners[i][1]), northing is latitude (corners[i][0]).
+        cmd_translate = [
+            "gdal_translate",
+            "-gcp", "0", "0", f"{corners[0][1]:.12f}", f"{corners[0][0]:.12f}",
+            "-gcp", str(width), "0", f"{corners[1][1]:.12f}", f"{corners[1][0]:.12f}",
+            "-gcp", str(width), str(height), f"{corners[2][1]:.12f}", f"{corners[2][0]:.12f}",
+            "-gcp", "0", str(height), f"{corners[3][1]:.12f}", f"{corners[3][0]:.12f}",
+            "-a_srs", "EPSG:4326",
+            input_jpg,
+            gcp_tif
+        ]
 
-    srs = osr.SpatialReference()
-    srs.ImportFromEPSG(4326)
-    src_ds.SetGCPs(gcps, srs.ExportToWkt())
+        print(f"[warp] Running: {' '.join(cmd_translate)}")
+        res = subprocess.run(cmd_translate, capture_output=True, text=True)
+        if res.returncode != 0:
+            print(f"[warp] gdal_translate stdout: {res.stdout}")
+            print(f"[warp] gdal_translate stderr: {res.stderr}")
+            raise RuntimeError(f"gdal_translate failed: {res.stderr}")
 
-    # Warp (order-1 polynomial) → GeoTIFF
-    gdal.Warp(
-        out_path,
-        src_ds,
-        format="GTiff",
-        dstSRS="EPSG:4326",
-        polynomialOrder=1,
-        resampleAlg="near",
-        creationOptions=["COMPRESS=DEFLATE", "TILED=YES", "BIGTIFF=IF_SAFER"],
-    )
-    src_ds = None  # close
+        cmd_warp = [
+            "gdalwarp",
+            "-dstalpha",
+            "-order", "1",
+            "-r", "near",
+            "-t_srs", "EPSG:4326",
+            "-co", "COMPRESS=DEFLATE",
+            "-co", "TILED=YES",
+            "-co", "BIGTIFF=IF_SAFER",
+            gcp_tif,
+            out_path
+        ]
+
+        print(f"[warp] Running: {' '.join(cmd_warp)}")
+        res = subprocess.run(cmd_warp, capture_output=True, text=True)
+        if res.returncode != 0:
+            print(f"[warp] gdalwarp stdout: {res.stdout}")
+            print(f"[warp] gdalwarp stderr: {res.stderr}")
+            raise RuntimeError(f"gdalwarp failed: {res.stderr}")
 
 
 def _merge_to_cog(tile_paths: list[str], cog_path: str) -> None:
@@ -453,42 +427,61 @@ def _merge_to_cog(tile_paths: list[str], cog_path: str) -> None:
     Cloud-Optimised GeoTIFF using GDAL VRT + Translate.
 
     Overlap strategy: first-image-wins (matches survey order).
+    Uses GDAL CLI via subprocess for robustness.
     """
-    from osgeo import gdal
+    import subprocess
+    import tempfile
+    import os
 
-    # Build VRT mosaic in memory
-    vrt_path = "/vsimem/mosaic.vrt"
-    vrt = gdal.BuildVRT(
-        vrt_path,
-        tile_paths,
-        options=gdal.BuildVRTOptions(
-            resampleAlg="near",
-            addAlpha=False,
-        ),
-    )
-    if vrt is None:
-        raise RuntimeError("gdal.BuildVRT returned None — no valid input tiles?")
-    vrt.FlushCache()
-    vrt = None  # close
+    with tempfile.TemporaryDirectory() as tmpdir:
+        vrt_path = os.path.join(tmpdir, "mosaic.vrt")
 
-    # Translate VRT → COG
-    translate_opts = gdal.TranslateOptions(
-        format="GTiff",
-        creationOptions=[
-            "COMPRESS=DEFLATE",
-            "TILED=YES",
-            "BLOCKXSIZE=512",
-            "BLOCKYSIZE=512",
-            "BIGTIFF=IF_SAFER",
-            "COPY_SRC_OVERVIEWS=YES",
-        ],
-    )
-    # Add overviews to the VRT first
-    vrt2 = gdal.Open(vrt_path)
-    vrt2.BuildOverviews("NEAREST", [2, 4, 8, 16, 32])
-    gdal.Translate(cog_path, vrt2, options=translate_opts)
-    vrt2 = None
-    gdal.Unlink(vrt_path)
+        # Create the VRT
+        cmd_vrt = [
+            "gdalbuildvrt",
+            "-resolution", "highest",
+            "-srcnodata", "0",
+            vrt_path
+        ] + tile_paths
+        print(f"[merge] Running: {' '.join(cmd_vrt)}")
+        res = subprocess.run(cmd_vrt, capture_output=True, text=True)
+        if res.returncode != 0:
+            print(f"[merge] gdalbuildvrt stdout: {res.stdout}")
+            print(f"[merge] gdalbuildvrt stderr: {res.stderr}")
+            raise RuntimeError(f"gdalbuildvrt failed: {res.stderr}")
+
+        # Add overviews
+        cmd_addo = [
+            "gdaladdo",
+            "-r", "nearest",
+            vrt_path,
+            "2", "4", "8", "16", "32"
+        ]
+        print(f"[merge] Running: {' '.join(cmd_addo)}")
+        res = subprocess.run(cmd_addo, capture_output=True, text=True)
+        if res.returncode != 0:
+            print(f"[merge] gdaladdo stdout: {res.stdout}")
+            print(f"[merge] gdaladdo stderr: {res.stderr}")
+            raise RuntimeError(f"gdaladdo failed: {res.stderr}")
+
+        # Translate to COG
+        cmd_translate = [
+            "gdal_translate",
+            vrt_path,
+            cog_path,
+            "-co", "COMPRESS=DEFLATE",
+            "-co", "TILED=YES",
+            "-co", "BLOCKXSIZE=512",
+            "-co", "BLOCKYSIZE=512",
+            "-co", "BIGTIFF=IF_SAFER",
+            "-co", "COPY_SRC_OVERVIEWS=YES"
+        ]
+        print(f"[merge] Running: {' '.join(cmd_translate)}")
+        res = subprocess.run(cmd_translate, capture_output=True, text=True)
+        if res.returncode != 0:
+            print(f"[merge] gdal_translate VRT->COG stdout: {res.stdout}")
+            print(f"[merge] gdal_translate VRT->COG stderr: {res.stderr}")
+            raise RuntimeError(f"gdal_translate VRT->COG failed: {res.stderr}")
 
 
 # ── Main processing function ──────────────────────────────────────────────────
@@ -686,3 +679,94 @@ async def georef_status(
 @modal.asgi_app()
 def web() -> FastAPI:
     return web_app
+
+
+@app.function(
+    image=image,
+    secrets=[modal.Secret.from_name("salmon")],
+    timeout=300,
+    memory=2048,
+)
+def georeference_single_image(jpeg_bytes: bytes) -> bytes:
+    """
+    Modal function to georeference a single image and return its GeoTIFF bytes.
+    Useful for local debugging and CLI invocation.
+    """
+    import tempfile
+    import os
+
+    print("[worker] Starting single-image georeference...")
+    meta = _parse_dji_metadata(jpeg_bytes)
+
+    lat = meta.get("lat")
+    lon = meta.get("lon")
+    width = meta.get("img_width")
+    height = meta.get("img_height")
+    gimbal_pitch = meta.get("gimbal_pitch")
+    gimbal_yaw = meta.get("gimbal_yaw")
+    gimbal_roll = meta.get("gimbal_roll")
+    focal_px = meta.get("focal_px")
+    cx = meta.get("cx")
+    cy = meta.get("cy")
+
+    print(f"[worker] Metadata parsed: lat={lat}, lon={lon}, width={width}, height={height}, yaw={gimbal_yaw}, pitch={gimbal_pitch}, roll={gimbal_roll}")
+
+    if any(v is None for v in [lat, lon, width, height, gimbal_yaw, gimbal_pitch, gimbal_roll, focal_px]):
+        raise ValueError(f"Missing required georeferencing metadata: {meta}")
+
+    if cx is None:
+        cx = width / 2.0
+    if cy is None:
+        cy = height / 2.0
+
+    agl = _estimate_agl(meta)
+    print(f"[worker] AGL Altitude estimated: {agl:.3f} m")
+
+    corners = _compute_footprint(
+        lat, lon, agl,
+        gimbal_yaw, gimbal_pitch, gimbal_roll,
+        focal_px, cx, cy, width, height,
+    )
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        out_path = os.path.join(tmpdir, "output.tif")
+        print(f"[worker] Warping image to GeoTIFF at {out_path}...")
+        _warp_to_geotiff(jpeg_bytes, corners, width, height, out_path)
+
+        with open(out_path, "rb") as fh:
+            geotiff_bytes = fh.read()
+
+    print(f"[worker] Finished. GeoTIFF size: {len(geotiff_bytes)} bytes")
+    return geotiff_bytes
+
+
+@app.local_entrypoint()
+def test_georef(img_path: str = "DJI_20260612171254_0242_V.JPG"):
+    """
+    Local entrypoint run via `modal run modal/georef_worker.py`.
+    Sends the local test image to Modal, georeferences it, and saves the GeoTIFF locally.
+    Specify custom image path with: --img-path <path_to_image>
+    """
+    import os
+    print(f"[local] Reading local test image from {img_path}...")
+    try:
+        with open(img_path, "rb") as fh:
+            jpeg_bytes = fh.read()
+    except FileNotFoundError:
+        print(f"[local] Error: Test image {img_path} not found in current directory.")
+        return
+
+    print(f"[local] Image size: {len(jpeg_bytes)} bytes. Calling georeference_single_image on Modal...")
+    try:
+        geotiff_bytes = georeference_single_image.remote(jpeg_bytes)
+    except Exception as exc:
+        print(f"[local] Modal function execution failed: {exc}")
+        return
+
+    base_name, _ = os.path.splitext(os.path.basename(img_path))
+    out_path = f"{base_name}_ref.tif"
+    print(f"[local] Received GeoTIFF. Saving to {out_path}...")
+    with open(out_path, "wb") as fh:
+        fh.write(geotiff_bytes)
+    print(f"[local] Success! Saved georeferenced output to {out_path} ({len(geotiff_bytes)} bytes)")
+
