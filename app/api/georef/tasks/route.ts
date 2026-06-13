@@ -27,14 +27,14 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
-  let body: { flightId?: string; projectId?: string; flightPlanId?: string }
+  let body: { flightId?: string; projectId?: string; flightPlanId?: string; dewarp?: boolean }
   try {
     body = await req.json()
   } catch {
     return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 })
   }
 
-  const { flightId, projectId, flightPlanId } = body
+  const { flightId, projectId, flightPlanId, dewarp } = body
   if (!flightId || !projectId || !flightPlanId) {
     return NextResponse.json(
       { error: 'flightId, projectId, and flightPlanId are required' },
@@ -125,6 +125,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
         images,
         bucket: process.env.S3_BUCKET_NAME,
         output_prefix: outputPrefix,
+        dewarp: dewarp !== false, // Default to true if not specified
       }),
     })
     if (!res.ok) {
