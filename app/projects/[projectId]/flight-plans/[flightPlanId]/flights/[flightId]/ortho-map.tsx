@@ -8,6 +8,7 @@ import 'maplibre-gl/dist/maplibre-gl.css'
 
 interface OrthoMapProps {
   outputKey?: string | null
+  cacheBuster?: string | null
   photos?: { key: string; name: string; latitude: number | null; longitude: number | null; etag: string; size: number }[]
   onSelectPhoto?: (key: string) => void
   className?: string
@@ -92,6 +93,7 @@ function getGeoJSON(pin: [number, number] | null, points: [number, number][]) {
 
 export default function OrthoMap({
   outputKey = null,
+  cacheBuster = null,
   photos = [],
   onSelectPhoto,
   className,
@@ -374,7 +376,8 @@ export default function OrthoMap({
       }
 
       try {
-        const infoRes = await fetch(`/api/tiles/info?key=${encodeURIComponent(outputKey)}`)
+        const cacheBusterParam = cacheBuster ? `&t=${encodeURIComponent(cacheBuster)}` : ''
+        const infoRes = await fetch(`/api/tiles/info?key=${encodeURIComponent(outputKey)}${cacheBusterParam}`)
         if (!infoRes.ok) throw new Error(`Failed to load tile info (${infoRes.status})`)
         const { bounds, minzoom, maxzoom } = (await infoRes.json()) as {
           bounds: [number, number, number, number]
@@ -384,7 +387,7 @@ export default function OrthoMap({
 
         if (cancelled) return
 
-        const tileUrl = `/api/tiles/{z}/{x}/{y}?key=${encodeURIComponent(outputKey)}`
+        const tileUrl = `/api/tiles/{z}/{x}/{y}?key=${encodeURIComponent(outputKey)}${cacheBusterParam}`
 
         map.addSource('ortho', {
           type: 'raster',
@@ -439,7 +442,7 @@ export default function OrthoMap({
     return () => {
       cancelled = true
     }
-  }, [outputKey])
+  }, [outputKey, cacheBuster])
 
   // ── Fit bounds when fitBoundsTrigger changes ────────────────────────────────
   useEffect(() => {

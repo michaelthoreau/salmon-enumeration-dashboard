@@ -97,7 +97,7 @@ export default async function FlightsPage({ params }: PageProps) {
     const georefTask = latestGeorefMap.get(flight.id)
 
     // Determine the most recent task for this flight
-    let task: { status: string; outputKey: string | null; createdAt: Date } | null = null
+    let task: { status: string; outputKey: string | null; createdAt: Date; completedAt: Date | null } | null = null
     if (odmTask && georefTask) {
       task = new Date(odmTask.createdAt) > new Date(georefTask.createdAt) ? odmTask : georefTask
     } else {
@@ -111,6 +111,7 @@ export default async function FlightsPage({ params }: PageProps) {
       imageCount: fileCountMap.get(flight.id) ?? 0,
       taskStatus: (task?.status as any) ?? null,
       outputKey: task?.outputKey ?? null,
+      taskCompletedAt: task?.completedAt ?? null,
     }
   })
 

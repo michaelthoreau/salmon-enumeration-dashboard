@@ -85,6 +85,7 @@ export default function ProcessingModal({
   const [altitudeMode, setAltitudeMode] = useState<'relative' | 'lrf' | 'specified'>('relative')
   const [altitudeOffset, setAltitudeOffset] = useState<number>(0)
   const [specifiedAltitude, setSpecifiedAltitude] = useState<number>(50)
+  const [sampleFactor, setSampleFactor] = useState<number>(1)
 
   // Task processing state
   const [task, setTask] = useState<TaskState | null>(null)
@@ -248,6 +249,7 @@ export default function ProcessingModal({
           altitudeMode,
           altitudeOffset: Number(altitudeOffset),
           specifiedAltitude: Number(specifiedAltitude),
+          sampleFactor: Number(sampleFactor),
         }
 
     try {
@@ -531,6 +533,30 @@ export default function ProcessingModal({
                         </div>
                       )}
                     </div>
+                  </div>
+
+                  <hr className="border-slate-200/60 dark:border-slate-800/60" />
+
+                  {/* Downsampling Select */}
+                  <div className="space-y-1.5">
+                    <label htmlFor="modal-sample-factor" className="text-xs font-semibold text-slate-800 dark:text-slate-200">
+                      Downsampling / Image Sampling Rate
+                    </label>
+                    <select
+                      id="modal-sample-factor"
+                      value={sampleFactor}
+                      onChange={(e) => setSampleFactor(Number(e.target.value) || 1)}
+                      className="px-3 py-1.5 text-xs w-full border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 rounded-lg text-slate-900 dark:text-white focus:outline-none focus:ring-1 focus:ring-emerald-500 focus:border-emerald-500 cursor-pointer"
+                    >
+                      <option value="1">Use all images (1/1)</option>
+                      <option value="2">Use 1 every 2 images (1/2)</option>
+                      <option value="3">Use 1 every 3 images (1/3)</option>
+                      <option value="5">Use 1 every 5 images (1/5)</option>
+                      <option value="10">Use 1 every 10 images (1/10)</option>
+                    </select>
+                    <p className="text-[10px] text-slate-500 dark:text-slate-400">
+                      Processes only every Nth image to speed up draft georeferences. The first and last images are always processed.
+                    </p>
                   </div>
 
                 </div>

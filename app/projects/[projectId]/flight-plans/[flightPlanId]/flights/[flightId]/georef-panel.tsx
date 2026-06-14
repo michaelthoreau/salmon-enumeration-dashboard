@@ -55,6 +55,7 @@ export default function GeorefPanel({
   const [task, setTask] = useState<GeorefTask | null>(null)
   const [dewarp, setDewarp] = useState(true)
   const [useLrf, setUseLrf] = useState(false)
+  const [sampleFactor, setSampleFactor] = useState<number>(1)
   const [starting, setStarting] = useState(false)
   const [startError, setStartError] = useState<string | null>(null)
 
@@ -117,7 +118,7 @@ export default function GeorefPanel({
       const res = await fetch('/api/georef/tasks', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ flightId, projectId, flightPlanId, dewarp, useLrf }),
+        body: JSON.stringify({ flightId, projectId, flightPlanId, dewarp, useLrf, sampleFactor }),
       })
       const data = await res.json()
       if (!res.ok) {
@@ -201,6 +202,28 @@ export default function GeorefPanel({
           >
             Use laser range finder (LRF) for AGL altitude (compensates for tilt)
           </label>
+        </div>
+
+        <div className="space-y-1">
+          <label
+            htmlFor="panel-sample-factor"
+            className="text-xs font-semibold text-gray-700 select-none cursor-pointer disabled:opacity-50"
+          >
+            Downsampling Rate
+          </label>
+          <select
+            id="panel-sample-factor"
+            value={sampleFactor}
+            onChange={(e) => setSampleFactor(Number(e.target.value) || 1)}
+            disabled={starting || !!isActive}
+            className="px-3 py-1.5 text-xs w-full border border-gray-300 bg-white dark:bg-slate-900 rounded-lg text-gray-900 dark:text-white focus:outline-none focus:ring-1 focus:ring-emerald-500 focus:border-emerald-500 disabled:opacity-50 cursor-pointer"
+          >
+            <option value="1">Use all images (1/1)</option>
+            <option value="2">Use 1 every 2 images (1/2)</option>
+            <option value="3">Use 1 every 3 images (1/3)</option>
+            <option value="5">Use 1 every 5 images (1/5)</option>
+            <option value="10">Use 1 every 10 images (1/10)</option>
+          </select>
         </div>
       </div>
 

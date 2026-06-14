@@ -124,6 +124,7 @@ class GeorefRequest(BaseModel):
     altitude_mode: str = "relative" # 'relative', 'lrf', or 'specified'
     altitude_offset: float = 0.0     # Z offset to add to relative or LRF altitude
     specified_altitude: float = 50.0 # Fixed altitude to use if mode is 'specified'
+    sample_factor: int = 1
 
 
 # ── Persistent task state using modal.Dict ──────────────────────────────────────
@@ -459,6 +460,9 @@ def _warp_to_geotiff(
     import subprocess
     import tempfile
     import os
+    import time
+
+    t_start = time.perf_counter()
 
     with tempfile.TemporaryDirectory() as tmpdir:
         input_jpg = os.path.join(tmpdir, "input.jpg")
@@ -469,6 +473,7 @@ def _warp_to_geotiff(
                 import cv2
                 import numpy as np
                 log_fn("[warp] Undistorting image with OpenCV before warping...")
+                t_undistort_start = time.perf_counter()
                 nparr = np.frombuffer(jpeg_bytes, np.uint8)
                 img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
                 if img is not None:
@@ -491,14 +496,18 @@ def _warp_to_geotiff(
                     undistorted_img = cv2.undistort(img, camera_matrix, dist_coeffs)
                     _, encoded_img = cv2.imencode(".jpg", undistorted_img)
                     jpeg_bytes = encoded_img.tobytes()
-                    log_fn("[warp] Image undistorted successfully.")
+                    t_undistort_end = time.perf_counter()
+                    log_fn(f"[warp] Image undistorted successfully in {t_undistort_end - t_undistort_start:.3f} seconds.")
                 else:
                     log_fn("[warp] Warning: OpenCV failed to decode image. Proceeding with raw image.")
             except Exception as e:
                 log_fn(f"[warp] Error during undistortion: {e}. Proceeding with raw image.")
 
+        t_write_start = time.perf_counter()
         with open(input_jpg, "wb") as f:
             f.write(jpeg_bytes)
+        t_write_end = time.perf_counter()
+        log_fn(f"[warp] Writing input JPG to tmp took {t_write_end - t_write_start:.3f} seconds")
 
         gcp_tif = os.path.join(tmpdir, "gcp.tif")
 
@@ -517,10 +526,17 @@ def _warp_to_geotiff(
         ]
 
         log_fn(f"[warp] Running: {' '.join(cmd_translate)}")
-        res = subprocess.run(cmd_translate, capture_output=True, text=True)
+        t_translate_start = time.perf_counter()
+        import os
+        env = {**os.environ, "GDAL_DEBUG": "ON"}
+        res = subprocess.run(cmd_translate, capture_output=True, text=True, env=env)
+        t_translate_end = time.perf_counter()
+        log_fn(f"[warp] gdal_translate execution took {t_translate_end - t_translate_start:.3f} seconds")
+        if res.stdout.strip():
+            log_fn(f"[warp] gdal_translate stdout:\n{res.stdout.strip()}")
+        if res.stderr.strip():
+            log_fn(f"[warp] gdal_translate stderr:\n{res.stderr.strip()}")
         if res.returncode != 0:
-            log_fn(f"[warp] gdal_translate stdout: {res.stdout}")
-            log_fn(f"[warp] gdal_translate stderr: {res.stderr}")
             raise RuntimeError(f"gdal_translate failed: {res.stderr}")
 
         cmd_warp = [
@@ -532,17 +548,37 @@ def _warp_to_geotiff(
             "-co", "COMPRESS=DEFLATE",
             "-co", "TILED=YES",
             "-co", "BIGTIFF=IF_SAFER",
+            "-multi",
+            "-wo", "NUM_THREADS=ALL_CPUS",
+            "-co", "NUM_THREADS=ALL_CPUS",
+            "-wm", "2048",
         ]
         if target_res:
             cmd_warp.extend(["-tr", f"{target_res[0]:.12f}", f"{target_res[1]:.12f}"])
         cmd_warp.extend([gcp_tif, out_path])
 
         log_fn(f"[warp] Running: {' '.join(cmd_warp)}")
-        res = subprocess.run(cmd_warp, capture_output=True, text=True)
+        t_warp_step_start = time.perf_counter()
+        res = subprocess.run(cmd_warp, capture_output=True, text=True, env=env)
+        t_warp_step_end = time.perf_counter()
+        log_fn(f"[warp] gdalwarp execution took {t_warp_step_end - t_warp_step_start:.3f} seconds")
+        if res.stdout.strip():
+            log_fn(f"[warp] gdalwarp stdout:\n{res.stdout.strip()}")
+        if res.stderr.strip():
+            log_fn(f"[warp] gdalwarp stderr:\n{res.stderr.strip()}")
         if res.returncode != 0:
-            log_fn(f"[warp] gdalwarp stdout: {res.stdout}")
-            log_fn(f"[warp] gdalwarp stderr: {res.stderr}")
             raise RuntimeError(f"gdalwarp failed: {res.stderr}")
+
+    t_end = time.perf_counter()
+    log_fn(f"[warp] Total warping steps took {t_end - t_start:.3f} seconds")
+
+    if os.path.exists(out_path):
+        import rasterio
+        try:
+            with rasterio.open(out_path) as src:
+                log_fn(f"[warp] Output GeoTIFF profile: width={src.width}, height={src.height}, count={src.count}, crs={src.crs}, transform={src.transform}")
+        except Exception as e:
+            log_fn(f"[warp] Failed to read output GeoTIFF profile: {e}")
 
 
 def _merge_to_cog(tile_paths: list[str], cog_path: str, log_fn=print) -> None:
@@ -559,6 +595,7 @@ def _merge_to_cog(tile_paths: list[str], cog_path: str, log_fn=print) -> None:
 
     with tempfile.TemporaryDirectory() as tmpdir:
         vrt_path = os.path.join(tmpdir, "mosaic.vrt")
+        env = {**os.environ, "GDAL_NUM_THREADS": "ALL_CPUS", "GDAL_DEBUG": "ON"}
 
         # Create the VRT
         cmd_vrt = [
@@ -568,10 +605,12 @@ def _merge_to_cog(tile_paths: list[str], cog_path: str, log_fn=print) -> None:
             vrt_path
         ] + tile_paths
         log_fn(f"[merge] Running: {' '.join(cmd_vrt)}")
-        res = subprocess.run(cmd_vrt, capture_output=True, text=True)
+        res = subprocess.run(cmd_vrt, capture_output=True, text=True, env=env)
+        if res.stdout.strip():
+            log_fn(f"[merge] gdalbuildvrt stdout:\n{res.stdout.strip()}")
+        if res.stderr.strip():
+            log_fn(f"[merge] gdalbuildvrt stderr:\n{res.stderr.strip()}")
         if res.returncode != 0:
-            log_fn(f"[merge] gdalbuildvrt stdout: {res.stdout}")
-            log_fn(f"[merge] gdalbuildvrt stderr: {res.stderr}")
             raise RuntimeError(f"gdalbuildvrt failed: {res.stderr}")
 
         # Add overviews
@@ -582,10 +621,12 @@ def _merge_to_cog(tile_paths: list[str], cog_path: str, log_fn=print) -> None:
             "2", "4", "8", "16", "32"
         ]
         log_fn(f"[merge] Running: {' '.join(cmd_addo)}")
-        res = subprocess.run(cmd_addo, capture_output=True, text=True)
+        res = subprocess.run(cmd_addo, capture_output=True, text=True, env=env)
+        if res.stdout.strip():
+            log_fn(f"[merge] gdaladdo stdout:\n{res.stdout.strip()}")
+        if res.stderr.strip():
+            log_fn(f"[merge] gdaladdo stderr:\n{res.stderr.strip()}")
         if res.returncode != 0:
-            log_fn(f"[merge] gdaladdo stdout: {res.stdout}")
-            log_fn(f"[merge] gdaladdo stderr: {res.stderr}")
             raise RuntimeError(f"gdaladdo failed: {res.stderr}")
 
         # Translate to COG
@@ -598,13 +639,16 @@ def _merge_to_cog(tile_paths: list[str], cog_path: str, log_fn=print) -> None:
             "-co", "BLOCKXSIZE=512",
             "-co", "BLOCKYSIZE=512",
             "-co", "BIGTIFF=IF_SAFER",
-            "-co", "COPY_SRC_OVERVIEWS=YES"
+            "-co", "COPY_SRC_OVERVIEWS=YES",
+            "-co", "NUM_THREADS=ALL_CPUS"
         ]
         log_fn(f"[merge] Running: {' '.join(cmd_translate)}")
-        res = subprocess.run(cmd_translate, capture_output=True, text=True)
+        res = subprocess.run(cmd_translate, capture_output=True, text=True, env=env)
+        if res.stdout.strip():
+            log_fn(f"[merge] gdal_translate VRT->COG stdout:\n{res.stdout.strip()}")
+        if res.stderr.strip():
+            log_fn(f"[merge] gdal_translate VRT->COG stderr:\n{res.stderr.strip()}")
         if res.returncode != 0:
-            log_fn(f"[merge] gdal_translate VRT->COG stdout: {res.stdout}")
-            log_fn(f"[merge] gdal_translate VRT->COG stderr: {res.stderr}")
             raise RuntimeError(f"gdal_translate VRT->COG failed: {res.stderr}")
 
 
@@ -619,15 +663,28 @@ async def _process_images(
     altitude_mode: str = "relative",
     altitude_offset: float = 0.0,
     specified_altitude: float = 50.0,
+    sample_factor: int = 1,
 ) -> None:
-    """Background task: georef each image, merge, upload COG to S3."""
+    """Background task: georef each image in parallel on Modal, merge, upload COG to S3."""
     import boto3
     import numpy as np
 
-    log_task(task_id, f"[process] starting task_id={task_id} total={len(images)} bucket={bucket} prefix={output_prefix} dewarp={dewarp} altitude_mode={altitude_mode} offset={altitude_offset}")
+    log_task(task_id, f"[process] starting task_id={task_id} total={len(images)} bucket={bucket} prefix={output_prefix} dewarp={dewarp} altitude_mode={altitude_mode} offset={altitude_offset} sample_factor={sample_factor}")
+    
+    # 1. Apply image sampling if sample_factor > 1
+    sampled_images = []
+    L = len(images)
+    for idx, img in enumerate(images):
+        if idx == 0 or idx == L - 1 or (idx % sample_factor == 0):
+            if img not in sampled_images:
+                sampled_images.append(img)
+    
+    log_task(task_id, f"[process] sampled {len(sampled_images)} images out of {L} (sample_factor={sample_factor})")
+    
+    # Update total count in the task state
     state = dict(_tasks.get(task_id, {}))
-    def save_state():
-        _tasks[task_id] = state
+    state["total"] = len(sampled_images)
+    _tasks[task_id] = state
 
     s3 = None
     loop = None
@@ -644,130 +701,69 @@ async def _process_images(
             tile_paths: list[str] = []
             errors: list[str] = []
 
-            for idx, img_spec in enumerate(images):
+            # Progress tracking
+            processed_count = 0
+
+            async def run_one_task(img_spec: ImageSpec, idx: int):
+                nonlocal processed_count
                 try:
-                    # Download from S3
-                    buf = io.BytesIO()
-                    await loop.run_in_executor(
-                        None,
-                        lambda k=img_spec.key: s3.download_fileobj(bucket, k, buf),
+                    res_bytes = await georeference_single_image_s3.remote.aio(
+                        bucket=bucket,
+                        key=img_spec.key,
+                        dewarp=dewarp,
+                        altitude_mode=altitude_mode,
+                        altitude_offset=altitude_offset,
+                        specified_altitude=specified_altitude,
                     )
-                    jpeg_bytes = buf.getvalue()
-
-                    # Parse metadata
-                    meta = _parse_dji_metadata(jpeg_bytes)
-
-                    lat = meta.get("lat")
-                    lon = meta.get("lon")
-                    width = meta.get("img_width")
-                    height = meta.get("img_height")
-                    gimbal_pitch = meta.get("gimbal_pitch")
-                    gimbal_yaw = meta.get("gimbal_yaw")
-                    gimbal_roll = meta.get("gimbal_roll")
-                    
-                    # Check dewarp options
-                    dewarp_flag = meta.get("dewarp_flag")
-                    dewarp_data_str = meta.get("dewarp_data")
-                    should_undistort = dewarp and dewarp_flag == 0 and dewarp_data_str is not None
-                    
-                    dewarp_params = None
-                    if should_undistort:
-                        dewarp_params = _parse_dewarp_data(dewarp_data_str)
-                        if dewarp_params:
-                            focal_px = dewarp_params["fx"]
-                            cx = width / 2.0 + dewarp_params["cx"]
-                            cy = height / 2.0 + dewarp_params["cy"]
-                            log_task(task_id, f"[process] Applying dewarp parameters: fx={focal_px}, cx={cx}, cy={cy}")
-                        else:
-                            log_task(task_id, f"[process] Failed to parse DewarpData string: {dewarp_data_str}")
-                            should_undistort = False
-
-                    if not should_undistort:
-                        focal_px = meta.get("focal_px")
-                        cx = meta.get("cx")
-                        cy = meta.get("cy")
-                        log_task(task_id, f"[process] No dewarping applied (dewarp={dewarp}, flag={dewarp_flag}). Using EXIF fallback: focal={focal_px}, cx={cx}, cy={cy}")
-
-                    # Fallback using focal_length_mm and sensor model
-                    if focal_px is None:
-                        fl_mm = meta.get("focal_length_mm")
-                        model = meta.get("model") or ""
-                        if fl_mm and fl_mm > 0:
-                            # Default sensor width is 17.3mm (4/3" sensor for Mavic 3 Enterprise / M4D)
-                            sensor_w = 17.3
-                            if "P4" in model or "Phantom 4" in model:
-                                sensor_w = 13.2
-                            elif "M2" in model or "Mavic 2" in model:
-                                sensor_w = 13.2
-                            elif "M3T" in model:
-                                sensor_w = 6.4
-                            
-                            focal_px = (fl_mm / sensor_w) * width
-                            log_task(task_id, f"[process] Computed focal_px from standard EXIF FocalLength={fl_mm}mm and Model={model}: {focal_px:.3f} px")
-
-                    if any(v is None for v in [lat, lon, width, height, gimbal_yaw, gimbal_pitch, gimbal_roll, focal_px]):
-                        errors.append(f"{img_spec.filename}: missing required metadata — skipped")
-                        state["processed"] += 1
-                        continue
-
-                    # Defaults for optional fields
-                    if cx is None:
-                        cx = width / 2.0
-                    if cy is None:
-                        cy = height / 2.0
-
-                    agl = _estimate_agl(meta, altitude_mode=altitude_mode, altitude_offset=altitude_offset, specified_altitude=specified_altitude)
-
-                    # Compute ground footprint
-                    corners = _compute_footprint(
-                        lat, lon, agl,
-                        gimbal_yaw, gimbal_pitch, gimbal_roll,
-                        focal_px, cx, cy, width, height,
-                    )
-
-                    # Calculate target resolution (err on the side of more pixels / higher density)
-                    # Compute Ground Sample Distance (GSD) at nadir in meters, with a 0.95 scale factor
-                    # to guarantee we err on the side of more pixels.
-                    import math
-                    gsd = (agl / focal_px) * 0.95
-                    lat_rad = math.radians(abs(lat))
-                    cos_lat = math.cos(lat_rad)
-                    if cos_lat < 0.01:
-                        cos_lat = 0.01
-                    yres = gsd / 111320.0
-                    xres = gsd / (111320.0 * cos_lat)
-                    target_res = (xres, yres)
-
-                    # Write warped GeoTIFF
-                    tile_path = os.path.join(tmpdir, f"tile_{idx:05d}.tif")
-                    await loop.run_in_executor(
-                        None,
-                        lambda jp=jpeg_bytes, co=corners, w=width, h=height, tp=tile_path, dp=dewarp_params, tr=target_res:
-                            _warp_to_geotiff(jp, co, w, h, tp, dewarp_params=dp, target_res=tr, log_fn=lambda msg: log_task(task_id, msg)),
-                    )
-                    tile_paths.append(tile_path)
-
+                    return idx, res_bytes
                 except Exception as exc:
-                    log_task(task_id, f"[process] ERROR img={img_spec.filename}: {exc}")
-                    errors.append(f"{img_spec.filename}: {exc}")
+                    return idx, exc
+                finally:
+                    processed_count += 1
+                    # Update progress in state
+                    cur_state = dict(_tasks.get(task_id, {}))
+                    cur_state["processed"] = processed_count
+                    _tasks[task_id] = cur_state
 
-                state["processed"] += 1
-                save_state()
-                if idx % 10 == 0 or idx < 3:
-                    log_task(task_id, f"[process] progress {state['processed']}/{len(images)} tiles_ok={len(tile_paths)}")
+                    if processed_count % 10 == 0 or processed_count < 3 or processed_count == len(sampled_images):
+                        log_task(task_id, f"[process] progress {processed_count}/{len(sampled_images)}")
+
+            # Create async tasks for all sampled images
+            tasks = [run_one_task(img, idx) for idx, img in enumerate(sampled_images)]
+            results = await asyncio.gather(*tasks)
+
+            # Sort results by index to preserve order
+            results.sort(key=lambda x: x[0])
+
+            for idx, res in results:
+                img_spec = sampled_images[idx]
+                if isinstance(res, Exception):
+                    log_task(task_id, f"[process] ERROR img={img_spec.filename}: {res}")
+                    errors.append(f"{img_spec.filename}: {res}")
+                elif res is None:
+                    log_task(task_id, f"[process] ERROR img={img_spec.filename}: returned None")
+                    errors.append(f"{img_spec.filename}: missing required metadata")
+                else:
+                    # Write file locally
+                    tile_path = os.path.join(tmpdir, f"tile_{idx:05d}.tif")
+                    with open(tile_path, "wb") as f:
+                        f.write(res)
+                    tile_paths.append(tile_path)
 
             if not tile_paths:
                 sample = "; ".join(errors[:5])
                 log_task(task_id, f"[process] FAILED — no tiles. Sample errors: {sample}")
-                state["status"] = "failed"
-                state["error"] = f"No images could be georeferenced. Errors: {sample}"
-                save_state()
+                cur_state = dict(_tasks.get(task_id, {}))
+                cur_state["status"] = "failed"
+                cur_state["error"] = f"No images could be georeferenced. Errors: {sample}"
+                _tasks[task_id] = cur_state
                 return
 
             if errors:
                 log_task(task_id, f"[process] {len(errors)} non-fatal errors, continuing with {len(tile_paths)} tiles")
-                state["warnings"] = errors  # non-fatal — we still have some tiles
-                save_state()
+                cur_state = dict(_tasks.get(task_id, {}))
+                cur_state["warnings"] = errors  # non-fatal — we still have some tiles
+                _tasks[task_id] = cur_state
 
             # Merge into COG
             log_task(task_id, f"[process] merging {len(tile_paths)} tiles into COG")
@@ -776,9 +772,10 @@ async def _process_images(
                 await loop.run_in_executor(None, lambda: _merge_to_cog(tile_paths, cog_path, log_fn=lambda msg: log_task(task_id, msg)))
             except Exception as exc:
                 log_task(task_id, f"[process] merge ERROR: {exc}")
-                state["status"] = "failed"
-                state["error"] = f"Merge failed: {exc}"
-                save_state()
+                cur_state = dict(_tasks.get(task_id, {}))
+                cur_state["status"] = "failed"
+                cur_state["error"] = f"Merge failed: {exc}"
+                _tasks[task_id] = cur_state
                 return
 
             # Upload COG to S3
@@ -797,22 +794,24 @@ async def _process_images(
                     )
             except Exception as exc:
                 log_task(task_id, f"[process] S3 upload ERROR: {exc}")
-                state["status"] = "failed"
-                state["error"] = f"S3 upload failed: {exc}"
-                save_state()
+                cur_state = dict(_tasks.get(task_id, {}))
+                cur_state["status"] = "failed"
+                cur_state["error"] = f"S3 upload failed: {exc}"
+                _tasks[task_id] = cur_state
                 return
 
             log_task(task_id, f"[process] COMPLETED task_id={task_id} output_key={output_key}")
-            state["output_key"] = output_key
-            state["status"] = "completed"
-            save_state()
+            cur_state = dict(_tasks.get(task_id, {}))
+            cur_state["output_key"] = output_key
+            cur_state["status"] = "completed"
+            _tasks[task_id] = cur_state
 
     except Exception as e:
         log_task(task_id, f"[process] Unhandled top-level exception: {e}")
-        state = dict(_tasks.get(task_id, {}))
-        state["status"] = "failed"
-        state["error"] = str(e)
-        save_state()
+        cur_state = dict(_tasks.get(task_id, {}))
+        cur_state["status"] = "failed"
+        cur_state["error"] = str(e)
+        _tasks[task_id] = cur_state
 
     finally:
         # Write logs to S3 so they are persistent
@@ -847,7 +846,7 @@ async def georeference(
     background_tasks: BackgroundTasks,
     _: None = Depends(_require_auth),
 ) -> dict:
-    print(f"[georeference] task_id={req.task_id} images={len(req.images)} bucket={req.bucket} prefix={req.output_prefix} dewarp={req.dewarp} altitude_mode={req.altitude_mode} offset={req.altitude_offset} specified={req.specified_altitude}")
+    print(f"[georeference] task_id={req.task_id} images={len(req.images)} bucket={req.bucket} prefix={req.output_prefix} dewarp={req.dewarp} altitude_mode={req.altitude_mode} offset={req.altitude_offset} specified={req.specified_altitude} sample_factor={req.sample_factor}")
     if req.task_id in _tasks:
         print(f"[georeference] task_id={req.task_id} already exists, status={_tasks[req.task_id]['status']}")
         return {"task_id": req.task_id, "status": _tasks[req.task_id]["status"]}
@@ -869,6 +868,7 @@ async def georeference(
         req.altitude_mode,
         req.altitude_offset,
         req.specified_altitude,
+        req.sample_factor,
     )
     return {"task_id": req.task_id}
 
@@ -898,8 +898,8 @@ async def georef_status(
     image=image,
     secrets=[modal.Secret.from_name("salmon")],
     timeout=3600,
-    memory=4096,   # rasterio + GDAL + buffered images can be hungry
-    cpu=4,
+    memory=8192,   # rasterio + GDAL + buffered images can be hungry
+    cpu=8,
 )
 @modal.asgi_app()
 def web() -> FastAPI:
@@ -910,7 +910,146 @@ def web() -> FastAPI:
     image=image,
     secrets=[modal.Secret.from_name("salmon")],
     timeout=300,
-    memory=2048,
+    memory=4096,
+    cpu=4,
+)
+def georeference_single_image_s3(
+    bucket: str,
+    key: str,
+    dewarp: bool = True,
+    altitude_mode: str = "relative",
+    altitude_offset: float = 0.0,
+    specified_altitude: float = 50.0,
+) -> bytes:
+    """
+    Modal function to georeference a single image directly from S3 and return its GeoTIFF bytes.
+    """
+    import boto3
+    import io
+    import tempfile
+    import os
+    import time
+
+    t_total_start = time.perf_counter()
+
+    s3 = boto3.client(
+        "s3",
+        region_name=os.environ["AWS_REGION"],
+        aws_access_key_id=os.environ["AWS_ACCESS_KEY_ID"],
+        aws_secret_access_key=os.environ["AWS_SECRET_ACCESS_KEY"],
+    )
+    
+    # Download from S3
+    t_s3_start = time.perf_counter()
+    buf = io.BytesIO()
+    s3.download_fileobj(bucket, key, buf)
+    jpeg_bytes = buf.getvalue()
+    t_s3_end = time.perf_counter()
+    print(f"[worker] [{key}] S3 download took {t_s3_end - t_s3_start:.3f} seconds (size: {len(jpeg_bytes) / 1024 / 1024:.2f} MB)")
+
+    t_meta_start = time.perf_counter()
+    meta = _parse_dji_metadata(jpeg_bytes)
+    t_meta_end = time.perf_counter()
+    print(f"[worker] [{key}] Metadata parsing took {t_meta_end - t_meta_start:.3f} seconds")
+
+    lat = meta.get("lat")
+    lon = meta.get("lon")
+    width = meta.get("img_width")
+    height = meta.get("img_height")
+    gimbal_pitch = meta.get("gimbal_pitch")
+    gimbal_yaw = meta.get("gimbal_yaw")
+    gimbal_roll = meta.get("gimbal_roll")
+    
+    # Check dewarp options
+    dewarp_flag = meta.get("dewarp_flag")
+    dewarp_data_str = meta.get("dewarp_data")
+    should_undistort = dewarp and dewarp_flag == 0 and dewarp_data_str is not None
+    
+    dewarp_params = None
+    if should_undistort:
+        dewarp_params = _parse_dewarp_data(dewarp_data_str)
+        if dewarp_params:
+            focal_px = dewarp_params["fx"]
+            cx = width / 2.0 + dewarp_params["cx"]
+            cy = height / 2.0 + dewarp_params["cy"]
+        else:
+            should_undistort = False
+
+    if not should_undistort:
+        focal_px = meta.get("focal_px")
+        cx = meta.get("cx")
+        cy = meta.get("cy")
+
+    # Fallback using focal_length_mm and sensor model
+    if focal_px is None:
+        fl_mm = meta.get("focal_length_mm")
+        model = meta.get("model") or ""
+        if fl_mm and fl_mm > 0:
+            sensor_w = 17.3
+            if "P4" in model or "Phantom 4" in model:
+                sensor_w = 13.2
+            elif "M2" in model or "Mavic 2" in model:
+                sensor_w = 13.2
+            elif "M3T" in model:
+                sensor_w = 6.4
+            
+            focal_px = (fl_mm / sensor_w) * width
+
+    if any(v is None for v in [lat, lon, width, height, gimbal_yaw, gimbal_pitch, gimbal_roll, focal_px]):
+        raise ValueError(f"Missing required georeferencing metadata: {meta}")
+
+    if cx is None:
+        cx = width / 2.0
+    if cy is None:
+        cy = height / 2.0
+
+    agl = _estimate_agl(meta, altitude_mode=altitude_mode, altitude_offset=altitude_offset, specified_altitude=specified_altitude)
+
+    corners = _compute_footprint(
+        lat, lon, agl,
+        gimbal_yaw, gimbal_pitch, gimbal_roll,
+        focal_px, cx, cy, width, height,
+    )
+
+    # Calculate target resolution
+    import math
+    gsd = (agl / focal_px) * 0.95
+    lat_rad = math.radians(abs(lat))
+    cos_lat = math.cos(lat_rad)
+    if cos_lat < 0.01:
+        cos_lat = 0.01
+    yres = gsd / 111320.0
+    xres = gsd / (111320.0 * cos_lat)
+    target_res = (xres, yres)
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        out_path = os.path.join(tmpdir, "output.tif")
+        t_warp_start = time.perf_counter()
+        _warp_to_geotiff(
+            jpeg_bytes, corners, width, height, out_path,
+            dewarp_params=dewarp_params, target_res=target_res,
+            log_fn=lambda msg: print(f"[worker] [{key}] {msg}")
+        )
+        t_warp_end = time.perf_counter()
+        print(f"[worker] [{key}] Warping wrapper function took {t_warp_end - t_warp_start:.3f} seconds")
+
+        t_read_start = time.perf_counter()
+        with open(out_path, "rb") as fh:
+            geotiff_bytes = fh.read()
+        t_read_end = time.perf_counter()
+        print(f"[worker] [{key}] Reading GeoTIFF bytes took {t_read_end - t_read_start:.3f} seconds")
+
+    t_total_end = time.perf_counter()
+    print(f"[worker] [{key}] Total georeferencing call took {t_total_end - t_total_start:.3f} seconds")
+    return geotiff_bytes
+
+
+@app.function(
+    image=image,
+    secrets=[modal.Secret.from_name("salmon")],
+    timeout=300,
+    memory=4096,
+    cpu=4,
 )
 def georeference_single_image(
     jpeg_bytes: bytes,
@@ -1006,8 +1145,8 @@ def georeference_single_image(
     image=image,
     secrets=[modal.Secret.from_name("salmon")],
     timeout=1200,
-    memory=4096,
-    cpu=4,
+    memory=8192,
+    cpu=8,
 )
 def georeference_and_merge_folder(
     images: list[tuple[str, bytes]],
