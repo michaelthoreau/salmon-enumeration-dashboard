@@ -230,4 +230,7 @@ def handler(event, _context):
         else:
             raise
 
+    _frontend_post("/api/v1/files/register", {"key": dest_key, "flightId": flight_id})
+    print(f"Registered: {dest_key}")
+
     return {"statusCode": 200, "body": json.dumps({"code": 0})}
