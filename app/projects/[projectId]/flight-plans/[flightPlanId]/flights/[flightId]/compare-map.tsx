@@ -13,6 +13,7 @@ interface CompareMapProps {
     flightId: string
     formattedTime: string
     outputKey: string
+    cacheBuster?: string | null
   }[]
   initialViewport?: {
     center: [number, number]
@@ -182,7 +183,8 @@ export default function CompareMap({
       }
 
       try {
-        const infoRes = await fetch(`/api/tiles/info?key=${encodeURIComponent(flightA.outputKey)}`)
+        const cacheBusterParam = flightA.cacheBuster ? `&t=${encodeURIComponent(flightA.cacheBuster)}` : ''
+        const infoRes = await fetch(`/api/tiles/info?key=${encodeURIComponent(flightA.outputKey)}${cacheBusterParam}`)
         if (!infoRes.ok) throw new Error(`Failed to load tile info A (${infoRes.status})`)
         const { bounds, minzoom, maxzoom } = (await infoRes.json()) as {
           bounds: [number, number, number, number]
@@ -191,7 +193,7 @@ export default function CompareMap({
         }
 
         if (cancelled || !mapBeforeRef.current) return
-        const tileUrl = `/api/tiles/{z}/{x}/{y}?key=${encodeURIComponent(flightA.outputKey)}`
+        const tileUrl = `/api/tiles/{z}/{x}/{y}?key=${encodeURIComponent(flightA.outputKey)}${cacheBusterParam}`
 
         map.addSource('ortho-before', {
           type: 'raster',
@@ -212,7 +214,7 @@ export default function CompareMap({
     applyLayerA()
     return () => { cancelled = true }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [flightAId])
+  }, [flightAId, flightA?.cacheBuster])
 
   // ── Swap layer B (After) ───────────────────────────────────────────────────
   useEffect(() => {
@@ -240,7 +242,8 @@ export default function CompareMap({
       }
 
       try {
-        const infoRes = await fetch(`/api/tiles/info?key=${encodeURIComponent(flightB.outputKey)}`)
+        const cacheBusterParamB = flightB.cacheBuster ? `&t=${encodeURIComponent(flightB.cacheBuster)}` : ''
+        const infoRes = await fetch(`/api/tiles/info?key=${encodeURIComponent(flightB.outputKey)}${cacheBusterParamB}`)
         if (!infoRes.ok) throw new Error(`Failed to load tile info B (${infoRes.status})`)
         const { bounds, minzoom, maxzoom } = (await infoRes.json()) as {
           bounds: [number, number, number, number]
@@ -252,9 +255,9 @@ export default function CompareMap({
         
         let tileUrl: string
         if (showDiff && flightA) {
-          tileUrl = `/api/tiles/diff/{z}/{x}/{y}?key1=${encodeURIComponent(flightA.outputKey)}&key2=${encodeURIComponent(flightB.outputKey)}&colormap=${colormap}&threshold=${threshold}&maxDiff=${maxDiff}`
+          tileUrl = `/api/tiles/diff/{z}/{x}/{y}?key1=${encodeURIComponent(flightA.outputKey)}&key2=${encodeURIComponent(flightB.outputKey)}&colormap=${colormap}&threshold=${threshold}&maxDiff=${maxDiff}&t1=${encodeURIComponent(flightA.cacheBuster || '')}&t2=${encodeURIComponent(flightB.cacheBuster || '')}`
         } else {
-          tileUrl = `/api/tiles/{z}/{x}/{y}?key=${encodeURIComponent(flightB.outputKey)}`
+          tileUrl = `/api/tiles/{z}/{x}/{y}?key=${encodeURIComponent(flightB.outputKey)}${cacheBusterParamB}`
         }
 
         map.addSource('ortho-after', {
@@ -276,7 +279,7 @@ export default function CompareMap({
     applyLayerB()
     return () => { cancelled = true }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [flightBId, flightAId, showDiff, colormap, threshold, maxDiff])
+  }, [flightBId, flightAId, showDiff, colormap, threshold, maxDiff, flightB?.cacheBuster, flightA?.cacheBuster])
 
   // ── Slider dragging logic ──────────────────────────────────────────────────
   const startDragging = useCallback((e: React.MouseEvent) => {
