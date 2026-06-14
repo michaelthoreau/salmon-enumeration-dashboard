@@ -584,7 +584,7 @@ def _warp_to_geotiff(
 def _merge_to_cog(tile_paths: list[str], cog_path: str, log_fn=print) -> None:
     """
     Merge a list of individually georeferenced GeoTIFFs into a single
-    Cloud-Optimised GeoTIFF using GDAL VRT + Translate.
+    Cloud-Optimised GeoTIFF using GDAL VRT + Translate COG driver.
 
     Overlap strategy: first-image-wins (matches survey order).
     Uses GDAL CLI via subprocess for robustness.
@@ -595,7 +595,12 @@ def _merge_to_cog(tile_paths: list[str], cog_path: str, log_fn=print) -> None:
 
     with tempfile.TemporaryDirectory() as tmpdir:
         vrt_path = os.path.join(tmpdir, "mosaic.vrt")
-        env = {**os.environ, "GDAL_NUM_THREADS": "ALL_CPUS", "GDAL_DEBUG": "ON"}
+        env = {
+            **os.environ,
+            "GDAL_NUM_THREADS": "ALL_CPUS",
+            "GDAL_DEBUG": "ON",
+            "GDAL_MAX_DATASET_POOL_SIZE": "1000",
+        }
 
         # Create the VRT
         cmd_vrt = [
@@ -613,34 +618,21 @@ def _merge_to_cog(tile_paths: list[str], cog_path: str, log_fn=print) -> None:
         if res.returncode != 0:
             raise RuntimeError(f"gdalbuildvrt failed: {res.stderr}")
 
-        # Add overviews
-        cmd_addo = [
-            "gdaladdo",
-            "-r", "average",
-            vrt_path,
-            "2", "4", "8", "16", "32"
-        ]
-        log_fn(f"[merge] Running: {' '.join(cmd_addo)}")
-        res = subprocess.run(cmd_addo, capture_output=True, text=True, env=env)
-        if res.stdout.strip():
-            log_fn(f"[merge] gdaladdo stdout:\n{res.stdout.strip()}")
-        if res.stderr.strip():
-            log_fn(f"[merge] gdaladdo stderr:\n{res.stderr.strip()}")
-        if res.returncode != 0:
-            raise RuntimeError(f"gdaladdo failed: {res.stderr}")
-
-        # Translate to COG
+        # Translate directly from VRT to COG using the native GDAL COG driver.
+        # This automatically creates internal overviews, tiles, and applies compression.
+        # It is much faster and more reliable than executing gdaladdo on a VRT because
+        # it builds overviews sequentially from a temp flat file, eliminating thousands of
+        # random-access reads to individual input TIFF sources.
         cmd_translate = [
             "gdal_translate",
+            "-of", "COG",
             vrt_path,
             cog_path,
             "-co", "COMPRESS=DEFLATE",
-            "-co", "TILED=YES",
-            "-co", "BLOCKXSIZE=512",
-            "-co", "BLOCKYSIZE=512",
+            "-co", "NUM_THREADS=ALL_CPUS",
             "-co", "BIGTIFF=IF_SAFER",
-            "-co", "COPY_SRC_OVERVIEWS=YES",
-            "-co", "NUM_THREADS=ALL_CPUS"
+            "-co", "BLOCKSIZE=512",
+            "--config", "GDAL_MAX_DATASET_POOL_SIZE", "1000"
         ]
         log_fn(f"[merge] Running: {' '.join(cmd_translate)}")
         res = subprocess.run(cmd_translate, capture_output=True, text=True, env=env)
