@@ -898,8 +898,8 @@ async def georef_status(
     image=image,
     secrets=[modal.Secret.from_name("salmon")],
     timeout=3600,
-    memory=8192,   # rasterio + GDAL + buffered images can be hungry
-    cpu=8,
+    memory=65536,   # rasterio + GDAL + buffered images can be hungry
+    cpu=16,
 )
 @modal.asgi_app()
 def web() -> FastAPI:
@@ -1145,8 +1145,8 @@ def georeference_single_image(
     image=image,
     secrets=[modal.Secret.from_name("salmon")],
     timeout=1200,
-    memory=8192,
-    cpu=8,
+    memory=65536,
+    cpu=16,
 )
 def georeference_and_merge_folder(
     images: list[tuple[str, bytes]],
