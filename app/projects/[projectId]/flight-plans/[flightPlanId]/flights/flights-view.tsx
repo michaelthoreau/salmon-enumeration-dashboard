@@ -24,6 +24,7 @@ export interface FlightRow {
   imageCount: number
   taskStatus: OdmTaskStatus | GeorefTaskStatus | null
   outputKey: string | null
+  taskCompletedAt?: Date | null
 }
 
 interface Props {
@@ -129,6 +130,7 @@ export default function FlightsView({
       flightId: r.flight.id,
       formattedTime: r.formattedTime,
       outputKey: r.outputKey!,
+      cacheBuster: r.taskCompletedAt ? new Date(r.taskCompletedAt).getTime().toString() : null,
     }))
 
   const [isCompareMode, setIsCompareMode] = useState(false)
@@ -380,6 +382,7 @@ export default function FlightsView({
               <div key="single-viewport" className="w-full h-full relative">
                 <OrthoMap
                   outputKey={selected.outputKey}
+                  cacheBuster={selected.taskCompletedAt ? new Date(selected.taskCompletedAt).getTime().toString() : null}
                   fitBoundsTrigger={zoomTrigger}
                   onViewportChange={setViewport}
                   className="h-full w-full rounded-none border-none"

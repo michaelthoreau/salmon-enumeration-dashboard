@@ -35,6 +35,8 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     altitudeMode?: string
     altitudeOffset?: number
     specifiedAltitude?: number
+    sampleFactor?: number
+    useLrf?: boolean
   }
   try {
     body = await req.json()
@@ -42,7 +44,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 })
   }
 
-  const { flightId, projectId, flightPlanId, dewarp, altitudeMode, altitudeOffset, specifiedAltitude } = body
+  const { flightId, projectId, flightPlanId, dewarp, altitudeMode, altitudeOffset, specifiedAltitude, sampleFactor, useLrf } = body
   if (!flightId || !projectId || !flightPlanId) {
     return NextResponse.json(
       { error: 'flightId, projectId, and flightPlanId are required' },
@@ -171,9 +173,10 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
         bucket: process.env.S3_BUCKET_NAME,
         output_prefix: outputPrefix,
         dewarp: dewarp !== false, // Default to true if not specified
-        altitude_mode: altitudeMode || 'relative',
+        altitude_mode: altitudeMode || (useLrf ? 'lrf' : 'relative'),
         altitude_offset: altitudeOffset != null ? Number(altitudeOffset) : 0.0,
         specified_altitude: specifiedAltitude != null ? Number(specifiedAltitude) : 50.0,
+        sample_factor: sampleFactor != null ? Math.max(1, Math.round(Number(sampleFactor))) : 1,
       }),
     })
     if (!res.ok) {
