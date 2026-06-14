@@ -197,7 +197,7 @@ export default function CompareMap({
           type: 'raster',
           tiles: [tileUrl],
           tileSize: 256,
-          minzoom,
+          minzoom: 0,
           maxzoom,
         })
         map.addLayer({ id: 'ortho-before-layer', type: 'raster', source: 'ortho-before' })
@@ -261,7 +261,7 @@ export default function CompareMap({
           type: 'raster',
           tiles: [tileUrl],
           tileSize: 256,
-          minzoom,
+          minzoom: 0,
           maxzoom,
         })
         map.addLayer({ id: 'ortho-after-layer', type: 'raster', source: 'ortho-after' })

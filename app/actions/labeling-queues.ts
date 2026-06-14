@@ -17,6 +17,7 @@ export async function createLabelingQueue(
     return { error: 'Unauthorized' }
   }
   const id = randomUUID()
+  // Run queue insert and task assignment in a single batch when possible
   await db.insert(labelingQueues).values({
     id,
     name,
@@ -26,9 +27,10 @@ export async function createLabelingQueue(
     createdAt: new Date(),
   })
   if (taskIds.length > 0) {
-    for (const taskId of taskIds) {
-      await db.update(labelingTasks).set({ queueId: id }).where(eq(labelingTasks.id, taskId))
-    }
+    // Single bulk UPDATE instead of N round-trips
+    await db.update(labelingTasks)
+      .set({ queueId: id })
+      .where(inArray(labelingTasks.id, taskIds))
   }
   return { ok: true, id }
 }

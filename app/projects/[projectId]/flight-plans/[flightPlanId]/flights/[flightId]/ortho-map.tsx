@@ -390,7 +390,7 @@ export default function OrthoMap({
           type: 'raster',
           tiles: [tileUrl],
           tileSize: 256,
-          minzoom,
+          minzoom: 0,
           maxzoom,
         })
         map.addLayer({ id: 'ortho-layer', type: 'raster', source: 'ortho' })

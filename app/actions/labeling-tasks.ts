@@ -25,19 +25,23 @@ export async function createLabelingTasks(
   if (tasks.length === 0) return { ok: true, count: 0 }
 
   const now = new Date()
-  await db.insert(labelingTasks).values(
-    tasks.map(t => ({
-      id: randomUUID(),
-      fileId: t.fileId,
-      x1: t.x1,
-      y1: t.y1,
-      x2: t.x2,
-      y2: t.y2,
-      frame: t.frame,
-      createdBy: session.userId,
-      createdAt: now,
-    })),
-  )
+  const rows = tasks.map(t => ({
+    id: randomUUID(),
+    fileId: t.fileId,
+    x1: t.x1,
+    y1: t.y1,
+    x2: t.x2,
+    y2: t.y2,
+    frame: t.frame,
+    createdBy: session.userId,
+    createdAt: now,
+  }))
+
+  // Chunk into 100-row batches to stay under libsql's variable limit
+  const CHUNK = 100
+  for (let i = 0; i < rows.length; i += CHUNK) {
+    await db.insert(labelingTasks).values(rows.slice(i, i + CHUNK))
+  }
   return { ok: true, count: tasks.length }
 }
 

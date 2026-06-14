@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getSession } from '@/lib/session'
 import { db } from '@/lib/db'
 import { odmTasks, georefTasks } from '@/lib/schema'
-import { eq } from 'drizzle-orm'
+import { eq, desc } from 'drizzle-orm'
 
 function getTileServer(): { url: string; token: string } {
   const url = process.env.MODAL_TILE_SERVER_URL
@@ -18,30 +18,44 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   const key = request.nextUrl.searchParams.get('key')
   if (!key) return NextResponse.json({ error: 'Missing key' }, { status: 400 })
 
-  // 1. Check if bounds are already cached in the database
+  // 1. Check if bounds are already cached in the database (resolving to most recent completed task)
   let cachedInfo: string | null = null
   let matchingTaskType: 'odm' | 'georef' | null = null
   let matchingTaskId: string | null = null
 
   try {
     const [odmMatch] = await db
-      .select({ id: odmTasks.id, bounds: odmTasks.bounds })
+      .select({ id: odmTasks.id, bounds: odmTasks.bounds, completedAt: odmTasks.completedAt })
       .from(odmTasks)
       .where(eq(odmTasks.outputKey, key))
-    if (odmMatch) {
-      cachedInfo = odmMatch.bounds
-      matchingTaskType = 'odm'
-      matchingTaskId = odmMatch.id
-    } else {
-      const [georefMatch] = await db
-        .select({ id: georefTasks.id, bounds: georefTasks.bounds })
-        .from(georefTasks)
-        .where(eq(georefTasks.outputKey, key))
-      if (georefMatch) {
+      .orderBy(desc(odmTasks.completedAt))
+      .limit(1)
+
+    const [georefMatch] = await db
+      .select({ id: georefTasks.id, bounds: georefTasks.bounds, completedAt: georefTasks.completedAt })
+      .from(georefTasks)
+      .where(eq(georefTasks.outputKey, key))
+      .orderBy(desc(georefTasks.completedAt))
+      .limit(1)
+
+    if (odmMatch && georefMatch) {
+      if (odmMatch.completedAt && georefMatch.completedAt && odmMatch.completedAt > georefMatch.completedAt) {
+        cachedInfo = odmMatch.bounds
+        matchingTaskType = 'odm'
+        matchingTaskId = odmMatch.id
+      } else {
         cachedInfo = georefMatch.bounds
         matchingTaskType = 'georef'
         matchingTaskId = georefMatch.id
       }
+    } else if (odmMatch) {
+      cachedInfo = odmMatch.bounds
+      matchingTaskType = 'odm'
+      matchingTaskId = odmMatch.id
+    } else if (georefMatch) {
+      cachedInfo = georefMatch.bounds
+      matchingTaskType = 'georef'
+      matchingTaskId = georefMatch.id
     }
   } catch (err) {
     console.error('[Tiles Info] DB lookup failed:', err)
