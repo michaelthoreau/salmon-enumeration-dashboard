@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSession } from '@/lib/session'
 import { db } from '@/lib/db'
-import { flights, flightPlans, projects, georefTasks } from '@/lib/schema'
-import { eq, and, isNull } from 'drizzle-orm'
+import { flights, flightPlans, projects, georefTasks, odmTasks } from '@/lib/schema'
+import { eq, and, isNull, or } from 'drizzle-orm'
 import { randomUUID } from 'crypto'
 import { listFlightObjects } from '@/lib/s3'
 
@@ -27,18 +27,63 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
-  let body: { flightId?: string; projectId?: string; flightPlanId?: string; dewarp?: boolean }
+  let body: {
+    flightId?: string
+    projectId?: string
+    flightPlanId?: string
+    dewarp?: boolean
+    altitudeMode?: string
+    altitudeOffset?: number
+    specifiedAltitude?: number
+  }
   try {
     body = await req.json()
   } catch {
     return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 })
   }
 
-  const { flightId, projectId, flightPlanId, dewarp } = body
+  const { flightId, projectId, flightPlanId, dewarp, altitudeMode, altitudeOffset, specifiedAltitude } = body
   if (!flightId || !projectId || !flightPlanId) {
     return NextResponse.json(
       { error: 'flightId, projectId, and flightPlanId are required' },
       { status: 400 },
+    )
+  }
+
+  // Concurrency check: Ensure no other task is running for this flight
+  const [activeOdm] = await db
+    .select()
+    .from(odmTasks)
+    .where(
+      and(
+        eq(odmTasks.flightId, flightId),
+        or(
+          eq(odmTasks.status, 'uploading'),
+          eq(odmTasks.status, 'queued'),
+          eq(odmTasks.status, 'running')
+        )
+      )
+    )
+    .limit(1)
+
+  const [activeGeoref] = await db
+    .select()
+    .from(georefTasks)
+    .where(
+      and(
+        eq(georefTasks.flightId, flightId),
+        or(
+          eq(georefTasks.status, 'pending'),
+          eq(georefTasks.status, 'running')
+        )
+      )
+    )
+    .limit(1)
+
+  if (activeOdm || activeGeoref) {
+    return NextResponse.json(
+      { error: 'Another processing task (ODM or Georef) is currently running for this flight.' },
+      { status: 400 }
     )
   }
 
@@ -104,11 +149,11 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 
   // Use our DB task ID also as the Modal task_id for idempotency
   const taskId = randomUUID()
-  const outputPrefix = `${projectId}/${flightPlanId}/${flightId}/georef`
-  const images = [{
-    key: firstObject.key,
-    filename: firstObject.key.split('/').pop() ?? firstObject.key,
-  }]
+  const outputPrefix = `${projectId}/${flightPlanId}/${flightId}/outputs`
+  const images = objects.map((o) => ({
+    key: o.key,
+    filename: o.key.split('/').pop() ?? o.key,
+  }))
 
   console.log(`[georef POST] taskId=${taskId} images=${images.length} workerUrl=${workerUrl} tokenLen=${workerToken.length}`)
 
@@ -126,6 +171,9 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
         bucket: process.env.S3_BUCKET_NAME,
         output_prefix: outputPrefix,
         dewarp: dewarp !== false, // Default to true if not specified
+        altitude_mode: altitudeMode || 'relative',
+        altitude_offset: altitudeOffset != null ? Number(altitudeOffset) : 0.0,
+        specified_altitude: specifiedAltitude != null ? Number(specifiedAltitude) : 50.0,
       }),
     })
     if (!res.ok) {

@@ -54,6 +54,7 @@ export default function GeorefPanel({
   const router = useRouter()
   const [task, setTask] = useState<GeorefTask | null>(null)
   const [dewarp, setDewarp] = useState(true)
+  const [useLrf, setUseLrf] = useState(false)
   const [starting, setStarting] = useState(false)
   const [startError, setStartError] = useState<string | null>(null)
 
@@ -116,7 +117,7 @@ export default function GeorefPanel({
       const res = await fetch('/api/georef/tasks', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ flightId, projectId, flightPlanId, dewarp }),
+        body: JSON.stringify({ flightId, projectId, flightPlanId, dewarp, useLrf }),
       })
       const data = await res.json()
       if (!res.ok) {
@@ -167,21 +168,40 @@ export default function GeorefPanel({
         Fast but less accurate than ODM — ideal for quick review in the field.
       </p>
 
-      <div className="flex items-center gap-2 py-1">
-        <input
-          type="checkbox"
-          id="dewarp-checkbox"
-          checked={dewarp}
-          onChange={(e) => setDewarp(e.target.checked)}
-          disabled={starting || !!isActive}
-          className="w-4 h-4 text-emerald-600 border-gray-300 rounded focus:ring-emerald-500 disabled:opacity-50 cursor-pointer"
-        />
-        <label
-          htmlFor="dewarp-checkbox"
-          className="text-xs font-medium text-gray-700 select-none cursor-pointer disabled:opacity-50"
-        >
-          Apply lens dewarping (recommended for wide-angle camera)
-        </label>
+      <div className="space-y-2 py-1">
+        <div className="flex items-center gap-2">
+          <input
+            type="checkbox"
+            id="dewarp-checkbox"
+            checked={dewarp}
+            onChange={(e) => setDewarp(e.target.checked)}
+            disabled={starting || !!isActive}
+            className="w-4 h-4 text-emerald-600 border-gray-300 rounded focus:ring-emerald-500 disabled:opacity-50 cursor-pointer"
+          />
+          <label
+            htmlFor="dewarp-checkbox"
+            className="text-xs font-medium text-gray-700 select-none cursor-pointer disabled:opacity-50"
+          >
+            Apply lens dewarping (recommended for wide-angle camera)
+          </label>
+        </div>
+
+        <div className="flex items-center gap-2">
+          <input
+            type="checkbox"
+            id="lrf-checkbox"
+            checked={useLrf}
+            onChange={(e) => setUseLrf(e.target.checked)}
+            disabled={starting || !!isActive}
+            className="w-4 h-4 text-emerald-600 border-gray-300 rounded focus:ring-emerald-500 disabled:opacity-50 cursor-pointer"
+          />
+          <label
+            htmlFor="lrf-checkbox"
+            className="text-xs font-medium text-gray-700 select-none cursor-pointer disabled:opacity-50"
+          >
+            Use laser range finder (LRF) for AGL altitude (compensates for tilt)
+          </label>
+        </div>
       </div>
 
       {startError && (

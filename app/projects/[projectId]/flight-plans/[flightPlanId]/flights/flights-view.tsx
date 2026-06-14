@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useRef, useEffect, useCallback } from 'react'
+import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { ArrowLeft, ExternalLink, Layers, CheckCircle2, AlertCircle, PlayCircle, ImageMinus, Maximize2, Sliders } from 'lucide-react'
 import { cn } from '@/lib/utils'
@@ -10,7 +11,7 @@ import CompareMap from './[flightId]/compare-map'
 import EditFlightButton from './[flightId]/edit-flight-button'
 import { DeleteFlightButton } from './flight-actions'
 import CreateFlightForm from './create-flight-form'
-import type { OdmTaskStatus } from '@/lib/schema'
+import type { OdmTaskStatus, GeorefTaskStatus } from '@/lib/schema'
 import type { InferSelectModel } from 'drizzle-orm'
 import type { flights } from '@/lib/schema'
 
@@ -21,7 +22,7 @@ export interface FlightRow {
   formattedTime: string
   localTimestamp: string
   imageCount: number
-  taskStatus: OdmTaskStatus | null
+  taskStatus: OdmTaskStatus | GeorefTaskStatus | null
   outputKey: string | null
 }
 
@@ -38,7 +39,7 @@ interface Props {
   }
 }
 
-function StatusBadge({ status, imageCount }: { status: OdmTaskStatus | null; imageCount: number }) {
+function StatusBadge({ status, imageCount }: { status: OdmTaskStatus | GeorefTaskStatus | null; imageCount: number }) {
   if (status === 'completed') {
     return (
       <span className="inline-flex items-center gap-1 rounded-md bg-green-50 border border-green-200 px-2 py-0.5 text-xs text-green-700 font-medium">
@@ -55,7 +56,7 @@ function StatusBadge({ status, imageCount }: { status: OdmTaskStatus | null; ima
       </span>
     )
   }
-  if (status === 'queued' || status === 'uploading') {
+  if (status === 'queued' || status === 'uploading' || status === 'pending') {
     return (
       <span className="inline-flex items-center gap-1 rounded-md bg-amber-50 border border-amber-200 px-2 py-0.5 text-xs text-amber-700 font-medium">
         <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-ping" />
@@ -103,9 +104,15 @@ export default function FlightsView({
   projectName,
   flightPlan,
 }: Props) {
+  const router = useRouter()
   const [sidebarWidth, setSidebarWidth] = useState(500)
   const [zoomTrigger, setZoomTrigger] = useState(0)
   const isResizingRef = useRef(false)
+
+  // Refresh page data on mount to bypass client-side router cache
+  useEffect(() => {
+    router.refresh()
+  }, [router])
 
   // Default to first flight, prioritizing the one with an orthophoto if possible
   const firstWithOrtho = rows.find((r) => r.outputKey)
