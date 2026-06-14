@@ -131,6 +131,14 @@ export default function FlightSplitView({
       ? (new Date(latestOdm.createdAt) > new Date(latestGeoref.createdAt) ? latestOdm : latestGeoref)
       : (latestOdm || latestGeoref || null))
 
+  const completedTask = (latestOdmTask && latestGeorefTask)
+    ? (new Date(latestOdmTask.createdAt) > new Date(latestGeorefTask.createdAt) ? latestOdmTask : latestGeorefTask)
+    : (latestOdmTask || latestGeorefTask || null)
+  
+  const cacheBuster = completedTask?.completedAt
+    ? new Date(completedTask.completedAt).getTime().toString()
+    : null
+
   // Live polling for sidebar status when a task is active
   const [activeTaskState, setActiveTaskState] = useState<{
     status: string
@@ -614,6 +622,7 @@ export default function FlightSplitView({
             <div className="w-full h-full relative">
               <OrthoMap
                 outputKey={geotiffKey}
+                cacheBuster={cacheBuster}
                 photos={images.map((img) => ({
                   key: img.key,
                   name: img.key.split('/').pop() || img.key,
