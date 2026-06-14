@@ -1,11 +1,13 @@
 import React from 'react'
 import { notFound } from 'next/navigation'
 import { db } from '@/lib/db'
-import { projects, flightPlans, flights, files as filesTable, odmTasks } from '@/lib/schema'
+import { projects, flightPlans, flights, files as filesTable, odmTasks, georefTasks } from '@/lib/schema'
 import { eq, desc, inArray, sql } from 'drizzle-orm'
 import { getSession } from '@/lib/session'
 import FlightsView from './flights-view'
 import type { FlightRow } from './flights-view'
+
+export const dynamic = 'force-dynamic'
 
 interface PageProps {
   params: Promise<{ projectId: string; flightPlanId: string }>
@@ -61,7 +63,7 @@ export default async function FlightsPage({ params }: PageProps) {
     : []
 
   // Latest ODM task per flight
-  const taskRows = flightIds.length > 0
+  const odmTaskRows = flightIds.length > 0
     ? await db
         .select()
         .from(odmTasks)
@@ -69,20 +71,45 @@ export default async function FlightsPage({ params }: PageProps) {
         .orderBy(desc(odmTasks.createdAt))
     : []
 
+  // Latest Georef task per flight
+  const georefTaskRows = flightIds.length > 0
+    ? await db
+        .select()
+        .from(georefTasks)
+        .where(inArray(georefTasks.flightId, flightIds))
+        .orderBy(desc(georefTasks.createdAt))
+    : []
+
   const fileCountMap = new Map(fileCounts.map((r) => [r.flightId, r.count]))
-  const latestTaskMap = new Map<string, typeof taskRows[number]>()
-  for (const task of taskRows) {
-    if (!latestTaskMap.has(task.flightId)) latestTaskMap.set(task.flightId, task)
+
+  const latestOdmMap = new Map<string, typeof odmTaskRows[number]>()
+  for (const task of odmTaskRows) {
+    if (!latestOdmMap.has(task.flightId)) latestOdmMap.set(task.flightId, task)
+  }
+
+  const latestGeorefMap = new Map<string, typeof georefTaskRows[number]>()
+  for (const task of georefTaskRows) {
+    if (!latestGeorefMap.has(task.flightId)) latestGeorefMap.set(task.flightId, task)
   }
 
   const rows: FlightRow[] = active.map((flight) => {
-    const task = latestTaskMap.get(flight.id)
+    const odmTask = latestOdmMap.get(flight.id)
+    const georefTask = latestGeorefMap.get(flight.id)
+
+    // Determine the most recent task for this flight
+    let task: { status: string; outputKey: string | null; createdAt: Date } | null = null
+    if (odmTask && georefTask) {
+      task = new Date(odmTask.createdAt) > new Date(georefTask.createdAt) ? odmTask : georefTask
+    } else {
+      task = odmTask || georefTask || null
+    }
+
     return {
       flight,
       formattedTime: formatInTz(flight.timestamp, project.timezone),
       localTimestamp: toLocalInputValue(flight.timestamp, project.timezone),
       imageCount: fileCountMap.get(flight.id) ?? 0,
-      taskStatus: task?.status ?? null,
+      taskStatus: (task?.status as any) ?? null,
       outputKey: task?.outputKey ?? null,
     }
   })

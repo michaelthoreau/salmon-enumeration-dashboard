@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSession } from '@/lib/session'
 import { db } from '@/lib/db'
-import { georefTasks } from '@/lib/schema'
+import { georefTasks, flights, flightPlans } from '@/lib/schema'
 import { eq } from 'drizzle-orm'
+import { getObjectBuffer } from '@/lib/s3'
 
 interface RouteParams {
   params: Promise<{ taskId: string }>
@@ -30,8 +31,30 @@ export async function GET(req: NextRequest, { params }: RouteParams): Promise<Ne
     return NextResponse.json({ error: 'Task not found' }, { status: 404 })
   }
 
-  // Already terminal — return the DB state directly without proxying
-  if (task.status === 'completed' || task.status === 'failed') {
+  const outputLine = Number(req.nextUrl.searchParams.get('outputLine') ?? '0')
+
+  // Already terminal — return the DB state directly with S3 logs if available
+  if (task.status === 'completed' || task.status === 'failed' || task.status === 'canceled') {
+    let logs: string[] = []
+    if (task.status !== 'canceled') {
+      try {
+        const [flight] = await db.select().from(flights).where(eq(flights.id, task.flightId))
+        if (flight) {
+          const [flightPlan] = await db.select().from(flightPlans).where(eq(flightPlans.id, flight.flightPlanId))
+          if (flightPlan) {
+            const logKey = `${flightPlan.projectId}/${flight.flightPlanId}/${task.flightId}/outputs/orthophoto.log`
+            const buf = await getObjectBuffer(logKey)
+            logs = buf.toString('utf-8').split('\n')
+          }
+        }
+      } catch (err) {
+        console.error('[Georef Tasks API] Failed to fetch log from S3:', err)
+        logs = task.error ? [task.error] : []
+      }
+    } else {
+      logs = ['Task was canceled by user.']
+    }
+
     return NextResponse.json({
       taskId,
       status: task.status,
@@ -39,6 +62,7 @@ export async function GET(req: NextRequest, { params }: RouteParams): Promise<Ne
       total: task.totalImages ?? 0,
       outputKey: task.outputKey ?? null,
       error: task.error ?? null,
+      output: logs.slice(outputLine),
     })
   }
 
@@ -59,6 +83,7 @@ export async function GET(req: NextRequest, { params }: RouteParams): Promise<Ne
     total: number
     output_key: string | null
     error: string | null
+    output?: string[]
   }
 
   try {
@@ -134,6 +159,8 @@ export async function GET(req: NextRequest, { params }: RouteParams): Promise<Ne
       .where(eq(georefTasks.id, taskId))
   }
 
+  const logs = workerData.output ?? []
+
   return NextResponse.json({
     taskId,
     status: workerData.status,
@@ -141,5 +168,27 @@ export async function GET(req: NextRequest, { params }: RouteParams): Promise<Ne
     total: workerData.total,
     outputKey: workerData.output_key ?? null,
     error: workerData.error ?? null,
+    output: logs.slice(outputLine),
   })
+}
+
+export async function DELETE(req: NextRequest, { params }: RouteParams): Promise<NextResponse> {
+  const session = await getSession()
+  if (!session) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
+
+  const { taskId } = await params
+  const [task] = await db.select().from(georefTasks).where(eq(georefTasks.id, taskId))
+  if (!task) {
+    return NextResponse.json({ error: 'Task not found' }, { status: 404 })
+  }
+
+  // Update status to canceled in the database
+  await db
+    .update(georefTasks)
+    .set({ status: 'canceled', completedAt: new Date() })
+    .where(eq(georefTasks.id, taskId))
+
+  return NextResponse.json({ success: true })
 }

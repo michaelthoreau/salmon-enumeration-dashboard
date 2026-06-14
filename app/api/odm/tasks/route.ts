@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSession } from '@/lib/session'
 import { db } from '@/lib/db'
-import { flights, flightPlans, projects, odmTasks } from '@/lib/schema'
-import { eq, and, isNull } from 'drizzle-orm'
+import { flights, flightPlans, projects, odmTasks, georefTasks } from '@/lib/schema'
+import { eq, and, isNull, or } from 'drizzle-orm'
 import { randomUUID } from 'crypto'
 import { listFlightObjects } from '@/lib/s3'
 
@@ -58,6 +58,43 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     .from(projects)
     .where(and(eq(projects.id, projectId), isNull(projects.deletedAt)))
   if (!project) return NextResponse.json({ error: 'Project not found' }, { status: 404 })
+
+  // Concurrency check: Ensure no other task is running for this flight
+  const [activeOdm] = await db
+    .select()
+    .from(odmTasks)
+    .where(
+      and(
+        eq(odmTasks.flightId, flightId),
+        or(
+          eq(odmTasks.status, 'uploading'),
+          eq(odmTasks.status, 'queued'),
+          eq(odmTasks.status, 'running')
+        )
+      )
+    )
+    .limit(1)
+
+  const [activeGeoref] = await db
+    .select()
+    .from(georefTasks)
+    .where(
+      and(
+        eq(georefTasks.flightId, flightId),
+        or(
+          eq(georefTasks.status, 'pending'),
+          eq(georefTasks.status, 'running')
+        )
+      )
+    )
+    .limit(1)
+
+  if (activeOdm || activeGeoref) {
+    return NextResponse.json(
+      { error: 'Another processing task (ODM or Georef) is currently running for this flight.' },
+      { status: 400 }
+    )
+  }
 
   // List S3 objects for this flight, filtering out any previously stored ODM outputs
   let objects: { key: string }[]

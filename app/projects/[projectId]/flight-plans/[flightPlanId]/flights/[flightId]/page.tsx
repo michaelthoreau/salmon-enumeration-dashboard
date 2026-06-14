@@ -1,10 +1,12 @@
 import { notFound } from 'next/navigation'
 import { db } from '@/lib/db'
-import { flights, flightPlans, projects, files as filesTable, odmTasks } from '@/lib/schema'
+import { flights, flightPlans, projects, files as filesTable, odmTasks, georefTasks } from '@/lib/schema'
 import { eq, desc } from 'drizzle-orm'
 import { getSession } from '@/lib/session'
 import { listFlightObjects, createPresignedGetUrl } from '@/lib/s3'
 import FlightSplitView from './flight-split-view'
+
+export const dynamic = 'force-dynamic'
 
 interface PageProps {
   params: Promise<{ projectId: string; flightPlanId: string; flightId: string }>
@@ -78,11 +80,24 @@ export default async function FlightDetailPage({ params }: PageProps) {
     .orderBy(desc(odmTasks.createdAt))
     .limit(1)
 
-  // Filter out any generated ODM outputs from the main file list
-  const displayObjects = dbFiles.filter((o) => !o.key.includes('/odm/'))
+  // Most recent Georef task for this flight (if any)
+  const [latestGeorefTask] = await db
+    .select()
+    .from(georefTasks)
+    .where(eq(georefTasks.flightId, flightId))
+    .orderBy(desc(georefTasks.createdAt))
+    .limit(1)
+
+  // Filter out any generated outputs from the main file list
+  const displayObjects = dbFiles.filter((o) => !o.key.includes('/outputs/') && !o.key.includes('/odm/') && !o.key.includes('/georef/'))
 
   // Find processed outputs in S3 list, fallback to db records if S3 fails
-  const geotiffKey = s3Objects.find((o) => o.key.includes('/odm/') && (o.key.endsWith('.tif') || o.key.endsWith('.tiff')))?.key || latestOdmTask?.outputKey
+  const geotiffKey = s3Objects.find((o) => o.key.includes('/outputs/') && (o.key.endsWith('.tif') || o.key.endsWith('.tiff')))?.key
+    || s3Objects.find((o) => o.key.includes('/odm/') && (o.key.endsWith('.tif') || o.key.endsWith('.tiff')))?.key
+    || latestOdmTask?.outputKey
+    || s3Objects.find((o) => o.key.includes('/georef/') && (o.key.endsWith('.tif') || o.key.endsWith('.tiff')))?.key
+    || latestGeorefTask?.outputKey
+
   const reportPdfKey = s3Objects.find((o) => o.key.includes('/odm/') && o.key.endsWith('.pdf'))?.key || latestOdmTask?.reportKey
 
   let geotiffDownloadUrl = ''
@@ -125,6 +140,7 @@ export default async function FlightDetailPage({ params }: PageProps) {
       geotiffDownloadUrl={geotiffDownloadUrl}
       reportPdfViewUrl={reportPdfViewUrl}
       latestOdmTask={latestOdmTask ?? null}
+      latestGeorefTask={latestGeorefTask ?? null}
       splitByKey={splitByKey}
       canWrite={canWrite}
       formattedTime={formatInTz(flight.timestamp, project.timezone)}

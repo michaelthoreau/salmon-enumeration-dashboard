@@ -13,7 +13,7 @@ async function openPresignedUrl(key: string): Promise<void> {
 
 interface GeorefTask {
   taskId: string
-  status: 'running' | 'completed' | 'failed'
+  status: 'pending' | 'running' | 'completed' | 'failed'
   processed: number
   total: number
   outputKey: string | null
@@ -39,6 +39,7 @@ const MAX_POLL_INTERVAL_MS = 30_000
 const TERMINAL_STATUSES = new Set<GeorefTask['status']>(['completed', 'failed'])
 
 const STATUS_BADGE: Record<GeorefTask['status'], string> = {
+  pending: 'bg-amber-100 text-amber-800',
   running: 'bg-blue-100 text-blue-800',
   completed: 'bg-green-100 text-green-800',
   failed: 'bg-red-100 text-red-800',
@@ -52,6 +53,8 @@ export default function GeorefPanel({
 }: GeorefPanelProps) {
   const router = useRouter()
   const [task, setTask] = useState<GeorefTask | null>(null)
+  const [dewarp, setDewarp] = useState(true)
+  const [useLrf, setUseLrf] = useState(false)
   const [starting, setStarting] = useState(false)
   const [startError, setStartError] = useState<string | null>(null)
 
@@ -114,7 +117,7 @@ export default function GeorefPanel({
       const res = await fetch('/api/georef/tasks', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ flightId, projectId, flightPlanId }),
+        body: JSON.stringify({ flightId, projectId, flightPlanId, dewarp, useLrf }),
       })
       const data = await res.json()
       if (!res.ok) {
@@ -165,6 +168,42 @@ export default function GeorefPanel({
         Fast but less accurate than ODM — ideal for quick review in the field.
       </p>
 
+      <div className="space-y-2 py-1">
+        <div className="flex items-center gap-2">
+          <input
+            type="checkbox"
+            id="dewarp-checkbox"
+            checked={dewarp}
+            onChange={(e) => setDewarp(e.target.checked)}
+            disabled={starting || !!isActive}
+            className="w-4 h-4 text-emerald-600 border-gray-300 rounded focus:ring-emerald-500 disabled:opacity-50 cursor-pointer"
+          />
+          <label
+            htmlFor="dewarp-checkbox"
+            className="text-xs font-medium text-gray-700 select-none cursor-pointer disabled:opacity-50"
+          >
+            Apply lens dewarping (recommended for wide-angle camera)
+          </label>
+        </div>
+
+        <div className="flex items-center gap-2">
+          <input
+            type="checkbox"
+            id="lrf-checkbox"
+            checked={useLrf}
+            onChange={(e) => setUseLrf(e.target.checked)}
+            disabled={starting || !!isActive}
+            className="w-4 h-4 text-emerald-600 border-gray-300 rounded focus:ring-emerald-500 disabled:opacity-50 cursor-pointer"
+          />
+          <label
+            htmlFor="lrf-checkbox"
+            className="text-xs font-medium text-gray-700 select-none cursor-pointer disabled:opacity-50"
+          >
+            Use laser range finder (LRF) for AGL altitude (compensates for tilt)
+          </label>
+        </div>
+      </div>
+
       {startError && (
         <p className="text-sm text-red-600">{startError}</p>
       )}
@@ -189,13 +228,15 @@ export default function GeorefPanel({
           </div>
 
           {/* Progress bar */}
-          {task.status === 'running' && (
+          {(task.status === 'running' || task.status === 'pending') && (
             <div className="px-4 py-3 border-b border-gray-200">
               <div className="flex items-center justify-between mb-1.5">
                 <span className="text-xs text-gray-500">
-                  {task.total > 0
-                    ? `Georeferencing… ${task.processed} / ${task.total}`
-                    : 'Georeferencing images…'}
+                  {task.status === 'pending'
+                    ? 'Pending…'
+                    : task.total > 0
+                      ? `Georeferencing… ${task.processed} / ${task.total}`
+                      : 'Georeferencing images…'}
                 </span>
                 {task.total > 0 && (
                   <span className="text-xs font-mono text-gray-500">

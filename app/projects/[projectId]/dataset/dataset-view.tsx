@@ -396,50 +396,39 @@ export default function DatasetView({ entries: initialEntries, taskCountByFileId
         <div className="flex items-center gap-2 pb-1">
           {selected.size > 0 ? (
             <>
-              <span className="text-xs text-gray-500">{selected.size} selected</span>
+              <span className="text-xs text-gray-500 mr-1">{selected.size} selected</span>
               {canWrite && (
                 <>
-                  {(['train', 'val', 'test'] as Split[]).map(s => {
-                    if (activeTab === s) return null
-                    return (
-                      <button
-                        key={s}
-                        onClick={async () => {
-                          const keys = Array.from(selected)
-                          setSplits(prev => { const n = new Map(prev); keys.forEach(k => n.set(k, s)); return n })
-                          setSelected(new Set())
-                          await Promise.all(keys.map(k => assignFileSplit(k, s)))
-                          router.refresh()
-                        }}
-                        className={cn(buttonVariants({ variant: 'outline', size: 'sm' }))}
-                      >
-                        {activeTab === 'unassigned' ? `Add to ${s}` : `Move to ${s}`}
-                      </button>
-                    )
-                  })}
-                  {activeTab !== 'unassigned' && (
+                  {/* Single split selector replaces 3 separate buttons */}
+                  <select
+                    value=""
+                    onChange={async e => {
+                      const target = e.target.value
+                      if (!target) return
+                      const keys = Array.from(selected)
+                      const splitVal = target === 'none' ? null : target as Split
+                      setSplits(prev => { const n = new Map(prev); keys.forEach(k => n.set(k, splitVal)); return n })
+                      setSelected(new Set())
+                      await Promise.all(keys.map(k => assignFileSplit(k, splitVal)))
+                      router.refresh()
+                    }}
+                    className={cn(buttonVariants({ variant: 'outline', size: 'sm' }), 'pr-7 cursor-pointer')}
+                  >
+                    <option value="">{activeTab === 'unassigned' ? 'Add to split…' : 'Move to…'}</option>
+                    {(['train', 'val', 'test'] as Split[]).filter(s => s !== activeTab).map(s => (
+                      <option key={s} value={s}>{s}</option>
+                    ))}
+                    {activeTab !== 'unassigned' && <option value="none">Remove from split</option>}
+                  </select>
+                  {activeTab !== 'unassigned' && selectedImageEntries.length > 0 && (
                     <button
-                      onClick={async () => {
-                        const keys = Array.from(selected)
-                        setSplits(prev => { const n = new Map(prev); keys.forEach(k => n.set(k, null)); return n })
-                        setSelected(new Set())
-                        await Promise.all(keys.map(k => assignFileSplit(k, null)))
-                        router.refresh()
-                      }}
-                      className={cn(buttonVariants({ variant: 'outline', size: 'sm' }), 'text-red-600 hover:text-red-700 hover:bg-red-50 border-red-200 hover:border-red-300')}
+                      onClick={openTaskDialog}
+                      className={cn(buttonVariants({ variant: 'outline', size: 'sm' }))}
                     >
-                      Remove from split
+                      Create labeling tasks
                     </button>
                   )}
                 </>
-              )}
-              {canWrite && activeTab !== 'unassigned' && selectedImageEntries.length > 0 && (
-                <button
-                  onClick={openTaskDialog}
-                  className={cn(buttonVariants({ variant: 'outline', size: 'sm' }))}
-                >
-                  Create labeling tasks ({selectedImageEntries.length} image{selectedImageEntries.length !== 1 ? 's' : ''})
-                </button>
               )}
               <button
                 onClick={() => setSelected(new Set())}
@@ -599,23 +588,41 @@ export default function DatasetView({ entries: initialEntries, taskCountByFileId
 
           {taskDialog?.step === 'ready' && (() => {
             const totalTiles = taskDialog.fileTiles.reduce((s, f) => s + f.tiles.length, 0)
-            const effectivePerFile = taskDialog.fileTiles.map(f => ({
-              ...f,
-              effective: maxPerImage !== null ? Math.min(f.tiles.length, maxPerImage) : f.tiles.length,
-            }))
-            const effectiveTotal = effectivePerFile.reduce((s, f) => s + f.effective, 0)
+            const effectiveTotal = taskDialog.fileTiles.reduce(
+              (s, f) => s + (maxPerImage !== null ? Math.min(f.tiles.length, maxPerImage) : f.tiles.length), 0
+            )
+            const imageCount = taskDialog.fileTiles.length
+            const isCapped = maxPerImage !== null && effectiveTotal < totalTiles
             return (
               <>
-                <div className="flex items-center justify-between gap-4">
-                  <p className="text-sm text-gray-600">
-                    Each image is split into <strong>{TILE_SIZE}×{TILE_SIZE}px</strong> tiles.
-                  </p>
+                {/* Summary stats */}
+                <div className="grid grid-cols-3 gap-3 my-1">
+                  <div className="flex flex-col items-center justify-center rounded-xl bg-gray-50 border border-gray-100 px-3 py-4">
+                    <span className="text-2xl font-black text-gray-900">{imageCount}</span>
+                    <span className="text-xs text-gray-500 mt-0.5">image{imageCount !== 1 ? 's' : ''}</span>
+                  </div>
+                  <div className="flex flex-col items-center justify-center rounded-xl bg-gray-50 border border-gray-100 px-3 py-4">
+                    <span className="text-2xl font-black text-gray-900">{totalTiles}</span>
+                    <span className="text-xs text-gray-500 mt-0.5">available tiles</span>
+                  </div>
+                  <div className={`flex flex-col items-center justify-center rounded-xl border px-3 py-4 ${isCapped ? 'bg-amber-50 border-amber-200' : 'bg-blue-50 border-blue-200'}`}>
+                    <span className={`text-2xl font-black ${isCapped ? 'text-amber-700' : 'text-blue-700'}`}>{effectiveTotal}</span>
+                    <span className={`text-xs mt-0.5 ${isCapped ? 'text-amber-600' : 'text-blue-600'}`}>tasks to create{isCapped ? ' (capped)' : ''}</span>
+                  </div>
+                </div>
+
+                {/* Settings */}
+                <div className="flex items-center justify-between gap-3 rounded-xl bg-gray-50 border border-gray-100 px-4 py-3">
+                  <div>
+                    <p className="text-xs font-medium text-gray-700">Tile size</p>
+                    <p className="text-xs text-gray-500">{TILE_SIZE}×{TILE_SIZE} px per task</p>
+                  </div>
                   <div className="flex items-center gap-2 shrink-0">
                     <label className="text-xs text-gray-500 whitespace-nowrap">Max per image</label>
                     <select
                       value={maxPerImage ?? ''}
                       onChange={e => setMaxPerImage(e.target.value === '' ? null : Number(e.target.value))}
-                      className="text-xs border border-gray-200 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-blue-400"
+                      className="text-xs border border-gray-200 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-blue-400 bg-white"
                     >
                       {MAX_OPTIONS.map(o => (
                         <option key={String(o.value)} value={o.value ?? ''}>{o.label}</option>
@@ -623,40 +630,6 @@ export default function DatasetView({ entries: initialEntries, taskCountByFileId
                     </select>
                   </div>
                 </div>
-                <table className="w-full text-xs mt-2 border border-gray-100 rounded-lg overflow-hidden">
-                  <thead className="bg-gray-50">
-                    <tr>
-                      <th className="text-left px-3 py-2 font-medium text-gray-600">File</th>
-                      <th className="text-right px-3 py-2 font-medium text-gray-600">Dimensions</th>
-                      <th className="text-right px-3 py-2 font-medium text-gray-600">Total tiles</th>
-                      <th className="text-right px-3 py-2 font-medium text-gray-600">Creating</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-100">
-                    {effectivePerFile.map(f => (
-                      <tr key={f.key}>
-                        <td className="px-3 py-2 font-mono text-gray-700 max-w-[140px] truncate" title={f.filename}>{f.filename}</td>
-                        <td className="px-3 py-2 text-right text-gray-500">
-                          {f.width > 0 ? `${f.width}×${f.height}` : <span className="text-red-400">failed</span>}
-                        </td>
-                        <td className="px-3 py-2 text-right text-gray-400">{f.tiles.length}</td>
-                        <td className="px-3 py-2 text-right font-medium text-gray-700">
-                          {f.effective}
-                          {f.effective < f.tiles.length && (
-                            <span className="ml-1 text-amber-500">rand</span>
-                          )}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                  <tfoot className="bg-gray-50 border-t border-gray-200">
-                    <tr>
-                      <td className="px-3 py-2 font-medium text-gray-700" colSpan={2}>Total</td>
-                      <td className="px-3 py-2 text-right text-gray-400">{totalTiles}</td>
-                      <td className="px-3 py-2 text-right font-semibold text-gray-900">{effectiveTotal}</td>
-                    </tr>
-                  </tfoot>
-                </table>
               </>
             )
           })()}

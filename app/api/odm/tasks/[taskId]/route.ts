@@ -122,7 +122,9 @@ export async function GET(req: NextRequest, { params }: RouteParams): Promise<Ne
   const statusLabel = ODM_STATUS[statusCode] as 'queued' | 'running' | 'failed' | 'completed' | 'canceled'
 
   // Sync status to DB if it changed
-  if (task.status !== statusLabel) {
+  const isDbTerminal = task.status === 'completed' || task.status === 'failed' || task.status === 'canceled'
+
+  if (task.status !== statusLabel && !isDbTerminal) {
     await db
       .update(odmTasks)
       .set({
@@ -134,10 +136,12 @@ export async function GET(req: NextRequest, { params }: RouteParams): Promise<Ne
       .where(eq(odmTasks.id, taskId))
   }
 
+  const finalStatus = isDbTerminal ? task.status : statusLabel
+
   // When completed for the first time: download zip, extract GeoTIFF, upload to S3
   let outputKey = task.outputKey
   let reportKey = task.reportKey
-  if (statusLabel === 'completed' && !outputKey) {
+  if (finalStatus === 'completed' && !outputKey) {
     try {
       const collected = await collectOdmOutputs(task.odmUuid, task.flightId)
       outputKey = collected.outputKey
@@ -173,13 +177,13 @@ export async function GET(req: NextRequest, { params }: RouteParams): Promise<Ne
   return NextResponse.json({
     taskId,
     odmUuid: task.odmUuid,
-    status: statusLabel,
+    status: finalStatus,
     uploadedImages: task.totalImages ?? 0,
     totalImages: task.totalImages,
     processingTime: info.processingTime,
     imagesCount: info.imagesCount,
-    progress: info.progress ?? 0,
-    output: info.output ?? [],
+    progress: finalStatus === 'completed' ? 100 : (finalStatus === 'canceled' || finalStatus === 'failed' ? 0 : (info.progress ?? 0)),
+    output: finalStatus === 'canceled' ? ['Task was canceled by user.'] : (info.output ?? []),
     outputKey,
     reportKey,
   })
@@ -249,7 +253,7 @@ async function collectOdmOutputs(
   )
   if (!tifEntry) throw new Error('odm_orthophoto.tif not found in all.zip')
 
-  const outputKey = `${prefix}odm/${flightId}.tif`
+  const outputKey = `${prefix}outputs/orthophoto.tif`
   await putObject(outputKey, Buffer.from(files[tifEntry]), 'image/tiff')
 
   // ── Report PDF (optional — may not exist if ODM skipped it) ────────────
