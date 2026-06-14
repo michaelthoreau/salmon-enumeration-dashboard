@@ -49,3 +49,7 @@ AGENTS.md
 CLAUDE.md
 data.db
 test-results/
+
+# dji-pipeline (CDK/Python)
+dji-pipeline/.venv/
+dji-pipeline/infrastructure/cdk.out/
