@@ -9,9 +9,9 @@ import { MapIcon, ImageIcon, DownloadIcon, ArrowLeft, Maximize2, RefreshCw } fro
 import FlightUploader from './flight-uploader'
 import FileLightbox from './file-lightbox'
 import EditFlightButton from './edit-flight-button'
-import OdmPanel from './odm-panel'
-import GeorefPanel from './georef-panel'
 import OrthoMap from './ortho-map'
+import ProcessingModal from './processing-modal'
+import { Layers } from 'lucide-react'
 import { assignFileSplit, syncFlightFiles } from '@/app/actions/files'
 import { updateFlightPlanLocation } from '@/app/actions/flight-plans'
 import type { Split, flights, flightPlans, projects, odmTasks, georefTasks } from '@/lib/schema'
@@ -28,6 +28,14 @@ const IMAGE_EXTS = new Set(['jpg', 'jpeg', 'png', 'webp', 'gif'])
 function isImage(key: string): boolean {
   const ext = key.split('.').pop()?.toLowerCase() ?? ''
   return IMAGE_EXTS.has(ext)
+}
+
+async function openPresignedUrl(key: string, download = false): Promise<void> {
+  const qs = download ? `&download=1` : ''
+  const res = await fetch(`/api/files/presign?key=${encodeURIComponent(key)}${qs}`)
+  if (!res.ok) return
+  const { url } = await res.json()
+  window.open(url, '_blank', 'noreferrer')
 }
 
 function formatBytes(bytes: number): string {
@@ -103,6 +111,100 @@ export default function FlightSplitView({
   const [activeTab, setActiveTab] = useState<'map' | 'images'>(geotiffKey ? 'map' : 'images')
   const isResizingRef = useRef(false)
 
+  const [isModalOpen, setIsModalOpen] = useState(false)
+
+  // Refresh page data on mount to bypass client-side router cache
+  useEffect(() => {
+    router.refresh()
+  }, [router])
+
+  // Unified task logic
+  const latestOdm = latestOdmTask ? { ...latestOdmTask, type: 'odm' as const, error: null as string | null } : null
+  const latestGeoref = latestGeorefTask ? { ...latestGeorefTask, type: 'georef' as const } : null
+
+  const activeOdm = latestOdm && !['completed', 'failed', 'canceled'].includes(latestOdm.status) ? latestOdm : null
+  const activeGeoref = latestGeoref && !['completed', 'failed', 'canceled'].includes(latestGeoref.status) ? latestGeoref : null
+
+  const activeTask = activeOdm || activeGeoref
+  const latestTask = activeTask || 
+    ((latestOdm && latestGeoref) 
+      ? (new Date(latestOdm.createdAt) > new Date(latestGeoref.createdAt) ? latestOdm : latestGeoref)
+      : (latestOdm || latestGeoref || null))
+
+  // Live polling for sidebar status when a task is active
+  const [activeTaskState, setActiveTaskState] = useState<{
+    status: string
+    processed: number
+    total: number
+    progress?: number
+    outputKey?: string | null
+    reportKey?: string | null
+  } | null>(null)
+
+  useEffect(() => {
+    if (!activeTask) {
+      setActiveTaskState(null)
+      return
+    }
+
+    let active = true
+    let timerId: NodeJS.Timeout
+
+    async function poll() {
+      if (!activeTask) return
+      const endpoint = activeTask.type === 'odm'
+        ? `/api/odm/tasks/${activeTask.id}?outputLine=999999`
+        : `/api/georef/tasks/${activeTask.id}?outputLine=999999`
+      
+      try {
+        const res = await fetch(endpoint, { cache: 'no-store' })
+        if (!res.ok) return
+        const data = await res.json()
+        if (!active) return
+
+        const p = data.uploadedImages ?? data.processed ?? 0
+        const t = data.totalImages ?? data.total ?? 0
+        const progress = data.progress ?? (data.status === 'completed' ? 100 : (t > 0 ? (p / t) * 100 : 0))
+
+        setActiveTaskState((prev) => {
+          const finalProcessed = Math.max(p, prev ? prev.processed : 0)
+          const finalTotal = t > 0 ? t : (prev ? prev.total : 0)
+          const calculatedProgress = finalTotal > 0 ? (finalProcessed / finalTotal) * 100 : 0
+          const finalProgress = Math.max(
+            data.progress ?? (data.status === 'completed' ? 100 : calculatedProgress),
+            prev?.progress ?? 0
+          )
+
+          return {
+            status: data.status,
+            processed: finalProcessed,
+            total: finalTotal,
+            progress: finalProgress,
+            outputKey: data.outputKey ?? prev?.outputKey ?? null,
+            reportKey: data.reportKey ?? prev?.reportKey ?? null,
+          }
+        })
+
+        if (['completed', 'failed', 'canceled'].includes(data.status)) {
+          router.refresh()
+        } else {
+          timerId = setTimeout(poll, 4000)
+        }
+      } catch (err) {
+        if (active) {
+          timerId = setTimeout(poll, 8000)
+        }
+      }
+    }
+
+    poll()
+
+    return () => {
+      active = false
+      clearTimeout(timerId)
+    }
+  }, [activeTask?.id, activeTask?.type, router])
+
   const [isSyncing, setIsSyncing] = useState(false)
   const [syncStatus, setSyncStatus] = useState<{ type: 'success' | 'error'; message: string } | null>(null)
 
@@ -130,6 +232,33 @@ export default function FlightSplitView({
       setIsSyncing(false)
     }
   }, [projectId, flightPlanId, flightId, router])
+
+  const [cancelling, setCancelling] = useState(false)
+
+  const handleCancelTask = useCallback(async () => {
+    if (!activeTask) return
+    if (!confirm('Are you sure you want to stop/abandon this processing job?')) return
+    setCancelling(true)
+
+    const endpoint = activeTask.type === 'odm'
+      ? `/api/odm/tasks/${activeTask.id}`
+      : `/api/georef/tasks/${activeTask.id}`
+
+    try {
+      const res = await fetch(endpoint, { method: 'DELETE' })
+      if (res.ok) {
+        setActiveTaskState((prev) => prev ? { ...prev, status: 'canceled' } : null)
+        router.refresh()
+      } else {
+        const data = await res.json()
+        alert(data.error ?? 'Failed to cancel task')
+      }
+    } catch (err) {
+      alert('Error canceling task: ' + String(err))
+    } finally {
+      setCancelling(false)
+    }
+  }, [activeTask, router])
 
   // Clear sync status after 6 seconds
   useEffect(() => {
@@ -164,6 +293,15 @@ export default function FlightSplitView({
 
   // Derived state: split for active image
   const activeSplit = (activeImage && splitByKey[activeImage.key]) || 'none'
+
+  // Derived task status & progress
+  const taskStatus = activeTaskState?.status || latestTask?.status
+  const isTaskActive = !!(activeTask && !['completed', 'failed', 'canceled'].includes(taskStatus || ''))
+  const total = activeTaskState?.total ?? latestTask?.totalImages ?? 0
+  const processed = activeTaskState?.processed ?? 0
+  const progress = activeTaskState?.progress ?? (total > 0 ? (processed / total) * 100 : 0)
+  const currentOutputKey = activeTaskState?.outputKey || latestTask?.outputKey
+  const currentReportKey = activeTaskState?.reportKey || (latestTask && 'reportKey' in latestTask ? latestTask.reportKey : null)
 
   // Drag resizing handlers
   const startResizing = useCallback((e: React.MouseEvent) => {
@@ -294,48 +432,110 @@ export default function FlightSplitView({
           </section>
         )}
 
-        {/* ODM Control Panel */}
+        {/* Unified Processing Panel */}
         {canWrite && (
-          <section className="border-t border-gray-100 pt-4">
-            <OdmPanel
-              key={latestOdmTask?.id ?? 'no-task'}
-              flightId={flightId}
-              projectId={projectId}
-              flightPlanId={flightPlanId}
-              initialTask={
-                latestOdmTask
-                  ? {
-                    taskId: latestOdmTask.id,
-                    odmUuid: latestOdmTask.odmUuid,
-                    status: latestOdmTask.status,
-                    outputKey: latestOdmTask.outputKey ?? null,
-                    reportKey: latestOdmTask.reportKey ?? null,
-                  }
-                  : null
-              }
-            />
-          </section>
-        )}
+          <section className="border-t border-gray-100 pt-4 space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Layers className="w-5 h-5 text-gray-500" />
+                <h2 className="text-sm font-semibold text-gray-900">Map Processing</h2>
+              </div>
+              <button
+                onClick={() => setIsModalOpen(true)}
+                className="px-3 py-1.5 text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-700 rounded-lg shadow-sm flex items-center gap-1.5 transition-colors cursor-pointer"
+              >
+                {activeTask ? (
+                  <>
+                    <span className="w-2.5 h-2.5 rounded-full bg-white opacity-75 animate-pulse" />
+                    <span>View Monitor</span>
+                  </>
+                ) : (
+                  <span>Process Imagery</span>
+                )}
+              </button>
+            </div>
 
-        {/* Quick Georeference Panel */}
-        {canWrite && (
-          <section className="border-t border-gray-100 pt-4">
-            <GeorefPanel
-              flightId={flightId}
-              projectId={projectId}
-              flightPlanId={flightPlanId}
-              initialTask={
-                latestGeorefTask
-                  ? {
-                      taskId: latestGeorefTask.id,
-                      status: latestGeorefTask.status,
-                      outputKey: latestGeorefTask.outputKey ?? null,
-                      error: latestGeorefTask.error ?? null,
-                      totalImages: latestGeorefTask.totalImages,
-                    }
-                  : null
-              }
-            />
+            {/* Current/Latest Status Card */}
+            {latestTask ? (
+              <div className="p-3 bg-gray-50 dark:bg-slate-800/40 border border-gray-200 dark:border-slate-800 rounded-xl space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] text-gray-500 dark:text-gray-400 font-mono capitalize">
+                    {latestTask.type === 'odm' ? 'ODM Reconstruction' : 'Quick Georeference'}
+                  </span>
+                  <span className={cn(
+                    "text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded",
+                    taskStatus === 'completed' ? 'bg-green-100 text-green-800 dark:bg-green-950/20 dark:text-green-400' :
+                    taskStatus === 'failed' ? 'bg-red-100 text-red-800 dark:bg-red-950/20 dark:text-red-400' :
+                    taskStatus === 'canceled' ? 'bg-gray-100 text-gray-800 dark:bg-gray-850 dark:text-gray-400' :
+                    'bg-blue-100 text-blue-800 dark:bg-blue-950/20 dark:text-blue-400 animate-pulse'
+                  )}>
+                    {taskStatus}
+                  </span>
+                </div>
+
+                {isTaskActive && (
+                  <div className="space-y-1.5 pt-1">
+                    <div className="flex items-center justify-between text-[10px]">
+                      <span className="text-gray-500 dark:text-gray-400">
+                        {taskStatus === 'uploading' 
+                          ? `Uploading images (${processed}/${total})` 
+                          : `Processing (${processed}/${total})`}
+                      </span>
+                      <span className="font-semibold text-gray-700 dark:text-slate-200">
+                        {Math.round(progress)}%
+                      </span>
+                    </div>
+                    <div className="h-1.5 rounded-full bg-gray-200 dark:bg-slate-850 overflow-hidden relative">
+                      <div
+                        className={cn(
+                          "h-full rounded-full transition-all duration-500",
+                          latestTask.type === 'odm' ? 'bg-gradient-to-r from-blue-500 to-indigo-600' : 'bg-gradient-to-r from-emerald-500 to-teal-600'
+                        )}
+                        style={{ width: `${Math.max(3, progress)}%` }}
+                      />
+                    </div>
+                    <div className="flex justify-end pt-1">
+                      <button
+                        onClick={handleCancelTask}
+                        disabled={cancelling}
+                        className="px-2 py-1 bg-red-50 hover:bg-red-100 dark:bg-red-950/20 dark:hover:bg-red-950/30 text-red-600 dark:text-red-400 border border-red-100 dark:border-red-900/30 rounded text-[10px] font-medium transition-colors cursor-pointer"
+                      >
+                        {cancelling ? 'Stopping...' : 'Stop Processing'}
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {taskStatus === 'completed' && currentOutputKey && (
+                  <div className="flex items-center gap-2 text-xs pt-1">
+                    <button
+                      onClick={() => openPresignedUrl(currentOutputKey, true)}
+                      className="text-emerald-700 hover:text-emerald-950 dark:text-emerald-400 dark:hover:text-emerald-300 font-medium underline flex items-center gap-1 cursor-pointer"
+                    >
+                      <DownloadIcon className="w-3.5 h-3.5" />
+                      <span>Download GeoTIFF</span>
+                    </button>
+                    {latestTask.type === 'odm' && currentReportKey && (
+                      <button
+                        onClick={() => openPresignedUrl(currentReportKey)}
+                        className="text-slate-700 hover:text-slate-900 dark:text-slate-350 dark:hover:text-slate-200 font-medium underline flex items-center gap-1 ml-2 cursor-pointer"
+                      >
+                        📄 View Report
+                      </button>
+                    )}
+                  </div>
+                )}
+                {taskStatus === 'failed' && latestTask.error && (
+                  <p className="text-[11px] text-red-650 line-clamp-2 italic font-mono bg-red-50/50 dark:bg-red-950/5 p-1 border border-red-100 dark:border-red-950/20 rounded">
+                    {latestTask.error}
+                  </p>
+                )}
+              </div>
+            ) : (
+              <div className="p-3 bg-gray-50/50 border border-dashed border-gray-200 dark:border-slate-800 dark:bg-slate-800/10 rounded-xl text-center text-xs text-gray-550 italic py-5 select-none">
+                No processed orthomap exists yet.
+              </div>
+            )}
           </section>
         )}
 
@@ -564,6 +764,40 @@ export default function FlightSplitView({
           )}
         </div>
       </main>
+      {isModalOpen && (
+        <ProcessingModal
+          isOpen={isModalOpen}
+          onClose={() => setIsModalOpen(false)}
+          flightId={flightId}
+          projectId={projectId}
+          flightPlanId={flightPlanId}
+          initialActiveTask={
+            activeTask
+              ? {
+                  taskId: activeTask.id,
+                  type: activeTask.type,
+                  status: activeTask.status,
+                  odmUuid: activeTask.type === 'odm' ? (activeTask as any).odmUuid : null,
+                  outputKey: activeTask.outputKey,
+                  reportKey: activeTask.type === 'odm' ? (activeTask as any).reportKey : null,
+                  error: (activeTask as any).error ?? null,
+                  totalImages: activeTask.totalImages,
+                }
+              : latestTask
+              ? {
+                  taskId: latestTask.id,
+                  type: latestTask.type,
+                  status: latestTask.status,
+                  odmUuid: latestTask.type === 'odm' ? (latestTask as any).odmUuid : null,
+                  outputKey: latestTask.outputKey,
+                  reportKey: latestTask.type === 'odm' ? (latestTask as any).reportKey : null,
+                  error: (latestTask as any).error ?? null,
+                  totalImages: latestTask.totalImages,
+                }
+              : null
+          }
+        />
+      )}
     </div>
   )
 }

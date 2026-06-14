@@ -145,7 +145,7 @@ export const odmTasks = sqliteTable('odm_tasks', {
 
 // ─── Georef Processing Tasks ──────────────────────────────────────────────────
 
-export type GeorefTaskStatus = 'pending' | 'running' | 'failed' | 'completed'
+export type GeorefTaskStatus = 'pending' | 'running' | 'failed' | 'completed' | 'canceled'
 
 export const georefTasks = sqliteTable('georef_tasks', {
   id: text('id').primaryKey(), // UUID (our internal ID, also used as Modal task_id)
