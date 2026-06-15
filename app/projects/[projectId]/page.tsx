@@ -54,6 +54,8 @@ export default async function ProjectDashboardPage({ params }: PageProps) {
     return {
       id: p.id,
       name: p.displayName || p.name,
+      originalName: p.name,
+      displayName: p.displayName,
       description: p.description,
       showOnDashboard: p.showOnDashboard,
       location: p.location,

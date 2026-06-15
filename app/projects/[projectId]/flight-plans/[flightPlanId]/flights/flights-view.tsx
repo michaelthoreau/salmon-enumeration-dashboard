@@ -3,7 +3,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
-import { ArrowLeft, ExternalLink, Layers, CheckCircle2, AlertCircle, PlayCircle, ImageMinus, Maximize2, Sliders } from 'lucide-react'
+import { ArrowLeft, ExternalLink, Layers, CheckCircle2, AlertCircle, PlayCircle, ImageMinus, Maximize2, Sliders, Pencil } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { buttonVariants } from '@/components/ui/button'
 import OrthoMap from './[flightId]/ortho-map'
@@ -11,6 +11,7 @@ import CompareMap from './[flightId]/compare-map'
 import EditFlightButton from './[flightId]/edit-flight-button'
 import { DeleteFlightButton } from './flight-actions'
 import CreateFlightForm from './create-flight-form'
+import { EditFlightPlanButton } from '../../flight-plan-actions'
 import type { OdmTaskStatus, GeorefTaskStatus } from '@/lib/schema'
 import type { InferSelectModel } from 'drizzle-orm'
 import type { flights } from '@/lib/schema'
@@ -35,10 +36,13 @@ interface Props {
   canWrite: boolean
   projectName: string
   flightPlan: {
+    id: string
     name: string
+    displayName: string | null
     description: string | null
   }
   from?: string
+  isAdmin: boolean
 }
 
 function StatusBadge({ status, imageCount }: { status: OdmTaskStatus | GeorefTaskStatus | null; imageCount: number }) {
@@ -106,6 +110,7 @@ export default function FlightsView({
   projectName,
   flightPlan,
   from,
+  isAdmin,
 }: Props) {
   const router = useRouter()
   const [sidebarWidth, setSidebarWidth] = useState(500)
@@ -221,10 +226,21 @@ export default function FlightsView({
           >
             <ArrowLeft className="w-5 h-5" />
           </Link>
-          <div>
-            <h1 className="text-xl font-semibold text-gray-900 leading-tight">
-              {flightPlan.name}
-            </h1>
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2">
+              <h1 className="text-xl font-semibold text-gray-900 leading-tight truncate">
+                {flightPlan.name}
+              </h1>
+              {isAdmin && (
+                <EditFlightPlanButton
+                  plan={flightPlan}
+                  projectId={projectId}
+                  label={<Pencil className="w-3.5 h-3.5 text-gray-400 hover:text-gray-650" />}
+                  variant="ghost"
+                  size="xs"
+                />
+              )}
+            </div>
             {flightPlan.description && (
               <p className="text-sm text-gray-500 mt-2">{flightPlan.description}</p>
             )}

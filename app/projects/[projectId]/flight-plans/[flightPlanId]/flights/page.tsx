@@ -125,11 +125,9 @@ export default async function FlightsPage({ params, searchParams }: PageProps) {
       timezone={project.timezone}
       canWrite={canWrite}
       projectName={project.name}
-      flightPlan={{
-        name: flightPlan.displayName || flightPlan.name,
-        description: flightPlan.description,
-      }}
+      flightPlan={flightPlan}
       from={from}
+      isAdmin={session?.role === 'admin'}
     />
   )
 }
