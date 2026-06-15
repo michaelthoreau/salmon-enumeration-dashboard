@@ -4,6 +4,7 @@ import { flights, flightPlans, projects, files as filesTable, odmTasks, georefTa
 import { eq, desc } from 'drizzle-orm'
 import { getSession } from '@/lib/session'
 import { listFlightObjects, createPresignedGetUrl } from '@/lib/s3'
+import { fetchHistoricalWeather, fetchTidePredictions } from '@/lib/weather-tides'
 import FlightSplitView from './flight-split-view'
 
 export const dynamic = 'force-dynamic'
@@ -120,6 +121,57 @@ export default async function FlightDetailPage({ params, searchParams }: PagePro
     }
   }
 
+  // 1. Calculate centroid coordinates from S3 flight images database list or flightPlan location
+  const coordsWithGps = dbFiles.filter((f) => f.latitude !== null && f.longitude !== null)
+  let lat = 61.2383 // Anchorage default lat
+  let lng = -149.8883 // Anchorage default lng
+  let hasCoordinates = false
+
+  if (coordsWithGps.length > 0) {
+    const sumLat = coordsWithGps.reduce((acc, f) => acc + (f.latitude || 0), 0)
+    const sumLng = coordsWithGps.reduce((acc, f) => acc + (f.longitude || 0), 0)
+    lat = sumLat / coordsWithGps.length
+    lng = sumLng / coordsWithGps.length
+    hasCoordinates = true
+  } else if (flightPlan.location) {
+    try {
+      const geom = JSON.parse(flightPlan.location)
+      if (geom.type === 'Point') {
+        lng = geom.coordinates[0]
+        lat = geom.coordinates[1]
+        hasCoordinates = true
+      } else if (geom.type === 'Polygon') {
+        const ring = geom.coordinates[0] || []
+        if (ring.length > 0) {
+          const sumLat = ring.reduce((acc: number, pt: number[]) => acc + pt[1], 0)
+          const sumLng = ring.reduce((acc: number, pt: number[]) => acc + pt[0], 0)
+          lat = sumLat / ring.length
+          lng = sumLng / ring.length
+          hasCoordinates = true
+        }
+      }
+    } catch (e) {
+      console.error('Failed to parse flightPlan location coordinates:', e)
+    }
+  }
+
+  // 2. Fetch weather and tides in parallel
+  let weatherData = null
+  let tideData = null
+
+  if (hasCoordinates) {
+    try {
+      const [weather, tides] = await Promise.all([
+        fetchHistoricalWeather(lat, lng, flight.timestamp),
+        fetchTidePredictions(lat, lng, flight.timestamp),
+      ])
+      weatherData = weather
+      tideData = tides
+    } catch (err) {
+      console.error('Failed to fetch weather/tide data:', err)
+    }
+  }
+
   return (
     <FlightSplitView
       projectId={projectId}
@@ -147,6 +199,8 @@ export default async function FlightDetailPage({ params, searchParams }: PagePro
       canWrite={canWrite}
       formattedTime={formatInTz(flight.timestamp, project.timezone)}
       localTimestamp={toLocalInputValue(flight.timestamp, project.timezone)}
+      weather={weatherData}
+      tides={tideData}
       from={from}
     />
   )
