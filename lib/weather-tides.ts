@@ -39,8 +39,8 @@ export async function findNearestTideStation(
   let minDistance = Infinity
 
   for (const station of stations) {
-    if (station.lat !== undefined && station.lon !== undefined && station.id) {
-      const d = getDistance(lat, lon, station.lat, station.lon)
+    if (station.lat !== undefined && station.lng !== undefined && station.id) {
+      const d = getDistance(lat, lon, station.lat, station.lng)
       if (d < minDistance) {
         minDistance = d
         nearestStation = station
@@ -118,7 +118,7 @@ export async function fetchTidePredictions(
     const day = String(date.getUTCDate()).padStart(2, '0')
     const dateStr = `${year}${month}${day}`
 
-    const url = `https://api.tidesandcurrents.noaa.gov/api/prod/response.json?begin_date=${dateStr}&end_date=${dateStr}&station=${station.id}&product=predictions&datum=MLLW&time_zone=gmt&units=english&format=json`
+    const url = `https://api.tidesandcurrents.noaa.gov/api/prod/datagetter?begin_date=${dateStr}&end_date=${dateStr}&station=${station.id}&product=predictions&datum=MLLW&time_zone=gmt&units=english&format=json`
 
     const res = await fetch(url)
     if (!res.ok) {
