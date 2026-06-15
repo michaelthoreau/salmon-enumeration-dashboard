@@ -63,10 +63,10 @@ export default async function FlightPlansPage({ params }: PageProps) {
                   <tr key={plan.id}>
                     <td className="px-6 py-3">
                       <Link
-                        href={`/projects/${projectId}/flight-plans/${plan.id}/flights`}
+                        href={`/projects/${projectId}/flight-plans/${plan.id}/flights?from=list`}
                         className={cn(buttonVariants({ variant: 'outline', size: 'sm' }))}
                       >
-                        {plan.name}
+                        {plan.displayName || plan.name}
                       </Link>
                     </td>
                     <td className="px-6 py-3 text-gray-500">
@@ -101,7 +101,7 @@ export default async function FlightPlansPage({ params }: PageProps) {
               <tbody className="divide-y divide-gray-100">
                 {deleted.map((plan) => (
                   <tr key={plan.id}>
-                    <td className="px-6 py-3 text-gray-500">{plan.name}</td>
+                    <td className="px-6 py-3 text-gray-500">{plan.displayName || plan.name}</td>
                     <td className="px-6 py-3 text-gray-400">{plan.description ?? '—'}</td>
                     <td className="px-6 py-3 text-right">
                       <RestoreFlightPlanButton plan={plan} projectId={projectId} />

@@ -1,0 +1,1 @@
+ALTER TABLE `flight_plans` ADD `display_name` text;

@@ -36,7 +36,7 @@ export function DeleteFlightPlanButton({
           <DialogHeader>
             <DialogTitle>Delete flight plan?</DialogTitle>
           </DialogHeader>
-          <p className="text-sm text-gray-600">Are you sure you want to delete <strong>{plan.name}</strong>?</p>
+          <p className="text-sm text-gray-600">Are you sure you want to delete <strong>{plan.displayName || plan.name}</strong>?</p>
           {state?.error && <p className="text-sm text-destructive">{state.error}</p>}
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => setOpen(false)}>Cancel</Button>
@@ -111,6 +111,16 @@ export function EditFlightPlanButton({
                 name="name"
                 required
                 defaultValue={plan.name}
+              />
+            </div>
+
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="fp-edit-display-name">Display Name</Label>
+              <Input
+                id="fp-edit-display-name"
+                name="displayName"
+                defaultValue={plan.displayName ?? ''}
+                placeholder="Optional display name override"
               />
             </div>
 

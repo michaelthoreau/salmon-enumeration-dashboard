@@ -78,6 +78,13 @@
       "when": 1781235321485,
       "tag": "0010_bumpy_wasp",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "6",
+      "when": 1781489966300,
+      "tag": "0011_white_bushwacker",
+      "breakpoints": true
     }
   ]
 }

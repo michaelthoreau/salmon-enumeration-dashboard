@@ -43,7 +43,7 @@ export async function createProject(_prev: State, formData: FormData): Promise<S
     deletedAt: null,
   })
 
-  revalidatePath('/projects')
+  revalidatePath('/')
   return { success: `Project "${name}" created.` }
 }
 
@@ -83,7 +83,8 @@ export async function updateProject(_prev: State, formData: FormData): Promise<S
 
   await db.update(projects).set(patch).where(eq(projects.id, id))
 
-  revalidatePath('/projects')
+  revalidatePath('/')
+  revalidatePath(`/projects/${id}`)
   return { success: 'Project updated.' }
 }
 
@@ -96,7 +97,8 @@ export async function deleteProject(_prev: State, formData: FormData): Promise<S
 
   await db.update(projects).set({ deletedAt: new Date() }).where(eq(projects.id, id))
 
-  revalidatePath('/projects')
+  revalidatePath('/')
+  revalidatePath(`/projects/${id}`)
   return { success: 'Project deleted.' }
 }
 
@@ -109,6 +111,7 @@ export async function restoreProject(_prev: State, formData: FormData): Promise<
 
   await db.update(projects).set({ deletedAt: null }).where(eq(projects.id, id))
 
-  revalidatePath('/projects')
+  revalidatePath('/')
+  revalidatePath(`/projects/${id}`)
   return { success: 'Project restored.' }
 }
