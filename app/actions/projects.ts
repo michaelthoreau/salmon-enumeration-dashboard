@@ -52,12 +52,26 @@ export async function updateProject(_prev: State, formData: FormData): Promise<S
   if (!session || session.role !== 'admin') return { error: 'Unauthorized.' }
 
   const id = (formData.get('id') as string | null)?.trim() ?? ''
+  const rawName = (formData.get('name') as string | null)?.trim() ?? ''
   const description = (formData.get('description') as string | null)?.trim() || null
   const timezone = (formData.get('timezone') as string | null)?.trim() || null
 
   if (!id) return { error: 'Project ID is required.' }
+  if (!rawName) return { error: 'Project name is required.' }
 
-  const patch: { description: string | null; timezone?: string } = { description }
+  const name = slugify(rawName)
+  if (!name) return { error: 'Invalid project name.' }
+
+  const [existing] = await db.select().from(projects).where(eq(projects.name, name))
+  if (existing && existing.id !== id) {
+    return { error: `A project named "${name}" already exists.` }
+  }
+
+  const patch: { name: string; description: string | null; timezone?: string } = {
+    name,
+    description,
+  }
+
   if (timezone) {
     try {
       Intl.DateTimeFormat(undefined, { timeZone: timezone })
