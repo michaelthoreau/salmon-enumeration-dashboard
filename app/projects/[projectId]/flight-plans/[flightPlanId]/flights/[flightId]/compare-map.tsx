@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useRef, useState, useCallback } from 'react'
-import { X, Sliders, Maximize2 } from 'lucide-react'
+import { X, Sliders, Maximize2, Map, Layers } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { buttonVariants } from '@/components/ui/button'
 import 'maplibre-gl/dist/maplibre-gl.css'
@@ -55,6 +55,7 @@ export default function CompareMap({
 
   const isDraggingRef = useRef(false)
   const boundsRef = useRef<[number, number, number, number] | null>(null)
+  const [basemap, setBasemap] = useState<'street' | 'satellite'>('street')
 
   const [boundsA, setBoundsA] = useState<[number, number, number, number] | null>(null)
   const [boundsB, setBoundsB] = useState<[number, number, number, number] | null>(null)
@@ -97,12 +98,54 @@ export default function CompareMap({
           if (cancelled) return
           mapBeforeReadyRef.current = true
           mapBefore.resize()
+
+          // Add Esri satellite source
+          mapBefore.addSource('esri-satellite', {
+            type: 'raster',
+            tiles: ['https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'],
+            tileSize: 256,
+            attribution: 'Tiles &copy; Esri',
+            maxzoom: 19
+          })
+
+          // Add Esri satellite layer at bottom
+          const layersBefore = mapBefore.getStyle().layers;
+          const firstLayerBeforeId = layersBefore && layersBefore.length > 0 ? layersBefore[0].id : undefined;
+          mapBefore.addLayer({
+            id: 'esri-satellite-layer',
+            type: 'raster',
+            source: 'esri-satellite',
+            layout: { visibility: basemap === 'satellite' ? 'visible' : 'none' }
+          }, firstLayerBeforeId)
+
+          updateMapBasemap(mapBefore, basemap)
         })
  
         mapAfter.on('load', () => {
           if (cancelled) return
           mapAfterReadyRef.current = true
           mapAfter.resize()
+
+          // Add Esri satellite source
+          mapAfter.addSource('esri-satellite', {
+            type: 'raster',
+            tiles: ['https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'],
+            tileSize: 256,
+            attribution: 'Tiles &copy; Esri',
+            maxzoom: 19
+          })
+
+          // Add Esri satellite layer at bottom
+          const layersAfter = mapAfter.getStyle().layers;
+          const firstLayerAfterId = layersAfter && layersAfter.length > 0 ? layersAfter[0].id : undefined;
+          mapAfter.addLayer({
+            id: 'esri-satellite-layer',
+            type: 'raster',
+            source: 'esri-satellite',
+            layout: { visibility: basemap === 'satellite' ? 'visible' : 'none' }
+          }, firstLayerAfterId)
+
+          updateMapBasemap(mapAfter, basemap)
         })
 
         // ── Camera Synchronization ───────────────────────────────────────────
@@ -157,6 +200,16 @@ export default function CompareMap({
       mapAfterReadyRef.current = false
     }
   }, [initialViewport])
+
+  // ── Sync Basemap Layer Visibility ──────────────────────────────────────────
+  useEffect(() => {
+    if (mapBeforeReadyRef.current && mapBeforeRef.current) {
+      updateMapBasemap(mapBeforeRef.current, basemap)
+    }
+    if (mapAfterReadyRef.current && mapAfterRef.current) {
+      updateMapBasemap(mapAfterRef.current, basemap)
+    }
+  }, [basemap])
 
   // ── Swap layer A (Before) ──────────────────────────────────────────────────
   useEffect(() => {
@@ -499,6 +552,80 @@ export default function CompareMap({
         <X className="w-4 h-4" />
         <span>Exit Compare</span>
       </button>
+
+      {/* Basemap Switcher Control */}
+      {status === 'ready' && (
+        <div className="absolute bottom-12 right-4 z-40 bg-white/90 hover:bg-white backdrop-blur-sm p-1 rounded-xl shadow-md border border-gray-200/80 flex gap-1 pointer-events-auto select-none transition-all">
+          <button
+            type="button"
+            onClick={() => setBasemap('street')}
+            className={cn(
+              "px-2.5 py-1.5 rounded-lg text-[10px] font-bold transition-all flex items-center gap-1.5 h-7",
+              basemap === 'street'
+                ? "bg-blue-600 text-white shadow-sm"
+                : "text-gray-600 hover:text-gray-900 hover:bg-gray-100"
+            )}
+          >
+            <Map className="w-3.5 h-3.5" />
+            <span>Street</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setBasemap('satellite')}
+            className={cn(
+              "px-2.5 py-1.5 rounded-lg text-[10px] font-bold transition-all flex items-center gap-1.5 h-7",
+              basemap === 'satellite'
+                ? "bg-blue-600 text-white shadow-sm"
+                : "text-gray-600 hover:text-gray-900 hover:bg-gray-100"
+            )}
+          >
+            <Layers className="w-3.5 h-3.5" />
+            <span>Satellite</span>
+          </button>
+        </div>
+      )}
     </div>
   )
+}
+
+function updateMapBasemap(map: any, currentBasemap: 'street' | 'satellite') {
+  if (!map) return
+
+  // Toggle satellite layer
+  if (map.getLayer('esri-satellite-layer')) {
+    map.setLayoutProperty(
+      'esri-satellite-layer',
+      'visibility',
+      currentBasemap === 'satellite' ? 'visible' : 'none'
+    )
+  }
+
+  // Toggle vector background/fill layers
+  const style = map.getStyle()
+  if (style && style.layers) {
+    for (const layer of style.layers) {
+      if (layer.type === 'fill' || layer.type === 'background') {
+        if (
+          layer.id === 'flight-plans-fill' ||
+          layer.id === 'flight-plans-line' ||
+          layer.id === 'flight-plans-point' ||
+          layer.id === 'flight-plans-highlight-line' ||
+          layer.id === 'flight-plans-highlight-point' ||
+          layer.id === 'location-fill' ||
+          layer.id === 'location-line' ||
+          layer.id === 'location-point' ||
+          layer.id === 'ortho-layer' ||
+          layer.id === 'ortho-before-layer' ||
+          layer.id === 'ortho-after-layer'
+        ) {
+          continue
+        }
+        map.setLayoutProperty(
+          layer.id,
+          'visibility',
+          currentBasemap === 'street' ? 'visible' : 'none'
+        )
+      }
+    }
+  }
 }
