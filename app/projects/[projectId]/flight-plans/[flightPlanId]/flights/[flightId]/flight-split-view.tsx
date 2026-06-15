@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { cn } from '@/lib/utils'
 import { Button, buttonVariants } from '@/components/ui/button'
-import { MapIcon, ImageIcon, DownloadIcon, ArrowLeft, Maximize2, RefreshCw, X, Wind, Cloud, Droplet, Thermometer, Compass, Waves } from 'lucide-react'
+import { MapIcon, ImageIcon, DownloadIcon, ArrowLeft, Maximize2, RefreshCw, X, Wind, Cloud, Droplet, Thermometer, Compass, Waves, AlertTriangle } from 'lucide-react'
 import FlightUploader from './flight-uploader'
 import FileLightbox from './file-lightbox'
 import EditFlightButton from './edit-flight-button'
@@ -638,12 +638,11 @@ export default function FlightSplitView({
           </section>
         )}
 
-
         {/* Environmental Conditions Section */}
-        {(weather || tides) && (
-          <section className="border-t border-gray-100 pt-4 space-y-3">
-            <h2 className="text-xs font-semibold uppercase tracking-wider text-gray-400">Environmental Conditions</h2>
+        <section className="border-t border-gray-100 pt-4 space-y-3">
+          <h2 className="text-xs font-semibold uppercase tracking-wider text-gray-400">Environmental Conditions</h2>
 
+          {weather || tides ? (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               {/* Weather Stats Card */}
               {weather && (
@@ -708,62 +707,62 @@ export default function FlightSplitView({
                     <span className="text-[10px] text-gray-400 font-mono flex-shrink-0">NOAA</span>
                   </div>
 
-                  {/* Tide details text */}
-                  <div className="flex items-center justify-between font-mono text-[10px]">
-                    <span className="font-medium text-gray-750">
-                      Height:{' '}
-                      <span className="text-blue-600 font-bold">
+                  <div className="flex items-baseline justify-between">
+                    <div className="flex flex-col">
+                      <span className="text-xl font-bold text-gray-800">
                         {tideSvg.closestValue.toFixed(1)} ft
                       </span>
-                    </span>
+                      <span className="text-[10px] text-gray-455 uppercase font-semibold">
+                        Height Relative to MLLW
+                      </span>
+                    </div>
                     <span
-                      className={cn(
-                        'font-bold uppercase px-1.5 py-0.5 rounded text-[9px] border',
+                      className={`inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider ${
                         tideSvg.isRising
-                          ? 'bg-emerald-50 text-emerald-700 border-emerald-100'
-                          : 'bg-amber-50 text-amber-700 border-amber-100'
-                      )}
+                          ? 'bg-blue-50 text-blue-700 border border-blue-100'
+                          : 'bg-indigo-50 text-indigo-700 border border-indigo-100'
+                      }`}
                     >
                       {tideSvg.isRising ? 'Rising (Flood)' : 'Falling (Ebb)'}
                     </span>
                   </div>
 
-                  {/* Tide SVG Waveform graph */}
-                  <div className="w-full bg-white border border-gray-150 rounded-lg p-1.5 shadow-2xs">
-                    <svg viewBox="0 0 300 70" className="w-full h-auto overflow-visible">
+                  {/* SVG Tide Curve graph */}
+                  <div className="relative pt-2">
+                    <svg viewBox="0 0 240 60" className="w-full h-15 overflow-visible">
                       <defs>
                         <linearGradient id="tide-gradient" x1="0%" y1="0%" x2="0%" y2="100%">
-                          <stop offset="0%" stopColor="#3b82f6" stopOpacity="0.25" />
+                          <stop offset="0%" stopColor="#3b82f6" stopOpacity="0.15" />
                           <stop offset="100%" stopColor="#3b82f6" stopOpacity="0.01" />
                         </linearGradient>
                       </defs>
 
-                      {/* 0.0 MLLW Baseline */}
+                      {/* Mean Lower Low Water reference line (0.0 ft) */}
                       {tideSvg.minVal < 0 && tideSvg.maxVal > 0 && (
                         <line
                           x1="0"
                           y1={tideSvg.scaleY0}
-                          x2="300"
+                          x2="240"
                           y2={tideSvg.scaleY0}
                           stroke="#cbd5e1"
+                          strokeDasharray="2,2"
                           strokeWidth="1"
-                          strokeDasharray="3,3"
                         />
                       )}
 
-                      {/* Tide curve background fill */}
+                      {/* Wave Fill Area */}
                       <path d={tideSvg.fillD} fill="url(#tide-gradient)" />
 
-                      {/* Tide curve path line */}
+                      {/* Wave Curve */}
                       <path
                         d={tideSvg.pathD}
                         fill="none"
-                        stroke="#2563eb"
+                        stroke="#3b82f6"
                         strokeWidth="2"
                         strokeLinecap="round"
                       />
 
-                      {/* Highlighted flight coordinate marker dot */}
+                      {/* Flight Time Indicator Marker */}
                       <circle
                         cx={tideSvg.dotX}
                         cy={tideSvg.dotY}
@@ -786,8 +785,18 @@ export default function FlightSplitView({
                 </div>
               )}
             </div>
-          </section>
-        )}
+          ) : (
+            <div className="p-3.5 bg-amber-50/40 border border-dashed border-amber-200 dark:border-amber-900/30 dark:bg-amber-950/10 rounded-xl text-xs text-amber-800 dark:text-amber-300 flex items-start gap-2.5">
+              <AlertTriangle className="w-4 h-4 text-amber-500 flex-shrink-0 mt-0.5" />
+              <div>
+                <p className="font-semibold">Environmental Data Unavailable</p>
+                <p className="text-amber-700/80 dark:text-amber-400/80 mt-0.5 leading-relaxed">
+                  To load local weather conditions and NOAA tide predictions, please set a geographic boundary/point on the parent <strong>Flight Plan</strong>, or upload flight images containing embedded GPS metadata.
+                </p>
+              </div>
+            </div>
+          )}
+        </section>
 
         {/* File list */}
         <section className="border-t border-gray-100 pt-4">
