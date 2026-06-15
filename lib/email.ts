@@ -4,7 +4,6 @@ import { ServerClient } from 'postmark'
 import OtpEmail from '@/emails/otp-email'
 import InviteEmail from '@/emails/invite-email'
 import type { Role } from './schema'
-import { createOtp } from './otp'
 
 function getClient(): ServerClient {
   const token = process.env.POSTMARK_SERVER_TOKEN
@@ -40,14 +39,11 @@ export async function sendInviteEmail(
   const appUrl = process.env.NEXT_PUBLIC_APP_URL
   if (!appUrl) throw new Error('NEXT_PUBLIC_APP_URL environment variable is not set')
 
-  const code = await createOtp(toEmail)
-  const magicLink = `${appUrl}/verify?email=${encodeURIComponent(toEmail)}&code=${code}`
-
   const html = await render(
-    React.createElement(InviteEmail, { toEmail, role, invitedByEmail, magicLink, appUrl }),
+    React.createElement(InviteEmail, { toEmail, role, invitedByEmail, appUrl }),
   )
   const text = await render(
-    React.createElement(InviteEmail, { toEmail, role, invitedByEmail, magicLink, appUrl }),
+    React.createElement(InviteEmail, { toEmail, role, invitedByEmail, appUrl }),
     { plainText: true },
   )
 

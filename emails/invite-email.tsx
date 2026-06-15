@@ -6,7 +6,6 @@ interface InviteEmailProps {
   toEmail: string
   role: Role
   invitedByEmail: string
-  magicLink: string
   appUrl: string
   appName?: string
 }
@@ -15,7 +14,6 @@ export default function InviteEmail({
   toEmail,
   role,
   invitedByEmail,
-  magicLink,
   appUrl,
   appName = 'Salmon Enumeration Dashboard',
 }: InviteEmailProps) {
@@ -39,21 +37,15 @@ export default function InviteEmail({
           </Text>
           <Section style={ctaSection}>
             <Text style={ctaText}>
-              Click the button below to sign in — no password required. This link expires in{' '}
-              <strong>10 minutes</strong>.
+              Click the button below to go to the sign-in page, where you can pre-fill your email and request a one-time login code.
             </Text>
-            <Button href={magicLink} style={button}>
+            <Button href={loginUrl} style={button}>
               Sign in to {appName}
             </Button>
           </Section>
           <Hr style={hr} />
           <Text style={footer}>
-            If the link has expired, you can{' '}
-            <a href={loginUrl} style={footerLink}>
-              request a new code
-            </a>{' '}
-            from the sign-in page. If you believe this was sent in error, you can ignore this
-            email.
+            If you believe this was sent in error, you can ignore this email.
           </Text>
         </Container>
       </Body>
