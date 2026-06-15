@@ -574,7 +574,7 @@ export default function FlightSplitView({
       {/* ─── Right Panel ─── */}
       <main className="flex-1 h-full bg-gray-50 flex flex-col overflow-hidden">
         {/* Tab Headers */}
-        <div className="flex items-center justify-between px-6 bg-white border-b border-gray-200 h-12 flex-shrink-0 z-25">
+        <div className="relative flex items-center justify-between px-6 bg-white border-b border-gray-200 h-12 flex-shrink-0 z-25">
           <div className="flex gap-4 h-full">
             <button
               onClick={() => setActiveTab('map')}
@@ -601,18 +601,28 @@ export default function FlightSplitView({
               Flight Images ({images.length})
             </button>
           </div>
-          {activeTab === 'map' && (
-            <button
-              onClick={() => setZoomTrigger((prev) => prev + 1)}
-              className={cn(
-                buttonVariants({ variant: 'outline', size: 'sm' }),
-                "gap-1.5 text-xs h-8"
-              )}
-            >
-              <Maximize2 className="w-3.5 h-3.5" />
-              <span>Zoom to Flight</span>
-            </button>
-          )}
+
+          {/* Centered Flight Plan Name */}
+          <div className="absolute left-1/2 -translate-x-1/2 flex items-center pointer-events-none select-none">
+            <span className="font-semibold text-gray-800 text-sm tracking-wide bg-gray-50 border border-gray-200 px-3.5 py-1 rounded-full shadow-2xs">
+              {flightPlan.name}
+            </span>
+          </div>
+
+          <div className="flex items-center">
+            {activeTab === 'map' && (
+              <button
+                onClick={() => setZoomTrigger((prev) => prev + 1)}
+                className={cn(
+                  buttonVariants({ variant: 'outline', size: 'sm' }),
+                  "gap-1.5 text-xs h-8"
+                )}
+              >
+                <Maximize2 className="w-3.5 h-3.5" />
+                <span>Zoom to Flight</span>
+              </button>
+            )}
+          </div>
         </div>
 
         {/* Tab Contents */}
