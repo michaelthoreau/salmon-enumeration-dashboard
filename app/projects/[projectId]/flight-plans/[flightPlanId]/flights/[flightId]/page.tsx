@@ -5,7 +5,7 @@ import { eq, desc } from 'drizzle-orm'
 import { getSession } from '@/lib/session'
 import { listFlightObjects, createPresignedGetUrl } from '@/lib/s3'
 import { fetchHistoricalWeather, fetchTidePredictions } from '@/lib/weather-tides'
-import { syncActiveTasks } from '@/lib/tasks-sync'
+
 import FlightSplitView from './flight-split-view'
 
 export const dynamic = 'force-dynamic'
@@ -41,8 +41,7 @@ export default async function FlightDetailPage({ params, searchParams }: PagePro
   const session = await getSession()
   const canWrite = session?.role === 'read-write' || session?.role === 'admin'
 
-  // Sync any active task status dynamically on page load
-  await syncActiveTasks([flightId])
+
 
   const [flight] = await db.select().from(flights).where(eq(flights.id, flightId))
   if (!flight || flight.deletedAt) notFound()
@@ -159,21 +158,19 @@ export default async function FlightDetailPage({ params, searchParams }: PagePro
     }
   }
 
-  // 2. Fetch weather and tides in parallel
+  // 2. Fetch weather and tides in parallel using constant location coordinates
   let weatherData = null
   let tideData = null
 
-  if (hasCoordinates) {
-    try {
-      const [weather, tides] = await Promise.all([
-        fetchHistoricalWeather(lat, lng, flight.timestamp),
-        fetchTidePredictions(lat, lng, flight.timestamp),
-      ])
-      weatherData = weather
-      tideData = tides
-    } catch (err) {
-      console.error('Failed to fetch weather/tide data:', err)
-    }
+  try {
+    const [weather, tides] = await Promise.all([
+      fetchHistoricalWeather(59.1753183, -158.5199954, flight.timestamp),
+      fetchTidePredictions(59.1753183, -158.5199954, flight.timestamp),
+    ])
+    weatherData = weather
+    tideData = tides
+  } catch (err) {
+    console.error('Failed to fetch weather/tide data:', err)
   }
 
   return (

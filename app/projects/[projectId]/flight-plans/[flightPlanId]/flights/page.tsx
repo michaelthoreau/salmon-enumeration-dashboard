@@ -4,7 +4,7 @@ import { db } from '@/lib/db'
 import { projects, flightPlans, flights, files as filesTable, odmTasks, georefTasks } from '@/lib/schema'
 import { eq, desc, inArray, sql } from 'drizzle-orm'
 import { getSession } from '@/lib/session'
-import { syncActiveTasks } from '@/lib/tasks-sync'
+
 import FlightsView from './flights-view'
 import type { FlightRow } from './flights-view'
 
@@ -56,10 +56,7 @@ export default async function FlightsPage({ params, searchParams }: PageProps) {
   const active = allFlights.filter((f) => !f.deletedAt)
   const flightIds = active.map((f) => f.id)
 
-  // Sync any active task statuses dynamically on page load
-  if (flightIds.length > 0) {
-    await syncActiveTasks(flightIds)
-  }
+
 
   // File counts per flight (from DB — registered on upload)
   const fileCounts = flightIds.length > 0
