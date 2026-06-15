@@ -69,7 +69,7 @@ export default function ProjectDashboardView({ projectId, projectName, plans, is
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const mapRef = useRef<any | null>(null)
   const [mapReady, setMapReady] = useState(false)
-  const [basemap, setBasemap] = useState<'street' | 'satellite'>('street')
+  const [basemap, setBasemap] = useState<'street' | 'satellite'>('satellite')
 
   const [isCustomizing, setIsCustomizing] = useState(false)
   const [hoveredPlanId, setHoveredPlanId] = useState<string | null>(null)
