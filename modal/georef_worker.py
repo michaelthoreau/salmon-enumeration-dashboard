@@ -623,12 +623,16 @@ def _merge_to_cog(tile_paths: list[str], cog_path: str, log_fn=print) -> None:
         # It is much faster and more reliable than executing gdaladdo on a VRT because
         # it builds overviews sequentially from a temp flat file, eliminating thousands of
         # random-access reads to individual input TIFF sources.
+        # We use lossy COMPRESS=JPEG with QUALITY=85 for the image bands (which dynamically 
+        # stores transparency alpha channel as a lossless DEFLATE-compressed 1-bit mask)
+        # to dramatically reduce final file sizes (e.g. from 3GB down to ~200MB).
         cmd_translate = [
             "gdal_translate",
             "-of", "COG",
             vrt_path,
             cog_path,
-            "-co", "COMPRESS=DEFLATE",
+            "-co", "COMPRESS=JPEG",
+            "-co", "QUALITY=85",
             "-co", "NUM_THREADS=ALL_CPUS",
             "-co", "BIGTIFF=IF_SAFER",
             "-co", "BLOCKSIZE=512",
