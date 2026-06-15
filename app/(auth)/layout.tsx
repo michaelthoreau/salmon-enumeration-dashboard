@@ -2,12 +2,19 @@ import Image from 'next/image'
 
 export default function AuthLayout({ children }: { children: React.ReactNode }) {
   return (
-    <div
-      className="min-h-screen flex bg-cover bg-center"
-      style={{ backgroundImage: "url('/hero_bg.jpg')" }}
-    >
+    <div className="min-h-screen flex relative overflow-hidden">
+      {/* Background Image using Next.js Image Component */}
+      <Image
+        src="/hero_bg.jpg"
+        alt="Background"
+        fill
+        priority
+        sizes="100vw"
+        className="object-cover select-none pointer-events-none"
+      />
+
       {/* ── Left panel ── */}
-      <div className="hidden lg:flex lg:w-3/5 relative flex-col">
+      <div className="hidden lg:flex lg:w-3/5 relative flex-col z-10">
         {/* Dark gradient overlay on left side */}
         <div className="absolute inset-0 bg-gradient-to-br from-black/65 via-black/45 to-black/25" />
 
@@ -42,7 +49,7 @@ export default function AuthLayout({ children }: { children: React.ReactNode }) 
       </div>
 
       {/* ── Right panel: frosted form area ── */}
-      <div className="flex-1 flex flex-col relative">
+      <div className="flex-1 flex flex-col relative z-10">
         {/* Soft white wash so the image shows through */}
         <div className="absolute inset-0 bg-white/70 backdrop-blur-sm" />
 
