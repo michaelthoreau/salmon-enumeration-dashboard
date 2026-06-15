@@ -80,12 +80,14 @@ export function EditFlightPlanButton({
   label = 'Edit',
   variant = 'ghost',
   size = 'xs',
+  className,
 }: {
   plan: { id: string; name: string; displayName: string | null; description: string | null }
   projectId: string
   label?: React.ReactNode
   variant?: 'ghost' | 'outline' | 'default' | 'secondary'
   size?: 'xs' | 'sm' | 'default' | 'icon'
+  className?: string
 }) {
   const [open, setOpen] = useState(false)
   const [state, action, pending] = useActionState(updateFlightPlan, null)
@@ -100,6 +102,7 @@ export function EditFlightPlanButton({
         type="button"
         variant={variant}
         size={size}
+        className={className}
         onClick={(e) => {
           e.preventDefault()
           e.stopPropagation()
@@ -118,14 +121,14 @@ export function EditFlightPlanButton({
           <form action={action} className="flex flex-col gap-4 py-2">
             <input type="hidden" name="id" value={plan.id} />
             <input type="hidden" name="projectId" value={projectId} />
+            <input type="hidden" name="name" value={plan.name} />
 
             <div className="flex flex-col gap-1.5">
               <Label htmlFor="fp-edit-name">Name</Label>
               <Input
                 id="fp-edit-name"
-                name="name"
-                required
                 defaultValue={plan.name}
+                disabled
               />
             </div>
 

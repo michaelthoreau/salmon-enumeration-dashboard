@@ -409,8 +409,32 @@ export default function ProjectDashboardView({ projectId, projectName, plans, is
                       </button>
                     )}
 
+                    {/* Edit Flight Plan button (Admin, absolute top-right) */}
+                    {isAdmin && (
+                      <div
+                        onClick={(e) => e.stopPropagation()}
+                        className={cn('absolute top-4', isCustomizing ? 'right-14' : 'right-4')}
+                      >
+                        <EditFlightPlanButton
+                          plan={{
+                            id: plan.id,
+                            name: plan.originalName,
+                            displayName: plan.displayName,
+                            description: plan.description,
+                          }}
+                          projectId={projectId}
+                          label={<Pencil className="w-4 h-4" />}
+                          variant="ghost"
+                          size="xs"
+                          className={cn(
+                            'rounded-lg border transition-colors shadow-sm p-1.5 bg-white border-gray-200 text-gray-400 hover:bg-gray-50 hover:text-gray-650'
+                          )}
+                        />
+                      </div>
+                    )}
+
                     {/* Flight Plan Content */}
-                    <div className={cn('pr-8', { 'pr-0': !isCustomizing })}>
+                    <div className={cn('pr-0', { 'pr-12': isAdmin, 'pr-20': isAdmin && isCustomizing })}>
                       <div className="flex items-center gap-2 flex-wrap">
                         <Link
                           href={`/projects/${projectId}/flight-plans/${plan.id}/flights`}
@@ -426,17 +450,6 @@ export default function ProjectDashboardView({ projectId, projectName, plans, is
                           >
                             <Navigation className="w-3.5 h-3.5" />
                           </button>
-                        )}
-                        {isAdmin && (
-                          <div onClick={(e) => e.stopPropagation()}>
-                            <EditFlightPlanButton
-                              plan={{ id: plan.id, name: plan.originalName, displayName: plan.displayName, description: plan.description }}
-                              projectId={projectId}
-                              label={<Pencil className="w-3.5 h-3.5 text-gray-400 hover:text-gray-650" />}
-                              variant="ghost"
-                              size="xs"
-                            />
-                          </div>
                         )}
                       </div>
                       {plan.description && (

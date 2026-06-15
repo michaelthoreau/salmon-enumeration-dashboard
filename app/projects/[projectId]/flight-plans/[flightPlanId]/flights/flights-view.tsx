@@ -229,7 +229,7 @@ export default function FlightsView({
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2">
               <h1 className="text-xl font-semibold text-gray-900 leading-tight truncate">
-                {flightPlan.name}
+                {flightPlan.displayName || flightPlan.name}
               </h1>
               {isAdmin && (
                 <EditFlightPlanButton
