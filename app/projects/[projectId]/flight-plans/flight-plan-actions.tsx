@@ -77,9 +77,15 @@ export function RestoreFlightPlanButton({
 export function EditFlightPlanButton({
   plan,
   projectId,
+  label = 'Edit',
+  variant = 'ghost',
+  size = 'xs',
 }: {
-  plan: FlightPlan
+  plan: { id: string; name: string; displayName: string | null; description: string | null }
   projectId: string
+  label?: React.ReactNode
+  variant?: 'ghost' | 'outline' | 'default' | 'secondary'
+  size?: 'xs' | 'sm' | 'default' | 'icon'
 }) {
   const [open, setOpen] = useState(false)
   const [state, action, pending] = useActionState(updateFlightPlan, null)
@@ -90,8 +96,17 @@ export function EditFlightPlanButton({
 
   return (
     <>
-      <Button variant="ghost" size="xs" onClick={() => setOpen(true)}>
-        Edit
+      <Button
+        type="button"
+        variant={variant}
+        size={size}
+        onClick={(e) => {
+          e.preventDefault()
+          e.stopPropagation()
+          setOpen(true)
+        }}
+      >
+        {label}
       </Button>
 
       <Dialog open={open} onOpenChange={setOpen}>

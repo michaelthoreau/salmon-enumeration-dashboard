@@ -3,15 +3,18 @@
 import { useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { MapPin, Map, Calendar, Eye, EyeOff, Settings, Sparkles, Navigation, ArrowRight } from 'lucide-react'
+import { MapPin, Map, Calendar, Eye, EyeOff, Settings, Sparkles, Navigation, ArrowRight, Pencil } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Button, buttonVariants } from '@/components/ui/button'
 import { toggleFlightPlanDashboardVisibility } from '@/app/actions/flight-plans'
+import { EditFlightPlanButton } from './flight-plans/flight-plan-actions'
 import 'maplibre-gl/dist/maplibre-gl.css'
 
 interface DashboardPlan {
   id: string
   name: string
+  originalName: string
+  displayName: string | null
   description: string | null
   showOnDashboard: boolean
   location: string | null
@@ -423,6 +426,17 @@ export default function ProjectDashboardView({ projectId, projectName, plans, is
                           >
                             <Navigation className="w-3.5 h-3.5" />
                           </button>
+                        )}
+                        {isAdmin && (
+                          <div onClick={(e) => e.stopPropagation()}>
+                            <EditFlightPlanButton
+                              plan={{ id: plan.id, name: plan.originalName, displayName: plan.displayName, description: plan.description }}
+                              projectId={projectId}
+                              label={<Pencil className="w-3.5 h-3.5 text-gray-400 hover:text-gray-650" />}
+                              variant="ghost"
+                              size="xs"
+                            />
+                          </div>
                         )}
                       </div>
                       {plan.description && (
