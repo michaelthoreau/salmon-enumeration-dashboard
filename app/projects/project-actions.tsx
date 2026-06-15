@@ -102,6 +102,17 @@ export function EditProjectButton({ project, label = 'Edit', variant: buttonVari
             <input type="hidden" name="id" value={project.id} />
 
             <div className="flex flex-col gap-1.5">
+              <Label htmlFor="edit-name">Project Name</Label>
+              <Input
+                id="edit-name"
+                name="name"
+                defaultValue={project.name}
+                required
+                placeholder="Project name"
+              />
+            </div>
+
+            <div className="flex flex-col gap-1.5">
               <Label htmlFor="edit-description">Description</Label>
               <Input
                 id="edit-description"
