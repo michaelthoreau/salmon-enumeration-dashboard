@@ -39,7 +39,17 @@ export function DeleteProjectButton({ project }: { project: Project }) {
   const [state, action, pending] = useActionState(deleteProject, null)
   return (
     <>
-      <Button type="button" variant="ghost" size="xs" className="text-destructive hover:text-destructive" onClick={() => setOpen(true)}>
+      <Button
+        type="button"
+        variant="ghost"
+        size="xs"
+        className="text-destructive hover:text-destructive"
+        onClick={(e) => {
+          e.preventDefault()
+          e.stopPropagation()
+          setOpen(true)
+        }}
+      >
         Delete
       </Button>
       <Dialog open={open} onOpenChange={setOpen}>
@@ -88,7 +98,16 @@ export function EditProjectButton({ project, label = 'Edit', variant: buttonVari
 
   return (
     <>
-      <Button variant={buttonVariant} size={buttonSize} onClick={() => setOpen(true)}>
+      <Button
+        type="button"
+        variant={buttonVariant}
+        size={buttonSize}
+        onClick={(e) => {
+          e.preventDefault()
+          e.stopPropagation()
+          setOpen(true)
+        }}
+      >
         {label}
       </Button>
 
