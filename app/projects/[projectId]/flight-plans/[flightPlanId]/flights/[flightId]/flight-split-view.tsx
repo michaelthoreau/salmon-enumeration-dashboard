@@ -127,7 +127,6 @@ export default function FlightSplitView({
   const isResizingRef = useRef(false)
 
   const [isModalOpen, setIsModalOpen] = useState(false)
-  const [isTideExpanded, setIsTideExpanded] = useState(false)
 
   // Helper to compute Tide SVG path parameters for a given viewport size
   const getTideSvgData = useCallback((width: number, height: number, padX: number, padY: number) => {
@@ -204,7 +203,6 @@ export default function FlightSplitView({
   }, [tides, flight.timestamp])
 
   const tideSvg = getTideSvgData(400, 100, 25, 20)
-  const expandedTideSvg = getTideSvgData(500, 200, 40, 40)
 
   // Refresh page data on mount to bypass client-side router cache
   useEffect(() => {
@@ -723,15 +721,7 @@ export default function FlightSplitView({
                         Tide: {tides.stationName}
                       </span>
                     </div>
-                    <div className="flex items-center gap-2 flex-shrink-0">
-                      <button
-                        onClick={() => setIsTideExpanded(true)}
-                        className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold text-blue-600 hover:text-blue-700 bg-blue-50 hover:bg-blue-100 dark:bg-slate-800 dark:hover:bg-slate-700 dark:text-blue-400 rounded-lg transition-colors cursor-pointer"
-                        title="Expand graph"
-                      >
-                        <Maximize2 className="w-3.5 h-3.5" />
-                        <span>Expand Graph</span>
-                      </button>
+                    <div className="flex items-center gap-1.5 flex-shrink-0">
                       <span className="text-[10px] text-gray-400 font-mono">NOAA</span>
                     </div>
                   </div>
@@ -1109,206 +1099,6 @@ export default function FlightSplitView({
         />
       )}
 
-      {/* Expanded detailed Tide Predictions Modal */}
-      {isTideExpanded && expandedTideSvg && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-xs p-4">
-          <div className="absolute inset-0" onClick={() => setIsTideExpanded(false)} />
-          <div className="relative bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 rounded-2xl p-6 max-w-3xl w-full flex flex-col shadow-2xl z-10 animate-in zoom-in-95 duration-200">
-            <button
-              onClick={() => setIsTideExpanded(false)}
-              className="absolute top-4 right-4 p-1.5 hover:bg-gray-150 dark:hover:bg-slate-800 rounded-lg text-gray-550 hover:text-gray-750 transition-colors cursor-pointer"
-            >
-              <X className="w-5 h-5" />
-            </button>
-
-            <div className="space-y-1.5 pb-4 border-b border-gray-100 dark:border-slate-800">
-              <h3 className="text-base font-bold text-gray-900 dark:text-white">
-                Detailed Tide Predictions
-              </h3>
-              <p className="text-xs text-gray-550 dark:text-gray-450">
-                Station:{' '}
-                <span className="font-semibold text-gray-800 dark:text-gray-200">
-                  {tides?.stationName}
-                </span>
-              </p>
-            </div>
-
-            <div className="py-6 overflow-visible flex items-center justify-center">
-              <svg viewBox="0 0 500 220" className="w-full h-auto overflow-visible">
-                {/* Defs for gradients */}
-                <defs>
-                  <linearGradient id="tide-gradient-large" x1="0%" y1="0%" x2="0%" y2="100%">
-                    <stop offset="0%" stopColor="#3b82f6" stopOpacity="0.25" />
-                    <stop offset="100%" stopColor="#3b82f6" stopOpacity="0.02" />
-                  </linearGradient>
-                </defs>
-
-                {/* X axis baseline */}
-                <line x1="40" y1="180" x2="460" y2="180" stroke="#cbd5e1" strokeWidth="1.5" />
-
-                {/* 0.0 MLLW Reference line */}
-                {expandedTideSvg.minVal < 0 && expandedTideSvg.maxVal > 0 && (
-                  <g>
-                    <line
-                      x1="40"
-                      y1={expandedTideSvg.scaleY0}
-                      x2="460"
-                      y2={expandedTideSvg.scaleY0}
-                      stroke="#94a3b8"
-                      strokeDasharray="4,4"
-                      strokeWidth="1"
-                    />
-                    <text
-                      x="32"
-                      y={expandedTideSvg.scaleY0 + 4}
-                      textAnchor="end"
-                      fontSize="12"
-                      fill="#64748b"
-                      fontWeight="bold"
-                    >
-                      0.0 MLLW
-                    </text>
-                  </g>
-                )}
-
-                {/* Vertical Time Gridlines & Labels */}
-                {[0, 6, 12, 18, 23].map((idx) => {
-                  const p = expandedTideSvg.predictions[idx]
-                  if (!p) return null
-                  const formattedTimeStr = new Intl.DateTimeFormat('en-US', {
-                    timeZone: project.timezone,
-                    hour: 'numeric',
-                    hour12: true,
-                  }).format(new Date(p.time))
-
-                  return (
-                    <g key={idx}>
-                      <line
-                        x1={p.x}
-                        y1="40"
-                        x2={p.x}
-                        y2="180"
-                        stroke="#e2e8f0"
-                        strokeDasharray="2,2"
-                        strokeWidth="1"
-                      />
-                      <text
-                        x={p.x}
-                        y="198"
-                        textAnchor="middle"
-                        fontSize="12"
-                        fill="#64748b"
-                        className="font-medium font-sans"
-                      >
-                        {formattedTimeStr}
-                      </text>
-                    </g>
-                  )
-                })}
-
-                {/* Wave Fill Area */}
-                <path d={expandedTideSvg.fillD} fill="url(#tide-gradient-large)" />
-
-                {/* Wave Curve */}
-                <path
-                  d={expandedTideSvg.pathD}
-                  fill="none"
-                  stroke="#3b82f6"
-                  strokeWidth="3"
-                  strokeLinecap="round"
-                />
-
-                {/* Highs and Lows Labels */}
-                {expandedTideSvg.highsLows.map((hl, idx) => {
-                  const localTimeStr = new Intl.DateTimeFormat('en-US', {
-                    timeZone: project.timezone,
-                    hour: 'numeric',
-                    minute: '2-digit',
-                    hour12: true,
-                  }).format(new Date(hl.time))
-
-                  return (
-                    <g key={idx}>
-                      <circle
-                        cx={hl.x}
-                        cy={hl.y}
-                        r="5.5"
-                        fill={hl.type === 'high' ? '#3b82f6' : '#64748b'}
-                        stroke="#ffffff"
-                        strokeWidth="2"
-                      />
-
-                      {/* Height text */}
-                      <text
-                        x={hl.x}
-                        y={hl.type === 'high' ? hl.y - 20 : hl.y + 18}
-                        textAnchor="middle"
-                        fontSize="13"
-                        fontWeight="bold"
-                        fill={hl.type === 'high' ? '#1d4ed8' : '#334155'}
-                        className="select-none font-sans"
-                      >
-                        {hl.type === 'high' ? 'High' : 'Low'}: {hl.val.toFixed(1)} ft
-                      </text>
-
-                      {/* Time text */}
-                      <text
-                        x={hl.x}
-                        y={hl.type === 'high' ? hl.y - 8 : hl.y + 30}
-                        textAnchor="middle"
-                        fontSize="11"
-                        fill="#64748b"
-                        className="select-none font-mono"
-                      >
-                        {localTimeStr}
-                      </text>
-                    </g>
-                  )
-                })}
-
-                {/* Flight Takeoff marker */}
-                <g>
-                  <circle
-                    cx={expandedTideSvg.dotX}
-                    cy={expandedTideSvg.dotY}
-                    r="5.5"
-                    fill="#ef4444"
-                    stroke="#ffffff"
-                    strokeWidth="2"
-                  />
-
-                  {/* Tooltip pointing to takeoff marker */}
-                  <rect
-                    x={expandedTideSvg.dotX - 70}
-                    y={expandedTideSvg.dotY > 100 ? expandedTideSvg.dotY - 38 : expandedTideSvg.dotY + 12}
-                    width="140"
-                    height="26"
-                    rx="6"
-                    fill="#1e293b"
-                  />
-                  <text
-                    x={expandedTideSvg.dotX}
-                    y={expandedTideSvg.dotY > 100 ? expandedTideSvg.dotY - 21 : expandedTideSvg.dotY + 29}
-                    textAnchor="middle"
-                    fontSize="12"
-                    fontWeight="bold"
-                    fill="#ffffff"
-                    className="font-sans"
-                  >
-                    Takeoff: {expandedTideSvg.closestValue.toFixed(1)} ft
-                  </text>
-                </g>
-              </svg>
-            </div>
-
-            <div className="flex justify-end pt-4 border-t border-gray-100 dark:border-slate-800">
-              <Button onClick={() => setIsTideExpanded(false)} size="sm">
-                Close
-              </Button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* Lightbox modal for displaying a single flight image */}
       {lightboxImage && (
