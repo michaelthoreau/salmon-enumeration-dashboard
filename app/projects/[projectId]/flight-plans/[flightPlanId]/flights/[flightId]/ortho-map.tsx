@@ -315,33 +315,38 @@ export default function OrthoMap({
               }
 
               const thumbUrl = `/api/files/thumbnail?key=${encodeURIComponent(key)}&etag=${encodeURIComponent(etag)}&size=320`
-              const popupId = `view-photo-btn-${key.replace(/[^a-zA-Z0-9]/g, '-')}`
 
-              const popupHtml = `
-                <div class="p-2 font-sans select-none" style="min-width: 140px;">
-                  <img src="${thumbUrl}" class="w-32 h-20 object-cover rounded-md mb-2 shadow-sm border border-gray-100" />
-                  <div class="font-mono text-[10px] text-gray-700 truncate max-w-[128px] mb-2" title="${name}">${name}</div>
-                  <button id="${popupId}" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-1.5 px-2 rounded-lg text-[10px] text-center shadow-sm transition-colors cursor-pointer">
-                    View Image
-                  </button>
-                </div>
-              `
+              const container = document.createElement('div')
+              container.className = 'p-2 font-sans select-none'
+              container.style.minWidth = '140px'
+
+              const imgEl = document.createElement('img')
+              imgEl.src = thumbUrl
+              imgEl.className = 'w-32 h-20 object-cover rounded-md mb-2 shadow-sm border border-gray-100'
+              container.appendChild(imgEl)
+
+              const nameEl = document.createElement('div')
+              nameEl.className = 'font-mono text-[10px] text-gray-700 truncate max-w-[128px] mb-2'
+              nameEl.title = name
+              nameEl.textContent = name
+              container.appendChild(nameEl)
+
+              const btnEl = document.createElement('button')
+              btnEl.className = 'w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-1.5 px-2 rounded-lg text-[10px] text-center shadow-sm transition-colors cursor-pointer'
+              btnEl.textContent = 'View Image'
 
               const popup = new maplibre.Popup({ closeButton: true, closeOnClick: true, className: 'custom-photo-popup' })
                 .setLngLat(coordinates)
-                .setHTML(popupHtml)
-                .addTo(map)
 
-              popup.on('open', () => {
-                const btn = document.getElementById(popupId)
-                if (btn) {
-                  btn.onclick = (event) => {
-                    event.preventDefault()
-                    onSelectPhoto?.(key)
-                    popup.remove()
-                  }
-                }
-              })
+              btnEl.onclick = (event) => {
+                event.preventDefault()
+                event.stopPropagation()
+                onSelectPhoto?.(key)
+                popup.remove()
+              }
+              container.appendChild(btnEl)
+
+              popup.setDOMContent(container).addTo(map)
             }
           })
         })
