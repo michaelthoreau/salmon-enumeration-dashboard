@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { cn } from '@/lib/utils'
 import { Button, buttonVariants } from '@/components/ui/button'
-import { MapIcon, ImageIcon, DownloadIcon, ArrowLeft, Maximize2, RefreshCw, X } from 'lucide-react'
+import { MapIcon, ImageIcon, DownloadIcon, ArrowLeft, Maximize2, RefreshCw, X, Wind, Cloud, Droplet, Thermometer, Compass, Waves } from 'lucide-react'
 import FlightUploader from './flight-uploader'
 import FileLightbox from './file-lightbox'
 import EditFlightButton from './edit-flight-button'
@@ -84,6 +84,17 @@ interface FlightSplitViewProps {
   canWrite: boolean
   formattedTime: string
   localTimestamp: string
+  weather: {
+    temperature: number
+    precipitation: number
+    cloudCover: number
+    windSpeed: number
+    windDirection: number
+  } | null
+  tides: {
+    stationName: string
+    predictions: { time: string; value: number }[]
+  } | null
   from?: string
 }
 
@@ -105,6 +116,8 @@ export default function FlightSplitView({
   canWrite,
   formattedTime,
   localTimestamp,
+  weather,
+  tides,
   from,
 }: FlightSplitViewProps) {
   const router = useRouter()
@@ -114,6 +127,71 @@ export default function FlightSplitView({
   const isResizingRef = useRef(false)
 
   const [isModalOpen, setIsModalOpen] = useState(false)
+
+  // Helper to compute Tide SVG path
+  const tideSvg = (() => {
+    if (!tides || !tides.predictions || tides.predictions.length === 0) return null
+
+    const predictions = tides.predictions
+    const values = predictions.map((p) => p.value)
+    const minVal = Math.min(...values)
+    const maxVal = Math.max(...values)
+    const valRange = maxVal - minVal || 1
+
+    const svgWidth = 300
+    const svgHeight = 70
+    const paddingX = 10
+    const paddingY = 10
+
+    // Scale helpers
+    const scaleX = (idx: number) => paddingX + (idx / (predictions.length - 1)) * (svgWidth - 2 * paddingX)
+    const scaleY = (val: number) => {
+      const pct = (val - minVal) / valRange
+      return svgHeight - paddingY - pct * (svgHeight - 2 * paddingY)
+    }
+
+    // Build curve path
+    const points = predictions.map((p, idx) => `${scaleX(idx).toFixed(1)},${scaleY(p.value).toFixed(1)}`)
+    const pathD = `M ${points.join(' L ')}`
+    const fillD = `${pathD} L ${scaleX(predictions.length - 1).toFixed(1)},${svgHeight} L ${scaleX(0).toFixed(1)},${svgHeight} Z`
+
+    // Find closest prediction to flight timestamp
+    let closestIdx = 0
+    let minDiff = Infinity
+    const flightTimeMs = new Date(flight.timestamp).getTime()
+
+    predictions.forEach((p, idx) => {
+      const diff = Math.abs(new Date(p.time).getTime() - flightTimeMs)
+      if (diff < minDiff) {
+        minDiff = diff
+        closestIdx = idx
+      }
+    })
+
+    const closestPred = predictions[closestIdx]
+    const dotX = scaleX(closestIdx)
+    const dotY = scaleY(closestPred.value)
+
+    // Determine tide direction (rising or falling)
+    let isRising = false
+    if (closestIdx < predictions.length - 1) {
+      isRising = predictions[closestIdx + 1].value > closestPred.value
+    } else if (closestIdx > 0) {
+      isRising = closestPred.value > predictions[closestIdx - 1].value
+    }
+
+    return {
+      pathD,
+      fillD,
+      dotX,
+      dotY,
+      closestValue: closestPred.value,
+      isRising,
+      scaleY0: scaleY(0),
+      minVal,
+      maxVal,
+    }
+  })()
 
   // Refresh page data on mount to bypass client-side router cache
   useEffect(() => {
@@ -550,6 +628,156 @@ export default function FlightSplitView({
           </section>
         )}
 
+
+        {/* Environmental Conditions Section */}
+        {(weather || tides) && (
+          <section className="border-t border-gray-100 pt-4 space-y-3">
+            <h2 className="text-xs font-semibold uppercase tracking-wider text-gray-400">Environmental Conditions</h2>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              {/* Weather Stats Card */}
+              {weather && (
+                <div className="bg-gray-50 border border-gray-150 rounded-xl p-3.5 flex flex-col justify-between text-xs text-gray-650 space-y-2">
+                  <div className="flex items-center justify-between border-b border-gray-200 pb-1.5 mb-1">
+                    <span className="font-semibold text-gray-800">Flight Weather</span>
+                    <span className="text-[10px] text-gray-400 font-mono">Open-Meteo</span>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div className="flex items-center gap-1.5">
+                      <Thermometer className="w-4 h-4 text-orange-500 flex-shrink-0" />
+                      <span className="font-medium text-gray-700">
+                        {Math.round((weather.temperature * 9) / 5 + 32)}°F ({Math.round(weather.temperature)}°C)
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <Cloud className="w-4 h-4 text-blue-450 flex-shrink-0" />
+                      <span className="text-gray-700">{weather.cloudCover}% Cover</span>
+                    </div>
+                    <div className="flex items-center gap-1.5 col-span-2">
+                      <Wind className="w-4 h-4 text-teal-500 flex-shrink-0" />
+                      <div className="flex items-center gap-1">
+                        <span className="font-medium text-gray-700">
+                          {Math.round(weather.windSpeed * 0.621371)} mph
+                        </span>
+                        <span className="text-[10px] text-gray-400">
+                          ({Math.round(weather.windSpeed)} km/h)
+                        </span>
+                        <span className="inline-flex items-center gap-0.5 text-[10px] text-gray-550 font-mono bg-gray-200/50 px-1 rounded ml-1">
+                          <Compass
+                            className="w-3 h-3 text-gray-400 transition-transform"
+                            style={{ transform: `rotate(${weather.windDirection}deg)` }}
+                          />
+                          {weather.windDirection}°
+                        </span>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-1.5 col-span-2 text-gray-750">
+                      <Droplet className="w-4 h-4 text-blue-500 flex-shrink-0" />
+                      <span>
+                        Precipitation:{' '}
+                        <span className="font-medium">{weather.precipitation} mm/hr</span>
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Tide Stats & Graph Card */}
+              {tides && tideSvg && (
+                <div className="bg-gray-50 border border-gray-150 rounded-xl p-3.5 flex flex-col justify-between text-xs text-gray-650 space-y-2">
+                  <div className="flex items-center justify-between border-b border-gray-200 pb-1.5 mb-1">
+                    <div className="flex items-center gap-1 min-w-0">
+                      <Waves className="w-4 h-4 text-blue-500 flex-shrink-0" />
+                      <span
+                        className="font-semibold text-gray-800 truncate"
+                        title={tides.stationName}
+                      >
+                        Tide: {tides.stationName}
+                      </span>
+                    </div>
+                    <span className="text-[10px] text-gray-400 font-mono flex-shrink-0">NOAA</span>
+                  </div>
+
+                  {/* Tide details text */}
+                  <div className="flex items-center justify-between font-mono text-[10px]">
+                    <span className="font-medium text-gray-750">
+                      Height:{' '}
+                      <span className="text-blue-600 font-bold">
+                        {tideSvg.closestValue.toFixed(1)} ft
+                      </span>
+                    </span>
+                    <span
+                      className={cn(
+                        'font-bold uppercase px-1.5 py-0.5 rounded text-[9px] border',
+                        tideSvg.isRising
+                          ? 'bg-emerald-50 text-emerald-700 border-emerald-100'
+                          : 'bg-amber-50 text-amber-700 border-amber-100'
+                      )}
+                    >
+                      {tideSvg.isRising ? 'Rising (Flood)' : 'Falling (Ebb)'}
+                    </span>
+                  </div>
+
+                  {/* Tide SVG Waveform graph */}
+                  <div className="w-full bg-white border border-gray-150 rounded-lg p-1.5 shadow-2xs">
+                    <svg viewBox="0 0 300 70" className="w-full h-auto overflow-visible">
+                      <defs>
+                        <linearGradient id="tide-gradient" x1="0%" y1="0%" x2="0%" y2="100%">
+                          <stop offset="0%" stopColor="#3b82f6" stopOpacity="0.25" />
+                          <stop offset="100%" stopColor="#3b82f6" stopOpacity="0.01" />
+                        </linearGradient>
+                      </defs>
+
+                      {/* 0.0 MLLW Baseline */}
+                      {tideSvg.minVal < 0 && tideSvg.maxVal > 0 && (
+                        <line
+                          x1="0"
+                          y1={tideSvg.scaleY0}
+                          x2="300"
+                          y2={tideSvg.scaleY0}
+                          stroke="#cbd5e1"
+                          strokeWidth="1"
+                          strokeDasharray="3,3"
+                        />
+                      )}
+
+                      {/* Tide curve background fill */}
+                      <path d={tideSvg.fillD} fill="url(#tide-gradient)" />
+
+                      {/* Tide curve path line */}
+                      <path
+                        d={tideSvg.pathD}
+                        fill="none"
+                        stroke="#2563eb"
+                        strokeWidth="2"
+                        strokeLinecap="round"
+                      />
+
+                      {/* Highlighted flight coordinate marker dot */}
+                      <circle
+                        cx={tideSvg.dotX}
+                        cy={tideSvg.dotY}
+                        r="4.5"
+                        fill="#ef4444"
+                        stroke="#ffffff"
+                        strokeWidth="1.5"
+                        className="animate-ping opacity-75"
+                      />
+                      <circle
+                        cx={tideSvg.dotX}
+                        cy={tideSvg.dotY}
+                        r="4"
+                        fill="#ef4444"
+                        stroke="#ffffff"
+                        strokeWidth="1.5"
+                      />
+                    </svg>
+                  </div>
+                </div>
+              )}
+            </div>
+          </section>
+        )}
 
         {/* File list */}
         <section className="border-t border-gray-100 pt-4">
