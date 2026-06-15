@@ -138,10 +138,10 @@ export default function FlightSplitView({
     const maxVal = Math.max(...values)
     const valRange = maxVal - minVal || 1
 
-    const svgWidth = 300
-    const svgHeight = 70
-    const paddingX = 10
-    const paddingY = 10
+    const svgWidth = 240
+    const svgHeight = 60
+    const paddingX = 15
+    const paddingY = 15
 
     // Scale helpers
     const scaleX = (idx: number) => paddingX + (idx / (predictions.length - 1)) * (svgWidth - 2 * paddingX)
@@ -180,6 +180,19 @@ export default function FlightSplitView({
       isRising = closestPred.value > predictions[closestIdx - 1].value
     }
 
+    // Find local maxima and minima (High and Low tides)
+    const highsLows: { type: 'high' | 'low'; x: number; y: number; val: number }[] = []
+    for (let i = 1; i < predictions.length - 1; i++) {
+      const prev = predictions[i - 1].value
+      const curr = predictions[i].value
+      const next = predictions[i + 1].value
+      if (curr >= prev && curr >= next && (curr > prev || curr > next)) {
+        highsLows.push({ type: 'high', x: scaleX(i), y: scaleY(curr), val: curr })
+      } else if (curr <= prev && curr <= next && (curr < prev || curr < next)) {
+        highsLows.push({ type: 'low', x: scaleX(i), y: scaleY(curr), val: curr })
+      }
+    }
+
     return {
       pathD,
       fillD,
@@ -190,6 +203,7 @@ export default function FlightSplitView({
       scaleY0: scaleY(0),
       minVal,
       maxVal,
+      highsLows,
     }
   })()
 
@@ -651,41 +665,47 @@ export default function FlightSplitView({
                     <span className="font-semibold text-gray-800">Flight Weather</span>
                     <span className="text-[10px] text-gray-400 font-mono">Open-Meteo</span>
                   </div>
-                  <div className="grid grid-cols-2 gap-2">
-                    <div className="flex items-center gap-1.5">
-                      <Thermometer className="w-4 h-4 text-orange-500 flex-shrink-0" />
-                      <span className="font-medium text-gray-700">
-                        {Math.round((weather.temperature * 9) / 5 + 32)}°F ({Math.round(weather.temperature)}°C)
-                      </span>
-                    </div>
-                    <div className="flex items-center gap-1.5">
-                      <Cloud className="w-4 h-4 text-blue-450 flex-shrink-0" />
-                      <span className="text-gray-700">{weather.cloudCover}% Cover</span>
-                    </div>
-                    <div className="flex items-center gap-1.5 col-span-2">
-                      <Wind className="w-4 h-4 text-teal-500 flex-shrink-0" />
-                      <div className="flex items-center gap-1">
+                  <div className="grid grid-cols-2 gap-y-4 gap-x-4 pt-1">
+                    <div className="flex items-center gap-2">
+                      <Thermometer className="w-5 h-5 text-orange-500 flex-shrink-0" />
+                      <div className="flex flex-col">
+                        <span className="text-[10px] uppercase font-semibold text-gray-450">Temperature</span>
                         <span className="font-medium text-gray-700">
-                          {Math.round(weather.windSpeed * 0.621371)} mph
-                        </span>
-                        <span className="text-[10px] text-gray-400">
-                          ({Math.round(weather.windSpeed)} km/h)
-                        </span>
-                        <span className="inline-flex items-center gap-0.5 text-[10px] text-gray-550 font-mono bg-gray-200/50 px-1 rounded ml-1">
-                          <Compass
-                            className="w-3 h-3 text-gray-400 transition-transform"
-                            style={{ transform: `rotate(${weather.windDirection}deg)` }}
-                          />
-                          {weather.windDirection}°
+                          {Math.round((weather.temperature * 9) / 5 + 32)}°F ({Math.round(weather.temperature)}°C)
                         </span>
                       </div>
                     </div>
-                    <div className="flex items-center gap-1.5 col-span-2 text-gray-750">
-                      <Droplet className="w-4 h-4 text-blue-500 flex-shrink-0" />
-                      <span>
-                        Precipitation:{' '}
-                        <span className="font-medium">{weather.precipitation} mm/hr</span>
-                      </span>
+                    <div className="flex items-center gap-2">
+                      <Cloud className="w-5 h-5 text-blue-450 flex-shrink-0" />
+                      <div className="flex flex-col">
+                        <span className="text-[10px] uppercase font-semibold text-gray-450">Cloud Cover</span>
+                        <span className="font-medium text-gray-700">{weather.cloudCover}% Cover</span>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Wind className="w-5 h-5 text-teal-500 flex-shrink-0" />
+                      <div className="flex flex-col">
+                        <span className="text-[10px] uppercase font-semibold text-gray-450">Wind Speed</span>
+                        <div className="flex items-center gap-1.5">
+                          <span className="font-medium text-gray-700">
+                            {Math.round(weather.windSpeed * 0.621371)} mph
+                          </span>
+                          <span className="inline-flex items-center gap-0.5 text-[10px] text-gray-550 font-mono bg-gray-200/50 px-1 rounded">
+                            <Compass
+                              className="w-3 h-3 text-gray-400 transition-transform"
+                              style={{ transform: `rotate(${weather.windDirection}deg)` }}
+                            />
+                            {weather.windDirection}°
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Droplet className="w-5 h-5 text-blue-500 flex-shrink-0" />
+                      <div className="flex flex-col">
+                        <span className="text-[10px] uppercase font-semibold text-gray-455">Precipitation</span>
+                        <span className="font-medium text-gray-700">{weather.precipitation} mm/hr</span>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -762,16 +782,25 @@ export default function FlightSplitView({
                         strokeLinecap="round"
                       />
 
-                      {/* Flight Time Indicator Marker */}
-                      <circle
-                        cx={tideSvg.dotX}
-                        cy={tideSvg.dotY}
-                        r="4.5"
-                        fill="#ef4444"
-                        stroke="#ffffff"
-                        strokeWidth="1.5"
-                        className="animate-ping opacity-75"
-                      />
+                      {/* Highs and Lows Labels */}
+                      {tideSvg.highsLows.map((hl, idx) => (
+                        <g key={idx}>
+                          <circle cx={hl.x} cy={hl.y} r="2.5" fill={hl.type === 'high' ? '#3b82f6' : '#64748b'} />
+                          <text
+                            x={hl.x}
+                            y={hl.type === 'high' ? hl.y - 7 : hl.y + 11}
+                            textAnchor="middle"
+                            fontSize="8"
+                            fontWeight="600"
+                            fill={hl.type === 'high' ? '#1d4ed8' : '#475569'}
+                            className="select-none font-sans"
+                          >
+                            {hl.type === 'high' ? 'H' : 'L'}: {hl.val.toFixed(1)}ft
+                          </text>
+                        </g>
+                      ))}
+
+                      {/* Flight Time Indicator Marker (No pulse animation) */}
                       <circle
                         cx={tideSvg.dotX}
                         cy={tideSvg.dotY}
