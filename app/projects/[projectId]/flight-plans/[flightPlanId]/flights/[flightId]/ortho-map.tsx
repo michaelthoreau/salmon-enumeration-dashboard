@@ -119,7 +119,7 @@ export default function OrthoMap({
   const [points, setPoints] = useState<[number, number][]>([])
   const [isSaving, setIsSaving] = useState(false)
   const [showPhotos, setShowPhotos] = useState(!outputKey)
-  const [basemap, setBasemap] = useState<'street' | 'satellite'>('street')
+  const [basemap, setBasemap] = useState<'street' | 'satellite'>('satellite')
 
   // Sync showPhotos state if outputKey transitions from null to loaded
   useEffect(() => {

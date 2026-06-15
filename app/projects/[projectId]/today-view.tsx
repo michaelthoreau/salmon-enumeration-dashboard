@@ -158,7 +158,7 @@ export default function TodayFlightsView({
   isAdmin,
 }: Props) {
   const [selectedDate, setSelectedDate] = useState(initialDate)
-  const [basemap, setBasemap] = useState<'street' | 'satellite'>('street')
+  const [basemap, setBasemap] = useState<'street' | 'satellite'>('satellite')
   const mapContainerRef = useRef<HTMLDivElement>(null)
   const mapRef = useRef<any | null>(null)
   const [mapReady, setMapReady] = useState(false)

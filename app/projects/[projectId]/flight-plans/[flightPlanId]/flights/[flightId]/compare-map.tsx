@@ -55,7 +55,7 @@ export default function CompareMap({
 
   const isDraggingRef = useRef(false)
   const boundsRef = useRef<[number, number, number, number] | null>(null)
-  const [basemap, setBasemap] = useState<'street' | 'satellite'>('street')
+  const [basemap, setBasemap] = useState<'street' | 'satellite'>('satellite')
 
   const [boundsA, setBoundsA] = useState<[number, number, number, number] | null>(null)
   const [boundsB, setBoundsB] = useState<[number, number, number, number] | null>(null)
