@@ -227,7 +227,17 @@ export default function FlightSplitView({
     progress?: number
     outputKey?: string | null
     reportKey?: string | null
-  } | null>(null)
+  } | null>(() => {
+    if (!activeTask) return null
+    return {
+      status: activeTask.status,
+      processed: activeTask.processed ?? 0,
+      total: activeTask.totalImages ?? 0,
+      progress: activeTask.progress ?? 0,
+      outputKey: activeTask.outputKey,
+      reportKey: 'reportKey' in activeTask ? (activeTask as any).reportKey : null,
+    }
+  })
 
   useEffect(() => {
     if (!activeTask) {
@@ -1031,6 +1041,8 @@ export default function FlightSplitView({
                   reportKey: activeTask.type === 'odm' ? (activeTask as any).reportKey : null,
                   error: (activeTask as any).error ?? null,
                   totalImages: activeTask.totalImages,
+                  processed: activeTask.processed,
+                  progress: activeTask.progress,
                 }
               : latestTask
               ? {
@@ -1042,6 +1054,8 @@ export default function FlightSplitView({
                   reportKey: latestTask.type === 'odm' ? (latestTask as any).reportKey : null,
                   error: (latestTask as any).error ?? null,
                   totalImages: latestTask.totalImages,
+                  processed: latestTask.processed,
+                  progress: latestTask.progress,
                 }
               : null
           }

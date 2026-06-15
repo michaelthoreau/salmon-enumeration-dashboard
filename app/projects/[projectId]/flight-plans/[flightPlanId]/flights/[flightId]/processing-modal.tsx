@@ -42,6 +42,8 @@ interface ProcessingModalProps {
     reportKey?: string | null
     error?: string | null
     totalImages?: number | null
+    processed?: number | null
+    progress?: number | null
   } | null
 }
 
@@ -108,6 +110,8 @@ export default function ProcessingModal({
             outputKey: initialActiveTask.outputKey ?? prev.outputKey,
             reportKey: initialActiveTask.reportKey ?? prev.reportKey,
             error: initialActiveTask.error ?? prev.error,
+            progress: Math.max(prev.progress, initialActiveTask.progress ?? 0),
+            uploadedImages: Math.max(prev.uploadedImages, initialActiveTask.processed ?? 0),
           }
         }
         // Otherwise, it's a new task or first initialization, so reset output line ref and return new state
@@ -116,8 +120,8 @@ export default function ProcessingModal({
           taskId: initialActiveTask.taskId,
           type: initialActiveTask.type,
           status: initialActiveTask.status,
-          progress: 0,
-          uploadedImages: 0,
+          progress: initialActiveTask.progress ?? 0,
+          uploadedImages: initialActiveTask.processed ?? 0,
           totalImages: initialActiveTask.totalImages ?? null,
           processingTime: -1,
           imagesCount: 0,
@@ -135,6 +139,8 @@ export default function ProcessingModal({
     initialActiveTask?.outputKey,
     initialActiveTask?.reportKey,
     initialActiveTask?.error,
+    initialActiveTask?.processed,
+    initialActiveTask?.progress,
     isOpen,
   ])
 
