@@ -387,8 +387,8 @@ export default function FlightSplitView({
   const taskStatus = activeTaskState?.status || latestTask?.status
   const isTaskActive = !!(activeTask && !['completed', 'failed', 'canceled'].includes(taskStatus || ''))
   const total = activeTaskState?.total ?? latestTask?.totalImages ?? 0
-  const processed = activeTaskState?.processed ?? 0
-  const progress = activeTaskState?.progress ?? (total > 0 ? (processed / total) * 100 : 0)
+  const processed = activeTaskState?.processed ?? (latestTask && 'processed' in latestTask ? latestTask.processed : null) ?? 0
+  const progress = activeTaskState?.progress ?? (latestTask && 'progress' in latestTask ? latestTask.progress : null) ?? (total > 0 ? (processed / total) * 100 : 0)
   const currentOutputKey = activeTaskState?.outputKey || latestTask?.outputKey
   const currentReportKey = activeTaskState?.reportKey || (latestTask && 'reportKey' in latestTask ? latestTask.reportKey : null)
 

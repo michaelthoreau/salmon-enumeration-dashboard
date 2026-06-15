@@ -5,6 +5,7 @@ import { eq, desc } from 'drizzle-orm'
 import { getSession } from '@/lib/session'
 import { listFlightObjects, createPresignedGetUrl } from '@/lib/s3'
 import { fetchHistoricalWeather, fetchTidePredictions } from '@/lib/weather-tides'
+import { syncActiveTasks } from '@/lib/tasks-sync'
 import FlightSplitView from './flight-split-view'
 
 export const dynamic = 'force-dynamic'
@@ -39,6 +40,9 @@ export default async function FlightDetailPage({ params, searchParams }: PagePro
   const { from } = await searchParams
   const session = await getSession()
   const canWrite = session?.role === 'read-write' || session?.role === 'admin'
+
+  // Sync any active task status dynamically on page load
+  await syncActiveTasks([flightId])
 
   const [flight] = await db.select().from(flights).where(eq(flights.id, flightId))
   if (!flight || flight.deletedAt) notFound()

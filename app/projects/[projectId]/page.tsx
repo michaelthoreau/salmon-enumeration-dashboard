@@ -4,6 +4,7 @@ import { db } from '@/lib/db'
 import { projects, flightPlans, flights, files as filesTable, odmTasks, georefTasks } from '@/lib/schema'
 import { eq, and, isNull, inArray, desc, sql } from 'drizzle-orm'
 import { getSession } from '@/lib/session'
+import { syncActiveTasks } from '@/lib/tasks-sync'
 import TodayFlightsView from './today-view'
 
 interface PageProps {
@@ -86,6 +87,11 @@ export default async function ProjectTodayPage({ params }: PageProps) {
   }
 
   const flightIds = allFlights.map((f) => f.id)
+
+  // Sync any active task statuses dynamically on page load
+  if (flightIds.length > 0) {
+    await syncActiveTasks(flightIds)
+  }
 
   // Fetch counts, ODM tasks, and Georef tasks for all flights
   const fileCounts = await db

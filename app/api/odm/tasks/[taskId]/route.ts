@@ -84,6 +84,12 @@ export async function GET(req: NextRequest, { params }: RouteParams): Promise<Ne
 
     if (!committed) {
       // Still uploading
+      const progressVal = task.totalImages && task.totalImages > 0 ? (uploaded / task.totalImages) * 100 : 0
+      await db
+        .update(odmTasks)
+        .set({ processed: uploaded, progress: progressVal })
+        .where(eq(odmTasks.id, taskId))
+
       return NextResponse.json({
         taskId,
         odmUuid: task.odmUuid,
@@ -121,14 +127,19 @@ export async function GET(req: NextRequest, { params }: RouteParams): Promise<Ne
   const statusCode = info.status.code as OdmStatusCode
   const statusLabel = ODM_STATUS[statusCode] as 'queued' | 'running' | 'failed' | 'completed' | 'canceled'
 
-  // Sync status to DB if it changed
+  // Sync status, processed, and progress to DB
   const isDbTerminal = task.status === 'completed' || task.status === 'failed' || task.status === 'canceled'
 
-  if (task.status !== statusLabel && !isDbTerminal) {
+  if (!isDbTerminal) {
+    const progressVal = statusLabel === 'completed' ? 100 : (statusLabel === 'canceled' || statusLabel === 'failed' ? 0 : (info.progress ?? 0))
+    const processedVal = statusLabel === 'completed' ? (task.totalImages ?? 0) : (info.imagesCount ?? 0)
+
     await db
       .update(odmTasks)
       .set({
         status: statusLabel,
+        processed: processedVal,
+        progress: progressVal,
         ...(statusLabel === 'completed' || statusLabel === 'failed' || statusLabel === 'canceled'
           ? { completedAt: new Date() }
           : {}),
