@@ -44,6 +44,7 @@ export const flightPlans = sqliteTable('flight_plans', {
   id: text('id').primaryKey(),
   projectId: text('project_id').notNull(), // FK → projects.id (no cascade)
   name: text('name').notNull(), // unique within project, used in S3 path
+  displayName: text('display_name'), // override display name
   description: text('description'),
   createdBy: text('created_by').notNull(),
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),

@@ -27,7 +27,7 @@ type Project = InferSelectModel<typeof projects>
 
 export function ProjectCardActions({ project }: { project: Project }) {
   return (
-    <div className="flex items-center gap-3" onClick={(e) => e.preventDefault()}>
+    <div className="flex items-center gap-3" onClick={(e) => e.stopPropagation()}>
       <EditProjectButton project={project} />
       <DeleteProjectButton project={project} />
     </div>

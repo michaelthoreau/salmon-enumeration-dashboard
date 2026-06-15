@@ -11,6 +11,7 @@ export const dynamic = 'force-dynamic'
 
 interface PageProps {
   params: Promise<{ projectId: string; flightPlanId: string }>
+  searchParams: Promise<{ from?: string }>
 }
 
 function formatInTz(date: Date, tz: string): string {
@@ -33,8 +34,9 @@ function toLocalInputValue(date: Date, tz: string): string {
   return `${get('year')}-${get('month')}-${get('day')}T${get('hour')}:${get('minute')}`
 }
 
-export default async function FlightsPage({ params }: PageProps) {
+export default async function FlightsPage({ params, searchParams }: PageProps) {
   const { projectId, flightPlanId } = await params
+  const { from } = await searchParams
   const session = await getSession()
   const canWrite = session?.role === 'read-write' || session?.role === 'admin'
 
@@ -124,9 +126,10 @@ export default async function FlightsPage({ params }: PageProps) {
       canWrite={canWrite}
       projectName={project.name}
       flightPlan={{
-        name: flightPlan.name,
+        name: flightPlan.displayName || flightPlan.name,
         description: flightPlan.description,
       }}
+      from={from}
     />
   )
 }

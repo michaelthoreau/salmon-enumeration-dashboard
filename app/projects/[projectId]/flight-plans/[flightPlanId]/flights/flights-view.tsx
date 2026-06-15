@@ -38,6 +38,7 @@ interface Props {
     name: string
     description: string | null
   }
+  from?: string
 }
 
 function StatusBadge({ status, imageCount }: { status: OdmTaskStatus | GeorefTaskStatus | null; imageCount: number }) {
@@ -104,6 +105,7 @@ export default function FlightsView({
   canWrite,
   projectName,
   flightPlan,
+  from,
 }: Props) {
   const router = useRouter()
   const [sidebarWidth, setSidebarWidth] = useState(500)
@@ -213,9 +215,9 @@ export default function FlightsView({
         {/* Flight Plan Header */}
         <div className="flex items-start gap-2 -ml-1">
           <Link
-            href={`/projects/${projectId}`}
+            href={from === 'list' ? `/projects/${projectId}/flight-plans` : `/projects/${projectId}`}
             className="p-1 hover:bg-gray-100 rounded-md transition-colors text-gray-500 hover:text-gray-900 mt-0.5 flex-shrink-0"
-            title={`Back to project dashboard`}
+            title={from === 'list' ? 'Back to flight plans' : 'Back to project dashboard'}
           >
             <ArrowLeft className="w-5 h-5" />
           </Link>
@@ -326,7 +328,7 @@ export default function FlightsView({
                       {/* Open Details Link */}
                       <div onClick={(e) => e.stopPropagation()}>
                         <Link
-                          href={`/projects/${projectId}/flight-plans/${flightPlanId}/flights/${row.flight.id}`}
+                          href={`/projects/${projectId}/flight-plans/${flightPlanId}/flights/${row.flight.id}${from ? `?from=${from}` : ''}`}
                           className={cn(buttonVariants({ variant: 'outline', size: 'xs' }), "gap-1 text-[11px] px-2 py-0.5")}
                         >
                           <span>Open</span>
@@ -404,7 +406,7 @@ export default function FlightsView({
                       <span>Zoom to Flight</span>
                     </button>
                     <Link
-                      href={`/projects/${projectId}/flight-plans/${flightPlanId}/flights/${selected.flight.id}`}
+                      href={`/projects/${projectId}/flight-plans/${flightPlanId}/flights/${selected.flight.id}${from ? `?from=${from}` : ''}`}
                       className={cn(buttonVariants({ variant: 'outline', size: 'sm' }), "gap-1.5 text-xs flex-1 justify-center")}
                     >
                       <span>Open Details</span>
@@ -435,7 +437,7 @@ export default function FlightsView({
                   </div>
                   <div className="pt-2">
                     <Link
-                      href={`/projects/${projectId}/flight-plans/${flightPlanId}/flights/${selected.flight.id}`}
+                      href={`/projects/${projectId}/flight-plans/${flightPlanId}/flights/${selected.flight.id}${from ? `?from=${from}` : ''}`}
                       className={cn(buttonVariants({ variant: 'default' }), "gap-1.5 w-full justify-center")}
                     >
                       <span>Open Flight Details to {selected.imageCount === 0 ? "Upload" : "Process"}</span>

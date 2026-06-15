@@ -53,7 +53,7 @@ export default async function ProjectDashboardPage({ params }: PageProps) {
     const uniqueDates = Array.from(new Set(dates))
     return {
       id: p.id,
-      name: p.name,
+      name: p.displayName || p.name,
       description: p.description,
       showOnDashboard: p.showOnDashboard,
       location: p.location,

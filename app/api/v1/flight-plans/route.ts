@@ -6,17 +6,17 @@ import { eq, and, isNull } from 'drizzle-orm'
 import { randomUUID } from 'crypto'
 
 // POST /api/v1/flight-plans
-// Body: { projectId, name, description? }
+// Body: { projectId, name, displayName?, description? }
 export async function POST(request: NextRequest) {
   const key = await validateApiKey(request.headers.get('authorization'))
   if (!key) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
-  let body: { projectId: string; name: string; description?: string }
+  let body: { projectId: string; name: string; displayName?: string; description?: string }
   try { body = await request.json() } catch {
     return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 })
   }
 
-  const { projectId, name, description } = body
+  const { projectId, name, displayName, description } = body
   if (!projectId || !name) {
     return NextResponse.json({ error: 'projectId and name are required' }, { status: 400 })
   }
@@ -32,12 +32,13 @@ export async function POST(request: NextRequest) {
     id,
     projectId,
     name: slugged,
+    displayName: displayName?.trim() || null,
     description: description?.trim() || null,
     createdBy: `api:${key.id}`,
     createdAt: new Date(),
   })
 
-  return NextResponse.json({ id, name: slugged }, { status: 201 })
+  return NextResponse.json({ id, name: slugged, displayName: displayName?.trim() || null }, { status: 201 })
 }
 
 // GET /api/v1/flight-plans?projectId=
@@ -49,5 +50,5 @@ export async function GET(request: NextRequest) {
   if (!projectId) return NextResponse.json({ error: 'projectId is required' }, { status: 400 })
 
   const plans = await db.select().from(flightPlans).where(and(eq(flightPlans.projectId, projectId), isNull(flightPlans.deletedAt)))
-  return NextResponse.json(plans.map((p) => ({ id: p.id, name: p.name, description: p.description, createdAt: p.createdAt })))
+  return NextResponse.json(plans.map((p) => ({ id: p.id, name: p.name, displayName: p.displayName, description: p.description, createdAt: p.createdAt })))
 }

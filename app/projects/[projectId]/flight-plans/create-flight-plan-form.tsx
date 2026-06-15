@@ -47,6 +47,15 @@ export default function CreateFlightPlanForm({ projectId }: { projectId: string 
             </div>
 
             <div className="flex flex-col gap-1.5">
+              <Label htmlFor="fp-display-name">Display Name</Label>
+              <Input
+                id="fp-display-name"
+                name="displayName"
+                placeholder="Optional display name override"
+              />
+            </div>
+
+            <div className="flex flex-col gap-1.5">
               <Label htmlFor="fp-description">Description</Label>
               <Input
                 id="fp-description"
