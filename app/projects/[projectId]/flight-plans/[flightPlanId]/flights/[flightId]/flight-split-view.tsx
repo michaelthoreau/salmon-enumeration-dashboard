@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { cn } from '@/lib/utils'
 import { Button, buttonVariants } from '@/components/ui/button'
-import { MapIcon, ImageIcon, DownloadIcon, ArrowLeft, Maximize2, RefreshCw } from 'lucide-react'
+import { MapIcon, ImageIcon, DownloadIcon, ArrowLeft, Maximize2, RefreshCw, X } from 'lucide-react'
 import FlightUploader from './flight-uploader'
 import FileLightbox from './file-lightbox'
 import EditFlightButton from './edit-flight-button'
@@ -288,6 +288,7 @@ export default function FlightSplitView({
   // Image list filtering
   const images = displayObjects.filter((o) => isImage(o.key))
   const [activeImage, setActiveImage] = useState<FileEntry | null>(images[0] ?? null)
+  const [lightboxImage, setLightboxImage] = useState<FileEntry | null>(null)
 
   // Sync activeImage if the images list changes (e.g. after upload refresh or file deletion)
   useEffect(() => {
@@ -646,8 +647,7 @@ export default function FlightSplitView({
                 onSelectPhoto={(key) => {
                   const found = images.find((img) => img.key === key)
                   if (found) {
-                    setActiveTab('images')
-                    setActiveImage(found)
+                    setLightboxImage(found)
                   }
                 }}
                 fitBoundsTrigger={zoomTrigger}
@@ -818,6 +818,49 @@ export default function FlightSplitView({
               : null
           }
         />
+      )}
+
+      {/* Lightbox modal for displaying a single flight image */}
+      {lightboxImage && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 backdrop-blur-xs p-4">
+          <div className="absolute inset-0" onClick={() => setLightboxImage(null)} />
+          <div className="relative bg-gray-950 border border-gray-800 rounded-2xl overflow-hidden max-w-5xl w-full max-h-[90vh] flex flex-col shadow-2xl z-10">
+            {/* Header */}
+            <div className="bg-gray-900 border-b border-gray-800 px-6 py-3 flex items-center justify-between text-gray-200">
+              <div className="min-w-0">
+                <h3 className="text-sm font-mono font-medium truncate">
+                  {lightboxImage.key.split('/').pop()}
+                </h3>
+              </div>
+              <div className="flex items-center gap-4 text-xs text-gray-400 mr-2">
+                <span>{formatBytes(lightboxImage.size)}</span>
+                <button
+                  onClick={async (e) => {
+                    e.preventDefault()
+                    await openPresignedUrl(lightboxImage.key, true)
+                  }}
+                  className="text-gray-300 hover:text-white flex items-center gap-1 font-medium transition-colors cursor-pointer"
+                >
+                  <DownloadIcon className="w-3.5 h-3.5" /> Download
+                </button>
+                <button
+                  onClick={() => setLightboxImage(null)}
+                  className="text-gray-400 hover:text-white p-1 rounded-lg hover:bg-gray-800 transition-colors cursor-pointer"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+            {/* Viewport */}
+            <div className="flex-1 min-h-0 flex items-center justify-center p-6 bg-gray-950">
+              <img
+                src={thumbnailUrl(lightboxImage.key, lightboxImage.etag, 1200)}
+                alt={lightboxImage.key.split('/').pop()}
+                className="max-w-full max-h-[70vh] object-contain rounded"
+              />
+            </div>
+          </div>
+        </div>
       )}
     </div>
   )
