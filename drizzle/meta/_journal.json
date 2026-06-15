@@ -85,6 +85,13 @@
       "when": 1781489966300,
       "tag": "0011_white_bushwacker",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "6",
+      "when": 1781554018349,
+      "tag": "0012_cache_task_progress",
+      "breakpoints": true
     }
   ]
 }

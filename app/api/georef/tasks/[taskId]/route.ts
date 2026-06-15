@@ -117,7 +117,9 @@ export async function GET(req: NextRequest, { params }: RouteParams): Promise<Ne
     })
   }
 
-  // Sync terminal states back to DB
+  // Sync status, processed, and progress to DB
+  const progressVal = workerData.status === 'completed' ? 100 : (workerData.status === 'failed' || workerData.status === 'canceled' ? 0 : (workerData.total > 0 ? (workerData.processed / workerData.total) * 100 : 0))
+
   if (workerData.status === 'completed' && workerData.output_key) {
     let boundsStr: string | null = null
     try {
@@ -143,6 +145,8 @@ export async function GET(req: NextRequest, { params }: RouteParams): Promise<Ne
       .update(georefTasks)
       .set({
         status: 'completed',
+        processed: workerData.processed,
+        progress: 100,
         outputKey: workerData.output_key,
         bounds: boundsStr,
         completedAt: new Date(),
@@ -153,8 +157,20 @@ export async function GET(req: NextRequest, { params }: RouteParams): Promise<Ne
       .update(georefTasks)
       .set({
         status: 'failed',
+        processed: workerData.processed,
+        progress: 0,
         error: workerData.error ?? 'Unknown error',
         completedAt: new Date(),
+      })
+      .where(eq(georefTasks.id, taskId))
+  } else {
+    // Still running or pending
+    await db
+      .update(georefTasks)
+      .set({
+        status: workerData.status as any,
+        processed: workerData.processed,
+        progress: progressVal,
       })
       .where(eq(georefTasks.id, taskId))
   }
