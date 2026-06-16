@@ -2,9 +2,10 @@
 
 import { useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
-import { ChevronLeft, ChevronRight, Calendar, Layers, Map, Navigation, ArrowRight, Play, CheckCircle2, AlertCircle, Sparkles } from 'lucide-react'
+import { ChevronLeft, ChevronRight, Calendar, Layers, Map, Navigation, ArrowRight, Play, CheckCircle2, AlertCircle, Sparkles, Pin, PinOff } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { buttonVariants } from '@/components/ui/button'
+import { highlightFlight } from '@/app/actions/projects'
 import 'maplibre-gl/dist/maplibre-gl.css'
 
 interface FlightRow {
@@ -29,6 +30,7 @@ interface Props {
   initialDate: string
   canWrite: boolean
   isAdmin: boolean
+  highlightedFlightId: string | null
 }
 
 function getLocalDateStr(date: Date | string, tz: string): string {
@@ -157,8 +159,32 @@ export default function TodayFlightsView({
   initialDate,
   canWrite,
   isAdmin,
+  highlightedFlightId,
 }: Props) {
   const [selectedDate, setSelectedDate] = useState(initialDate)
+  const [currentHighlightId, setCurrentHighlightId] = useState<string | null>(highlightedFlightId)
+
+  useEffect(() => {
+    setCurrentHighlightId(highlightedFlightId)
+  }, [highlightedFlightId])
+
+  const handleToggleHighlight = async (flightId: string) => {
+    const isCurrentlyHighlighted = currentHighlightId === flightId
+    const nextId = isCurrentlyHighlighted ? null : flightId
+    
+    setCurrentHighlightId(nextId)
+    
+    try {
+      const res = await highlightFlight(projectId, nextId)
+      if (res.error) {
+        setCurrentHighlightId(currentHighlightId)
+        alert(res.error)
+      }
+    } catch (err) {
+      setCurrentHighlightId(currentHighlightId)
+      alert('Failed to update highlighted flight: ' + String(err))
+    }
+  }
   const [basemap, setBasemap] = useState<'street' | 'satellite'>('satellite')
   const mapContainerRef = useRef<HTMLDivElement>(null)
   const mapRef = useRef<any | null>(null)
@@ -224,6 +250,8 @@ export default function TodayFlightsView({
     const newD = String(date.getDate()).padStart(2, '0')
     setSelectedDate(`${newY}-${newM}-${newD}`)
   }
+
+  const highlightedFlight = flights.find((f) => f.id === currentHighlightId)
 
   // ── Stats Calculations ─────────────────────────────────────────────────────
   const totalFlights = filteredFlights.length
@@ -494,6 +522,66 @@ export default function TodayFlightsView({
         </div>
       </div>
 
+      {highlightedFlight && (
+        <div className="relative overflow-hidden rounded-2xl border border-blue-200 bg-gradient-to-br from-blue-50/30 via-white to-blue-50/10 p-5 sm:p-6 shadow-sm transition-all">
+          <div className="absolute top-0 right-0 w-32 h-32 bg-blue-500/5 rounded-bl-full pointer-events-none" />
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 relative z-10">
+            <div className="space-y-2.5 max-w-2xl">
+              <div className="flex items-center gap-2">
+                <span className="inline-flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-blue-600 bg-blue-50 border border-blue-200 px-2.5 py-1 rounded-lg select-none">
+                  <Sparkles className="w-3.5 h-3.5 text-yellow-500 fill-yellow-500 animate-pulse" />
+                  Featured Flight Route
+                </span>
+                {isAdmin && (
+                  <button
+                    onClick={() => handleToggleHighlight(highlightedFlight.id)}
+                    className="inline-flex items-center gap-1 text-[10px] font-semibold text-gray-400 hover:text-red-500 transition-colors cursor-pointer"
+                    title="Remove Highlight"
+                  >
+                    <PinOff className="w-3.5 h-3.5" />
+                    <span>Clear Feature</span>
+                  </button>
+                )}
+              </div>
+              <h2 className="text-xl font-bold text-gray-900 leading-snug">
+                {highlightedFlight.flightPlanName}
+              </h2>
+              {highlightedFlight.notes && (
+                <p className="text-sm text-gray-600 leading-relaxed">
+                  {highlightedFlight.notes}
+                </p>
+              )}
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-gray-500">
+                <span className="font-semibold text-gray-700">
+                  {formatLongDate(getLocalDateStr(highlightedFlight.timestamp, timezone))}
+                </span>
+                <span className="text-gray-300">•</span>
+                <span className="font-mono">
+                  {formatTimeOnly(highlightedFlight.timestamp, timezone)} local time
+                </span>
+                <span className="text-gray-300">•</span>
+                <span>{highlightedFlight.imageCount} images</span>
+                <span className="text-gray-300">•</span>
+                <StatusBadge status={highlightedFlight.taskStatus} imageCount={highlightedFlight.imageCount} />
+              </div>
+            </div>
+            
+            <div className="flex items-center gap-2 self-start sm:self-center">
+              <Link
+                href={`/projects/${projectId}/flight-plans/${highlightedFlight.flightPlanId}/flights/${highlightedFlight.id}`}
+                className={cn(
+                  buttonVariants({ variant: 'default', size: 'lg' }),
+                  "bg-blue-600 hover:bg-blue-700 text-white rounded-xl shadow-sm text-xs font-semibold gap-2 px-5 h-11"
+                )}
+              >
+                <span>Enter Flight View</span>
+                <ArrowRight className="w-4 h-4" />
+              </Link>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Summary Stats Row */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <div className="bg-white border border-gray-200/80 rounded-2xl p-4 shadow-sm flex flex-col justify-center">
@@ -584,10 +672,24 @@ export default function TodayFlightsView({
                           {hasLoc && (
                             <button
                               onClick={() => handleFocusPlan(flight.flightPlanLocation)}
-                              className="p-1 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded transition-colors"
+                              className="p-1 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded transition-colors cursor-pointer"
                               title="Zoom to location on map"
                             >
                               <Navigation className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                          {isAdmin && (
+                            <button
+                              onClick={() => handleToggleHighlight(flight.id)}
+                              className={cn(
+                                "p-1 rounded transition-colors cursor-pointer",
+                                flight.id === currentHighlightId
+                                  ? "text-blue-600 bg-blue-50 hover:bg-blue-100 hover:text-blue-700"
+                                  : "text-gray-400 hover:text-blue-600 hover:bg-gray-50"
+                              )}
+                              title={flight.id === currentHighlightId ? "Clear Highlight" : "Highlight this flight at top"}
+                            >
+                              <Pin className={cn("w-3.5 h-3.5", flight.id === currentHighlightId && "fill-blue-600")} />
                             </button>
                           )}
                         </div>

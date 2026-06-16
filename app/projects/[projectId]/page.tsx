@@ -52,6 +52,7 @@ export default async function ProjectTodayPage({ params }: PageProps) {
         initialDate={initialDate}
         canWrite={canWrite}
         isAdmin={isAdmin}
+        highlightedFlightId={project.highlightedFlightId || null}
       />
     )
   }
@@ -82,6 +83,7 @@ export default async function ProjectTodayPage({ params }: PageProps) {
         initialDate={initialDate}
         canWrite={canWrite}
         isAdmin={isAdmin}
+        highlightedFlightId={project.highlightedFlightId || null}
       />
     )
   }
@@ -162,6 +164,7 @@ export default async function ProjectTodayPage({ params }: PageProps) {
       initialDate={initialDate}
       canWrite={canWrite}
       isAdmin={isAdmin}
+      highlightedFlightId={project.highlightedFlightId || null}
     />
   )
 }
