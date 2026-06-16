@@ -43,6 +43,7 @@ export async function GET(
   try {
     res = await fetch(targetUrl, {
       headers: { Authorization: `Bearer ${token}` },
+      cache: 'no-store',
     })
   } catch (err) {
     console.error(`[Diff Tile Image Route] Error reaching tile server for tile ${z}/${x}/${y}:`, err)
@@ -62,6 +63,9 @@ export async function GET(
   const buffer = await res.arrayBuffer()
   return new NextResponse(buffer, {
     status: 200,
-    headers: { 'Content-Type': 'image/png', 'Cache-Control': 'public, max-age=3600' },
+    headers: {
+      'Content-Type': 'image/png',
+      'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0',
+    },
   })
 }
