@@ -101,12 +101,7 @@ function StatusBadge({ status, imageCount }: { status: string | null; imageCount
     )
   }
   if (imageCount > 0) {
-    return (
-      <span className="inline-flex items-center gap-1 rounded-md bg-purple-50 border border-purple-200 px-2 py-0.5 text-[11px] text-purple-700 font-medium">
-        <Play className="w-3.5 h-3.5 text-purple-500 fill-purple-500" />
-        <span>Ready</span>
-      </span>
-    )
+    return null
   }
   return (
     <span className="inline-flex items-center gap-1 rounded-md bg-gray-50 border border-gray-200 px-2 py-0.5 text-[11px] text-gray-400 font-medium">
@@ -162,33 +157,45 @@ export default function TodayFlightsView({
   highlightedFlightId,
 }: Props) {
   const [selectedDate, setSelectedDate] = useState(initialDate)
-  const [currentHighlightId, setCurrentHighlightId] = useState<string | null>(highlightedFlightId)
+  const [currentHighlightIds, setCurrentHighlightIds] = useState<string[]>(
+    highlightedFlightId ? highlightedFlightId.split(',').filter(Boolean) : []
+  )
 
   useEffect(() => {
-    setCurrentHighlightId(highlightedFlightId)
+    setCurrentHighlightIds(
+      highlightedFlightId ? highlightedFlightId.split(',').filter(Boolean) : []
+    )
   }, [highlightedFlightId])
 
   const handleToggleHighlight = async (flightId: string) => {
-    const isCurrentlyHighlighted = currentHighlightId === flightId
-    const nextId = isCurrentlyHighlighted ? null : flightId
-    
-    setCurrentHighlightId(nextId)
-    
+    const isCurrentlyHighlighted = currentHighlightIds.includes(flightId)
+    let nextIds = [...currentHighlightIds]
+
+    if (isCurrentlyHighlighted) {
+      nextIds = nextIds.filter((id) => id !== flightId)
+    } else {
+      nextIds.push(flightId)
+      if (nextIds.length > 2) {
+        nextIds.shift() // Keep max 2, remove oldest
+      }
+    }
+
+    const previousIds = currentHighlightIds
+    setCurrentHighlightIds(nextIds)
+
     try {
-      const res = await highlightFlight(projectId, nextId)
+      const nextValue = nextIds.length > 0 ? nextIds.join(',') : null
+      const res = await highlightFlight(projectId, nextValue)
       if (res.error) {
-        setCurrentHighlightId(currentHighlightId)
+        setCurrentHighlightIds(previousIds)
         alert(res.error)
       }
     } catch (err) {
-      setCurrentHighlightId(currentHighlightId)
-      alert('Failed to update highlighted flight: ' + String(err))
+      setCurrentHighlightIds(previousIds)
+      alert('Failed to update highlighted flights: ' + String(err))
     }
   }
-  const [basemap, setBasemap] = useState<'street' | 'satellite'>('satellite')
-  const mapContainerRef = useRef<HTMLDivElement>(null)
-  const mapRef = useRef<any | null>(null)
-  const [mapReady, setMapReady] = useState(false)
+
 
   const isToday = selectedDate === initialDate
   const yesterdayDate = (() => {
@@ -213,33 +220,6 @@ export default function TodayFlightsView({
     }
   })
 
-  // Generate GeoJSON representation for the map
-  const geojsonFeatures = filteredFlights
-    .map((f) => {
-      if (!f.flightPlanLocation) return null
-      try {
-        const geom = JSON.parse(f.flightPlanLocation)
-        return {
-          type: 'Feature' as const,
-          geometry: geom,
-          properties: {
-            id: f.id,
-            flightPlanId: f.flightPlanId,
-            name: f.flightPlanName,
-            time: formatTimeOnly(f.timestamp, timezone),
-          },
-        }
-      } catch (e) {
-        return null
-      }
-    })
-    .filter((feat): feat is NonNullable<typeof feat> => feat !== null)
-
-  const geojson = {
-    type: 'FeatureCollection' as const,
-    features: geojsonFeatures as any[],
-  }
-
   // Helper to adjust selected date by days
   const adjustDate = (days: number) => {
     const [y, m, d] = selectedDate.split('-').map(Number)
@@ -251,7 +231,7 @@ export default function TodayFlightsView({
     setSelectedDate(`${newY}-${newM}-${newD}`)
   }
 
-  const highlightedFlight = flights.find((f) => f.id === currentHighlightId)
+  const highlightedFlights = flights.filter((f) => currentHighlightIds.includes(f.id))
 
   // ── Stats Calculations ─────────────────────────────────────────────────────
   const totalFlights = filteredFlights.length
@@ -261,214 +241,7 @@ export default function TodayFlightsView({
     ['queued', 'running', 'uploading'].includes(f.taskStatus || '')
   ).length
 
-  // ── Init Maplibre map ──────────────────────────────────────────────────────
-  useEffect(() => {
-    if (!mapContainerRef.current) return
-    let cancelled = false
 
-    async function init() {
-      try {
-        const maplibre = (await import('maplibre-gl')).default
-        if (cancelled || !mapContainerRef.current) return
-
-        const map = new maplibre.Map({
-          container: mapContainerRef.current,
-          style: 'https://tiles.openfreemap.org/styles/liberty',
-          zoom: 2,
-          center: [-152, 61], // Center Alaska by default
-          attributionControl: false,
-        })
-
-        mapRef.current = map
-        map.addControl(new maplibre.AttributionControl({ compact: true }))
-        map.addControl(new maplibre.NavigationControl(), 'top-right')
-
-        map.on('load', () => {
-          if (cancelled) return
-          setMapReady(true)
-
-          // Add Esri satellite source
-          map.addSource('esri-satellite', {
-            type: 'raster',
-            tiles: ['https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'],
-            tileSize: 256,
-            attribution: 'Tiles &copy; Esri',
-            maxzoom: 17,
-          })
-
-          // Add Esri satellite layer at bottom
-          const layersStyle = map.getStyle().layers
-          const firstLayerId = layersStyle && layersStyle.length > 0 ? layersStyle[0].id : undefined
-          map.addLayer({
-            id: 'esri-satellite-layer',
-            type: 'raster',
-            source: 'esri-satellite',
-            layout: { visibility: basemap === 'satellite' ? 'visible' : 'none' },
-          }, firstLayerId)
-
-          updateMapBasemap(map, basemap)
-
-          // Add dynamic today flights layers
-          map.addSource('today-flights', {
-            type: 'geojson',
-            data: geojson,
-          })
-
-          map.addLayer({
-            id: 'today-flights-fill',
-            type: 'fill',
-            source: 'today-flights',
-            paint: {
-              'fill-color': '#10b981',
-              'fill-opacity': 0.15,
-            },
-            filter: ['==', '$type', 'Polygon'],
-          })
-
-          map.addLayer({
-            id: 'today-flights-line',
-            type: 'line',
-            source: 'today-flights',
-            paint: {
-              'line-color': '#059669',
-              'line-width': 2.5,
-            },
-            filter: ['in', '$type', 'LineString', 'Polygon'],
-          })
-
-          map.addLayer({
-            id: 'today-flights-point',
-            type: 'circle',
-            source: 'today-flights',
-            paint: {
-              'circle-color': '#10b981',
-              'circle-radius': 8,
-              'circle-stroke-color': '#ffffff',
-              'circle-stroke-width': 2,
-            },
-            filter: ['==', '$type', 'Point'],
-          })
-
-          // Click handler for popup
-          map.on('click', 'today-flights-fill', (e: any) => {
-            const f = e.features[0]
-            const { id, flightPlanId, name, time } = f.properties
-            new maplibre.Popup()
-              .setLngLat(e.lngLat)
-              .setHTML(`
-                <div style="font-family: ui-sans-serif, system-ui, sans-serif; padding: 8px;">
-                  <h4 style="font-weight: 700; color: #111827; margin: 0 0 2px 0;">${name}</h4>
-                  <p style="font-size: 11px; color: #6b7280; margin: 0 0 8px 0;">Logged at ${time}</p>
-                  <a href="/projects/${projectId}/flight-plans/${flightPlanId}/flights/${id}" style="font-size: 11px; font-weight: 600; color: #10b981; text-decoration: none;">
-                    Open Flight Details →
-                  </a>
-                </div>
-              `)
-              .addTo(map)
-          })
-
-          map.on('mouseenter', 'today-flights-fill', () => {
-            map.getCanvas().style.cursor = 'pointer'
-          })
-          map.on('mouseleave', 'today-flights-fill', () => {
-            map.getCanvas().style.cursor = ''
-          })
-        })
-      } catch (err) {
-        console.error('Failed to init calendar map:', err)
-      }
-    }
-
-    init()
-
-    return () => {
-      cancelled = true
-      if (mapRef.current) {
-        mapRef.current.remove()
-        mapRef.current = null
-        setMapReady(false)
-      }
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
-
-  // ── Sync basemap changes ───────────────────────────────────────────────────
-  useEffect(() => {
-    if (!mapReady || !mapRef.current) return
-    updateMapBasemap(mapRef.current, basemap)
-  }, [basemap, mapReady])
-
-  // ── Update GeoJSON data and fit map bounds on date change ──────────────────
-  useEffect(() => {
-    if (!mapReady || !mapRef.current) return
-    const map = mapRef.current
-    const source = map.getSource('today-flights')
-    if (source) {
-      source.setData(geojson)
-    }
-
-    // Fit bounds of flights today
-    if (geojsonFeatures.length > 0) {
-      let minLng = Infinity, minLat = Infinity, maxLng = -Infinity, maxLat = -Infinity
-      let hasCoords = false
-
-      for (const feat of geojsonFeatures) {
-        const geom = feat.geometry
-        if (geom.type === 'Point') {
-          const [lng, lat] = geom.coordinates
-          minLng = Math.min(minLng, lng)
-          minLat = Math.min(minLat, lat)
-          maxLng = Math.max(maxLng, lng)
-          maxLat = Math.max(maxLat, lat)
-          hasCoords = true
-        } else if (geom.type === 'Polygon') {
-          for (const ring of geom.coordinates) {
-            for (const [lng, lat] of ring) {
-              minLng = Math.min(minLng, lng)
-              minLat = Math.min(minLat, lat)
-              maxLng = Math.max(maxLng, lng)
-              maxLat = Math.max(maxLat, lat)
-              hasCoords = true
-            }
-          }
-        }
-      }
-
-      if (hasCoords) {
-        const isSinglePoint = minLng === maxLng && minLat === maxLat
-        if (isSinglePoint) {
-          map.flyTo({ center: [minLng, minLat], zoom: 14 })
-        } else {
-          map.fitBounds([minLng, minLat, maxLng, maxLat], { padding: 50, maxZoom: 15, animate: true })
-        }
-      }
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedDate, mapReady])
-
-  // Focus a specific flight plan's geometry on map
-  function handleFocusPlan(planLocation: string | null) {
-    if (!mapRef.current || !mapReady || !planLocation) return
-    try {
-      const geom = JSON.parse(planLocation)
-      if (geom.type === 'Point') {
-        mapRef.current.flyTo({ center: geom.coordinates, zoom: 14 })
-      } else if (geom.type === 'Polygon') {
-        let minLng = Infinity, minLat = Infinity, maxLng = -Infinity, maxLat = -Infinity
-        for (const ring of geom.coordinates) {
-          for (const [lng, lat] of ring) {
-            minLng = Math.min(minLng, lng)
-            minLat = Math.min(minLat, lat)
-            maxLng = Math.max(maxLng, lng)
-            maxLat = Math.max(maxLat, lat)
-          }
-        }
-        mapRef.current.fitBounds([minLng, minLat, maxLng, maxLat], { padding: 40, maxZoom: 15 })
-      }
-    } catch (e) {
-      console.error(e)
-    }
-  }
 
   return (
     <div className="space-y-6">
@@ -522,63 +295,70 @@ export default function TodayFlightsView({
         </div>
       </div>
 
-      {highlightedFlight && (
-        <div className="relative overflow-hidden rounded-2xl border border-blue-200 bg-gradient-to-br from-blue-50/30 via-white to-blue-50/10 p-5 sm:p-6 shadow-sm transition-all">
-          <div className="absolute top-0 right-0 w-32 h-32 bg-blue-500/5 rounded-bl-full pointer-events-none" />
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 relative z-10">
-            <div className="space-y-2.5 max-w-2xl">
-              <div className="flex items-center gap-2">
-                <span className="inline-flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-blue-600 bg-blue-50 border border-blue-200 px-2.5 py-1 rounded-lg select-none">
-                  <Sparkles className="w-3.5 h-3.5 text-yellow-500 fill-yellow-500 animate-pulse" />
-                  Featured Flight Route
-                </span>
-                {isAdmin && (
-                  <button
-                    onClick={() => handleToggleHighlight(highlightedFlight.id)}
-                    className="inline-flex items-center gap-1 text-[10px] font-semibold text-gray-400 hover:text-red-500 transition-colors cursor-pointer"
-                    title="Remove Highlight"
+      {highlightedFlights.length > 0 && (
+        <div className={cn(
+          "grid gap-4",
+          highlightedFlights.length === 2 ? "grid-cols-1 md:grid-cols-2" : "grid-cols-1"
+        )}>
+          {highlightedFlights.map((highlightedFlight) => (
+            <div key={highlightedFlight.id} className="relative overflow-hidden rounded-2xl border border-blue-200 bg-gradient-to-br from-blue-50/30 via-white to-blue-50/10 p-5 sm:p-6 shadow-sm transition-all">
+              <div className="absolute top-0 right-0 w-32 h-32 bg-blue-500/5 rounded-bl-full pointer-events-none" />
+              <div className="flex flex-col justify-between h-full gap-4 relative z-10">
+                <div className="space-y-2.5">
+                  <div className="flex items-center gap-2">
+                    <span className="inline-flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-blue-600 bg-blue-50 border border-blue-200 px-2.5 py-1 rounded-lg select-none">
+                      <Sparkles className="w-3.5 h-3.5 text-yellow-500 fill-yellow-500 animate-pulse" />
+                      Featured Flight Route
+                    </span>
+                    {isAdmin && (
+                      <button
+                        onClick={() => handleToggleHighlight(highlightedFlight.id)}
+                        className="inline-flex items-center gap-1 text-[10px] font-semibold text-gray-400 hover:text-red-500 transition-colors cursor-pointer"
+                        title="Remove Highlight"
+                      >
+                        <PinOff className="w-3.5 h-3.5" />
+                        <span>Clear Feature</span>
+                      </button>
+                    )}
+                  </div>
+                  <h2 className="text-xl font-bold text-gray-900 leading-snug">
+                    {highlightedFlight.flightPlanName}
+                  </h2>
+                  {highlightedFlight.notes && (
+                    <p className="text-sm text-gray-600 leading-relaxed line-clamp-2" title={highlightedFlight.notes}>
+                      {highlightedFlight.notes}
+                    </p>
+                  )}
+                  <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-gray-500">
+                    <span className="font-semibold text-gray-700">
+                      {formatLongDate(getLocalDateStr(highlightedFlight.timestamp, timezone))}
+                    </span>
+                    <span className="text-gray-300">•</span>
+                    <span className="font-mono">
+                      {formatTimeOnly(highlightedFlight.timestamp, timezone)} local time
+                    </span>
+                    <span className="text-gray-300">•</span>
+                    <span>{highlightedFlight.imageCount} images</span>
+                    <span className="text-gray-300">•</span>
+                    <StatusBadge status={highlightedFlight.taskStatus} imageCount={highlightedFlight.imageCount} />
+                  </div>
+                </div>
+                
+                <div className="flex items-center gap-2 mt-2">
+                  <Link
+                    href={`/projects/${projectId}/flight-plans/${highlightedFlight.flightPlanId}/flights/${highlightedFlight.id}?returnTo=${encodeURIComponent(`/projects/${projectId}`)}`}
+                    className={cn(
+                      buttonVariants({ variant: 'default', size: 'lg' }),
+                      "bg-blue-600 hover:bg-blue-700 text-white rounded-xl shadow-sm text-xs font-semibold gap-2 px-5 h-11 w-full sm:w-auto justify-center"
+                    )}
                   >
-                    <PinOff className="w-3.5 h-3.5" />
-                    <span>Clear Feature</span>
-                  </button>
-                )}
-              </div>
-              <h2 className="text-xl font-bold text-gray-900 leading-snug">
-                {highlightedFlight.flightPlanName}
-              </h2>
-              {highlightedFlight.notes && (
-                <p className="text-sm text-gray-600 leading-relaxed">
-                  {highlightedFlight.notes}
-                </p>
-              )}
-              <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-gray-500">
-                <span className="font-semibold text-gray-700">
-                  {formatLongDate(getLocalDateStr(highlightedFlight.timestamp, timezone))}
-                </span>
-                <span className="text-gray-300">•</span>
-                <span className="font-mono">
-                  {formatTimeOnly(highlightedFlight.timestamp, timezone)} local time
-                </span>
-                <span className="text-gray-300">•</span>
-                <span>{highlightedFlight.imageCount} images</span>
-                <span className="text-gray-300">•</span>
-                <StatusBadge status={highlightedFlight.taskStatus} imageCount={highlightedFlight.imageCount} />
+                    <span>Enter Flight View</span>
+                    <ArrowRight className="w-4 h-4" />
+                  </Link>
+                </div>
               </div>
             </div>
-            
-            <div className="flex items-center gap-2 self-start sm:self-center">
-              <Link
-                href={`/projects/${projectId}/flight-plans/${highlightedFlight.flightPlanId}/flights/${highlightedFlight.id}`}
-                className={cn(
-                  buttonVariants({ variant: 'default', size: 'lg' }),
-                  "bg-blue-600 hover:bg-blue-700 text-white rounded-xl shadow-sm text-xs font-semibold gap-2 px-5 h-11"
-                )}
-              >
-                <span>Enter Flight View</span>
-                <ArrowRight className="w-4 h-4" />
-              </Link>
-            </div>
-          </div>
+          ))}
         </div>
       )}
 
@@ -683,13 +463,13 @@ export default function TodayFlightsView({
                               onClick={() => handleToggleHighlight(flight.id)}
                               className={cn(
                                 "p-1 rounded transition-colors cursor-pointer",
-                                flight.id === currentHighlightId
+                                currentHighlightIds.includes(flight.id)
                                   ? "text-blue-600 bg-blue-50 hover:bg-blue-100 hover:text-blue-700"
                                   : "text-gray-400 hover:text-blue-600 hover:bg-gray-50"
                               )}
-                              title={flight.id === currentHighlightId ? "Clear Highlight" : "Highlight this flight at top"}
+                              title={currentHighlightIds.includes(flight.id) ? "Clear Highlight" : "Highlight this flight at top"}
                             >
-                              <Pin className={cn("w-3.5 h-3.5", flight.id === currentHighlightId && "fill-blue-600")} />
+                              <Pin className={cn("w-3.5 h-3.5", currentHighlightIds.includes(flight.id) && "fill-blue-600")} />
                             </button>
                           )}
                         </div>
@@ -699,7 +479,7 @@ export default function TodayFlightsView({
                       </div>
                       
                       <Link
-                        href={`/projects/${projectId}/flight-plans/${flight.flightPlanId}/flights/${flight.id}`}
+                        href={`/projects/${projectId}/flight-plans/${flight.flightPlanId}/flights/${flight.id}?returnTo=${encodeURIComponent(`/projects/${projectId}`)}`}
                         className={cn(
                           buttonVariants({ variant: 'outline', size: 'sm' }),
                           "text-xs font-semibold gap-1.5 h-8"

@@ -96,6 +96,7 @@ interface FlightSplitViewProps {
     predictions: { time: string; value: number }[]
   } | null
   from?: string
+  returnTo?: string
 }
 
 export default function FlightSplitView({
@@ -119,6 +120,7 @@ export default function FlightSplitView({
   weather,
   tides,
   from,
+  returnTo,
 }: FlightSplitViewProps) {
   const router = useRouter()
   const [sidebarWidth, setSidebarWidth] = useState(500)
@@ -478,7 +480,7 @@ export default function FlightSplitView({
           <div className="flex items-start justify-between gap-4">
             <div className="flex items-start gap-2 -ml-1">
               <Link
-                href={`/projects/${projectId}/flight-plans/${flightPlanId}/flights${from ? `?from=${from}` : ''}`}
+                href={returnTo || `/projects/${projectId}/flight-plans/${flightPlanId}/flights${from ? `?from=${from}` : ''}`}
                 className="p-1 hover:bg-gray-100 rounded-md transition-colors text-gray-500 hover:text-gray-900 mt-0.5 flex-shrink-0"
                 title={`Back to ${flightPlan.displayName || flightPlan.name}`}
               >

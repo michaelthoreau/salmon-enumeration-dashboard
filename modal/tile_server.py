@@ -107,6 +107,27 @@ def web() -> FastAPI:
             "maxzoom": meta.maxzoom,
         }
 
+    # ── GET /preview ───────────────────────────────────────────────────────────
+
+    @web_app.get("/preview")
+    async def preview(
+        key: str = Query(...),
+        max_size: int = Query(256),
+        bucket: str | None = Query(None),
+        _: None = Depends(_require_auth),
+    ) -> Response:
+        from rio_tiler.io import COGReader
+
+        try:
+            with rasterio.Env(**_gdal_env):
+                with COGReader(_s3_url(key, bucket)) as cog:
+                    img = cog.preview(max_size=max_size)
+                    content = img.render(img_format="PNG")
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+        return Response(content=content, media_type="image/png")
+
     # ── GET /tiles/{z}/{x}/{y} ─────────────────────────────────────────────────
 
     @web_app.get("/tiles/{z}/{x}/{y}")
