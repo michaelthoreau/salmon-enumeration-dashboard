@@ -202,7 +202,7 @@ export default function DjiSyncButton({ projectId }: { projectId: string }) {
                 ) : djiProjects.length === 0 ? (
                   <p className="text-gray-500">No DJI projects found.</p>
                 ) : (
-                  <Select value={selectedUuid} onValueChange={setSelectedUuid}>
+                  <Select value={selectedUuid} onValueChange={(v) => { if (v) setSelectedUuid(v) }}>
                     <SelectTrigger className="w-full">
                       <SelectValue placeholder="Select a DJI project…" />
                     </SelectTrigger>
