@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
-import { ChevronLeft, ChevronRight, Calendar, Layers, ArrowRight, CheckCircle2, AlertCircle, Sparkles, Pin, PinOff } from 'lucide-react'
+import { ChevronLeft, ChevronRight, Calendar, Layers, ArrowRight, CheckCircle2, AlertCircle, Sparkles, Pin, PinOff, Thermometer, Wind, Cloud, Waves } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { buttonVariants } from '@/components/ui/button'
 import { highlightFlight } from '@/app/actions/projects'
@@ -107,6 +107,256 @@ function StatusBadge({ status, imageCount }: { status: string | null; imageCount
     <span className="inline-flex items-center gap-1 rounded-md bg-gray-50 border border-gray-200 px-2 py-0.5 text-[11px] text-gray-400 font-medium">
       <span>No Images</span>
     </span>
+  )
+}
+
+interface FlightCardProps {
+  flight: FlightRow
+  projectId: string
+  isAdmin: boolean
+  currentHighlightIds: string[]
+  timezone: string
+  handleToggleHighlight: (id: string) => void
+}
+
+function FlightCard({
+  flight,
+  projectId,
+  isAdmin,
+  currentHighlightIds,
+  timezone,
+  handleToggleHighlight,
+}: FlightCardProps) {
+  const [data, setData] = useState<{ weather: any; tides: any } | null>(null)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState(false)
+
+  const loc = flight.flightPlanLocation
+
+  useEffect(() => {
+    if (!loc) return
+
+    let lat: number | null = null
+    let lng: number | null = null
+    try {
+      const geom = JSON.parse(loc)
+      if (geom.type === 'Point') {
+        lng = geom.coordinates[0]
+        lat = geom.coordinates[1]
+      } else if (geom.type === 'Polygon') {
+        const ring = geom.coordinates[0] || []
+        if (ring.length > 0) {
+          const sumLat = ring.reduce((acc: number, pt: number[]) => acc + pt[1], 0)
+          const sumLng = ring.reduce((acc: number, pt: number[]) => acc + pt[0], 0)
+          lat = sumLat / ring.length
+          lng = sumLng / ring.length
+        }
+      }
+    } catch (e) {
+      console.error('Failed to parse location coordinates:', e)
+    }
+
+    if (lat === null || lng === null) return
+
+    let active = true
+    setLoading(true)
+    setError(false)
+
+    fetch(
+      `/api/weather-tides?lat=${lat}&lng=${lng}&timestamp=${encodeURIComponent(
+        new Date(flight.timestamp).toISOString()
+      )}`
+    )
+      .then((res) => {
+        if (!res.ok) throw new Error()
+        return res.json()
+      })
+      .then((resData) => {
+        if (active) {
+          setData(resData)
+          setLoading(false)
+        }
+      })
+      .catch(() => {
+        if (active) {
+          setError(true)
+          setLoading(false)
+        }
+      })
+
+    return () => {
+      active = false
+    }
+  }, [loc, flight.timestamp])
+
+  // Process tide data closest to the flight
+  let closestTide = null
+  let isTideRising = false
+  if (data?.tides?.predictions && data.tides.predictions.length > 0) {
+    const predictions = data.tides.predictions
+    let closestIdx = 0
+    let minDiff = Infinity
+    const flightTimeMs = new Date(flight.timestamp).getTime()
+
+    predictions.forEach((p: any, idx: number) => {
+      const diff = Math.abs(new Date(p.time).getTime() - flightTimeMs)
+      if (diff < minDiff) {
+        minDiff = diff
+        closestIdx = idx
+      }
+    })
+
+    closestTide = predictions[closestIdx]
+    if (closestIdx < predictions.length - 1) {
+      isTideRising = predictions[closestIdx + 1].value > closestTide.value
+    } else if (closestIdx > 0) {
+      isTideRising = closestTide.value > predictions[closestIdx - 1].value
+    }
+  }
+
+  const weather = data?.weather
+
+  return (
+    <div className="group bg-white rounded-2xl border border-gray-200/80 p-5 transition-all shadow-sm hover:shadow-md flex flex-col md:flex-row items-stretch justify-between gap-6 relative">
+      {/* Left Side: Content */}
+      <div className="flex-1 flex flex-col justify-between min-w-0">
+        <div className="space-y-1.5">
+          {/* Header line: Title & Admin Pin */}
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <Link
+              href={`/projects/${projectId}/flight-plans/${flight.flightPlanId}/flights`}
+              className="text-base font-bold text-gray-900 hover:text-blue-600 transition-colors leading-tight"
+            >
+              {flight.flightPlanName}
+            </Link>
+            {isAdmin && (
+              <button
+                onClick={() => handleToggleHighlight(flight.id)}
+                className={cn(
+                  "p-1 rounded transition-colors cursor-pointer",
+                  currentHighlightIds.includes(flight.id)
+                    ? "text-blue-600 bg-blue-50 hover:bg-blue-100 hover:text-blue-700"
+                    : "text-gray-400 hover:text-blue-600 hover:bg-gray-50"
+                )}
+                title={currentHighlightIds.includes(flight.id) ? "Clear Highlight" : "Highlight this flight at top"}
+              >
+                <Pin className={cn("w-3.5 h-3.5", currentHighlightIds.includes(flight.id) && "fill-blue-600")} />
+              </button>
+            )}
+          </div>
+
+          {/* Metadata Row */}
+          <div className="flex flex-wrap items-center gap-x-2 text-xs text-gray-500 font-medium">
+            <span>{formatTimeOnly(flight.timestamp, timezone)} local time</span>
+            <span>•</span>
+            <span>{flight.imageCount} images</span>
+            <span>•</span>
+            <StatusBadge status={flight.taskStatus} imageCount={flight.imageCount} />
+          </div>
+
+          {/* Flight Notes */}
+          {flight.notes && (
+            <p className="text-xs text-gray-550 pt-1 leading-relaxed line-clamp-2" title={flight.notes}>
+              {flight.notes}
+            </p>
+          )}
+        </div>
+
+        {/* Open Details Action */}
+        <div className="mt-4 flex items-center">
+          <Link
+            href={`/projects/${projectId}/flight-plans/${flight.flightPlanId}/flights/${flight.id}?returnTo=${encodeURIComponent(`/projects/${projectId}`)}`}
+            className={cn(
+              buttonVariants({ variant: 'outline', size: 'sm' }),
+              "text-xs font-semibold gap-1.5 h-8 px-3 rounded-lg"
+            )}
+          >
+            <span>Open Details</span>
+            <ArrowRight className="w-3.5 h-3.5 text-gray-500 group-hover:translate-x-0.5 transition-transform" />
+          </Link>
+        </div>
+      </div>
+
+      {/* Right Side: Weather and Tides Info Card */}
+      <div className="md:w-72 flex-shrink-0 flex items-center">
+        {!loc ? (
+          <div className="w-full py-4 px-4 rounded-xl border border-dashed border-gray-150 bg-gray-55/5 flex flex-col items-center justify-center text-center text-gray-400 gap-1 select-none">
+            <span className="text-[10px] font-bold tracking-wider uppercase text-gray-400">No Location Set</span>
+            <span className="text-[9px] text-gray-400 max-w-[180px]">Set flight plan coordinates to view weather & tides</span>
+          </div>
+        ) : loading ? (
+          <div className="w-full p-4 rounded-xl border border-gray-150 bg-gray-55/5 flex flex-col gap-2.5 animate-pulse">
+            <div className="h-3.5 bg-gray-205 rounded w-1/2"></div>
+            <div className="grid grid-cols-2 gap-2">
+              <div className="h-7 bg-gray-205 rounded"></div>
+              <div className="h-7 bg-gray-205 rounded"></div>
+            </div>
+          </div>
+        ) : error || !data ? (
+          <div className="w-full py-4 px-4 rounded-xl border border-gray-155 bg-red-50/20 flex flex-col items-center justify-center text-center text-red-700/60 gap-0.5 select-none">
+            <AlertCircle className="w-4 h-4 text-red-400" />
+            <span className="text-[10px] font-bold uppercase">Unavailable</span>
+            <span className="text-[9px] text-red-500/50">Error fetching weather/tides</span>
+          </div>
+        ) : (
+          <div className="w-full bg-gray-50/70 border border-gray-150 rounded-xl p-3 flex flex-col gap-2 text-xs text-gray-650">
+            {/* Weather row */}
+            {weather ? (
+              <div className="flex flex-col gap-1.5 border-b border-gray-150 pb-2">
+                <div className="flex items-center justify-between text-[10px] text-gray-450 uppercase font-bold tracking-wider">
+                  <span>Conditions</span>
+                  <span className="text-[9px] font-mono text-gray-400">Open-Meteo</span>
+                </div>
+                <div className="grid grid-cols-2 gap-2 text-gray-750 font-medium">
+                  <div className="flex items-center gap-1.5">
+                    <Thermometer className="w-3.5 h-3.5 text-orange-500 flex-shrink-0" />
+                    <span>{Math.round((weather.temperature * 9) / 5 + 32)}°F</span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <Cloud className="w-3.5 h-3.5 text-blue-400 flex-shrink-0" />
+                    <span className="truncate">{weather.cloudCover}% Cover</span>
+                  </div>
+                  <div className="flex items-center gap-1.5 col-span-2">
+                    <Wind className="w-3.5 h-3.5 text-teal-500 flex-shrink-0" />
+                    <span className="truncate">{Math.round(weather.windSpeed * 0.621371)} mph ({weather.windDirection}°)</span>
+                  </div>
+                </div>
+              </div>
+            ) : null}
+
+            {/* Tide row */}
+            {closestTide ? (
+              <div className="flex flex-col gap-1.5 pt-0.5">
+                <div className="flex items-center justify-between text-[10px] text-gray-450 uppercase font-bold tracking-wider">
+                  <span>Tide Height</span>
+                  <span className="text-[9px] font-mono text-gray-400">NOAA</span>
+                </div>
+                <div className="flex items-center justify-between text-gray-750 font-medium">
+                  <div className="flex items-center gap-1.5 min-w-0">
+                    <Waves className="w-3.5 h-3.5 text-blue-500 flex-shrink-0" />
+                    <span className="text-gray-800 font-semibold">{closestTide.value.toFixed(1)} ft</span>
+                  </div>
+                  <span className={cn(
+                    "text-[10px] font-bold px-1.5 py-0.5 rounded",
+                    isTideRising ? "bg-green-50 text-green-700 border border-green-200" : "bg-blue-50 text-blue-700 border border-blue-200"
+                  )}>
+                    {isTideRising ? 'Rising' : 'Falling'}
+                  </span>
+                </div>
+                <span className="text-[9px] text-gray-400 truncate mt-0.5" title={data.tides.stationName}>
+                  {data.tides.stationName}
+                </span>
+              </div>
+            ) : (
+              <div className="text-[10px] text-gray-400 flex items-center gap-1 select-none">
+                <Waves className="w-3.5 h-3.5 text-gray-300 flex-shrink-0" />
+                <span>No predictions available</span>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
   )
 }
 
@@ -397,90 +647,17 @@ export default function TodayFlightsView({
               )}
             </div>
           ) : (
-            filteredFlights.map((flight) => {
-              return (
-                <div
-                  key={flight.id}
-                  className="group bg-white rounded-2xl border border-gray-200/80 p-5 transition-all shadow-sm hover:shadow-md flex flex-row items-stretch justify-between gap-6 relative"
-                >
-                  {/* Left Side: Content */}
-                  <div className="flex-1 flex flex-col justify-between min-w-0">
-                    <div className="space-y-1.5">
-                      {/* Header line: Title & Admin Pin */}
-                      <div className="flex items-center gap-1.5 flex-wrap">
-                        <Link
-                          href={`/projects/${projectId}/flight-plans/${flight.flightPlanId}/flights`}
-                          className="text-base font-bold text-gray-900 hover:text-blue-600 transition-colors leading-tight"
-                        >
-                          {flight.flightPlanName}
-                        </Link>
-                        {isAdmin && (
-                          <button
-                            onClick={() => handleToggleHighlight(flight.id)}
-                            className={cn(
-                              "p-1 rounded transition-colors cursor-pointer",
-                              currentHighlightIds.includes(flight.id)
-                                ? "text-blue-600 bg-blue-50 hover:bg-blue-100 hover:text-blue-700"
-                                : "text-gray-400 hover:text-blue-600 hover:bg-gray-50"
-                            )}
-                            title={currentHighlightIds.includes(flight.id) ? "Clear Highlight" : "Highlight this flight at top"}
-                          >
-                            <Pin className={cn("w-3.5 h-3.5", currentHighlightIds.includes(flight.id) && "fill-blue-600")} />
-                          </button>
-                        )}
-                      </div>
-
-                      {/* Metadata Row */}
-                      <div className="flex flex-wrap items-center gap-x-2 text-xs text-gray-500 font-medium">
-                        <span>{formatTimeOnly(flight.timestamp, timezone)} local time</span>
-                        <span>•</span>
-                        <span>{flight.imageCount} images</span>
-                        <span>•</span>
-                        <StatusBadge status={flight.taskStatus} imageCount={flight.imageCount} />
-                      </div>
-
-                      {/* Flight Notes */}
-                      {flight.notes && (
-                        <p className="text-xs text-gray-550 pt-1 leading-relaxed line-clamp-2" title={flight.notes}>
-                          {flight.notes}
-                        </p>
-                      )}
-                    </div>
-
-                    {/* Open Details Action */}
-                    <div className="mt-4 flex items-center">
-                      <Link
-                        href={`/projects/${projectId}/flight-plans/${flight.flightPlanId}/flights/${flight.id}?returnTo=${encodeURIComponent(`/projects/${projectId}`)}`}
-                        className={cn(
-                          buttonVariants({ variant: 'outline', size: 'sm' }),
-                          "text-xs font-semibold gap-1.5 h-8 px-3 rounded-lg"
-                        )}
-                      >
-                        <span>Open Details</span>
-                        <ArrowRight className="w-3.5 h-3.5 text-gray-500 group-hover:translate-x-0.5 transition-transform" />
-                      </Link>
-                    </div>
-                  </div>
-
-                  {/* Right Side: Orthophoto Preview / Placeholder */}
-                  <div className="flex-shrink-0 w-28 h-28 sm:w-32 sm:h-32 relative self-center">
-                    {flight.taskStatus === 'completed' && flight.outputKey ? (
-                      <img
-                        src={`/api/tiles/preview?key=${encodeURIComponent(flight.outputKey)}&size=300`}
-                        alt={`${flight.flightPlanName} Orthophoto Preview`}
-                        className="w-full h-full object-cover rounded-xl border border-gray-200/60 bg-gray-50"
-                        loading="lazy"
-                      />
-                    ) : (
-                      <div className="w-full h-full rounded-xl border border-dashed border-gray-200 bg-gray-50/50 flex flex-col items-center justify-center text-gray-400 gap-1.5 select-none">
-                        <Layers className="w-5 h-5 text-gray-300" />
-                        <span className="text-[10px] font-medium tracking-wider uppercase text-gray-400">No Map</span>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              )
-            })
+            filteredFlights.map((flight) => (
+              <FlightCard
+                key={flight.id}
+                flight={flight}
+                projectId={projectId}
+                isAdmin={isAdmin}
+                currentHighlightIds={currentHighlightIds}
+                timezone={timezone}
+                handleToggleHighlight={handleToggleHighlight}
+              />
+            ))
           )}
         </div>
       </section>
