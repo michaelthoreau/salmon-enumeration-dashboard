@@ -110,8 +110,25 @@ export async function restoreProject(_prev: State, formData: FormData): Promise<
   if (!id) return { error: 'Project ID is required.' }
 
   await db.update(projects).set({ deletedAt: null }).where(eq(projects.id, id))
-
+  
   revalidatePath('/')
   revalidatePath(`/projects/${id}`)
   return { success: 'Project restored.' }
 }
+
+export async function highlightFlight(
+  projectId: string,
+  flightId: string | null
+): Promise<{ error?: string; success?: string }> {
+  const session = await getSession()
+  if (!session || session.role !== 'admin') return { error: 'Unauthorized.' }
+
+  await db
+    .update(projects)
+    .set({ highlightedFlightId: flightId })
+    .where(eq(projects.id, projectId))
+
+  revalidatePath(`/projects/${projectId}`)
+  return { success: flightId ? 'Flight highlighted.' : 'Flight highlight cleared.' }
+}
+

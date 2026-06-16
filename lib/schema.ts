@@ -35,6 +35,7 @@ export const projects = sqliteTable('projects', {
   name: text('name').notNull().unique(), // used in S3 path
   description: text('description'),
   timezone: text('timezone').notNull().default('America/Anchorage'), // IANA timezone name
+  highlightedFlightId: text('highlighted_flight_id'), // UUID of a flight to highlight on recent flights view
   createdBy: text('created_by').notNull(), // userId
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
   deletedAt: integer('deleted_at', { mode: 'timestamp' }), // soft delete
