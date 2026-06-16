@@ -113,12 +113,20 @@ export async function fetchTidePredictions(
     const station = await findNearestTideStation(lat, lon)
     if (!station) return null
 
-    const year = date.getUTCFullYear()
-    const month = String(date.getUTCMonth() + 1).padStart(2, '0')
-    const day = String(date.getUTCDate()).padStart(2, '0')
-    const dateStr = `${year}${month}${day}`
+    const beginDate = new Date(date.getTime() - 24 * 60 * 60 * 1000)
+    const endDate = new Date(date.getTime() + 24 * 60 * 60 * 1000)
 
-    const url = `https://api.tidesandcurrents.noaa.gov/api/prod/datagetter?begin_date=${dateStr}&end_date=${dateStr}&station=${station.id}&product=predictions&datum=MLLW&time_zone=gmt&units=english&format=json`
+    const beginYear = beginDate.getUTCFullYear()
+    const beginMonth = String(beginDate.getUTCMonth() + 1).padStart(2, '0')
+    const beginDay = String(beginDate.getUTCDate()).padStart(2, '0')
+    const beginDateStr = `${beginYear}${beginMonth}${beginDay}`
+
+    const endYear = endDate.getUTCFullYear()
+    const endMonth = String(endDate.getUTCMonth() + 1).padStart(2, '0')
+    const endDay = String(endDate.getUTCDate()).padStart(2, '0')
+    const endDateStr = `${endYear}${endMonth}${endDay}`
+
+    const url = `https://api.tidesandcurrents.noaa.gov/api/prod/datagetter?begin_date=${beginDateStr}&end_date=${endDateStr}&station=${station.id}&product=predictions&datum=MLLW&time_zone=gmt&units=english&format=json`
 
     const res = await fetch(url)
     if (!res.ok) {

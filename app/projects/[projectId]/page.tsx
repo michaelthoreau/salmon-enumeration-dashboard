@@ -65,7 +65,8 @@ export default async function ProjectTodayPage({ params }: PageProps) {
         .where(
           and(
             inArray(flights.flightPlanId, activePlanIds),
-            isNull(flights.deletedAt)
+            isNull(flights.deletedAt),
+            eq(flights.lowPriority, false)
           )
         )
         .orderBy(desc(flights.timestamp))

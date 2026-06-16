@@ -62,6 +62,7 @@ export const flights = sqliteTable('flights', {
   createdBy: text('created_by').notNull(),
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
   deletedAt: integer('deleted_at', { mode: 'timestamp' }),
+  lowPriority: integer('low_priority', { mode: 'boolean' }).notNull().default(false),
 })
 
 // ─── Files ────────────────────────────────────────────────────────────────────

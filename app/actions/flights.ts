@@ -109,6 +109,7 @@ export async function deleteFlight(_prev: State, formData: FormData): Promise<St
   await db.update(flights).set({ deletedAt: new Date() }).where(eq(flights.id, id))
 
   revalidatePath(`/projects/${projectId}/flight-plans/${flightPlanId}/flights`)
+  revalidatePath(`/projects/${projectId}`)
   return { success: 'Flight deleted.' }
 }
 
@@ -125,5 +126,24 @@ export async function restoreFlight(_prev: State, formData: FormData): Promise<S
   await db.update(flights).set({ deletedAt: null }).where(eq(flights.id, id))
 
   revalidatePath(`/projects/${projectId}/flight-plans/${flightPlanId}/flights`)
+  revalidatePath(`/projects/${projectId}`)
   return { success: 'Flight restored.' }
+}
+
+export async function setFlightPriority(_prev: State, formData: FormData): Promise<State> {
+  const session = await getSession()
+  if (!session || !canWrite(session.role)) return { error: 'Unauthorized.' }
+
+  const id = (formData.get('id') as string | null)?.trim() ?? ''
+  const projectId = (formData.get('projectId') as string | null)?.trim() ?? ''
+  const flightPlanId = (formData.get('flightPlanId') as string | null)?.trim() ?? ''
+  const lowPriority = formData.get('lowPriority') === 'true'
+
+  if (!id) return { error: 'Flight ID is required.' }
+
+  await db.update(flights).set({ lowPriority }).where(eq(flights.id, id))
+
+  revalidatePath(`/projects/${projectId}/flight-plans/${flightPlanId}/flights`)
+  revalidatePath(`/projects/${projectId}`)
+  return { success: 'Flight priority updated.' }
 }
