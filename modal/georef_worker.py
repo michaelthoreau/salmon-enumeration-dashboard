@@ -542,6 +542,8 @@ def _warp_to_geotiff(
         cmd_warp = [
             "gdalwarp",
             "-dstalpha",
+            "-srcnodata", "0",
+            "-dstnodata", "0",
             "-order", "1",
             "-r", "lanczos",
             "-t_srs", "EPSG:4326",
