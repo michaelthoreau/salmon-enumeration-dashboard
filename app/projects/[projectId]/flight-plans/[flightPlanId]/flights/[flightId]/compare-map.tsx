@@ -105,7 +105,7 @@ export default function CompareMap({
             tiles: ['https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'],
             tileSize: 256,
             attribution: 'Tiles &copy; Esri',
-            maxzoom: 19
+            maxzoom: 17
           })
 
           // Add Esri satellite layer at bottom
@@ -132,7 +132,7 @@ export default function CompareMap({
             tiles: ['https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'],
             tileSize: 256,
             attribution: 'Tiles &copy; Esri',
-            maxzoom: 19
+            maxzoom: 17
           })
 
           // Add Esri satellite layer at bottom

@@ -791,7 +791,7 @@ export default function DatasetView({ entries: initialEntries, taskCountByFileId
               <div className="px-6 py-3 border-t border-gray-800 flex items-center justify-between shrink-0 bg-gray-900 text-gray-300">
                 <div className="flex flex-wrap items-center gap-x-6 gap-y-2 text-xs text-gray-400">
                   <div>
-                    <span className="text-gray-500 font-medium">Flight Plan: </span>
+                    <span className="text-gray-500 font-medium">Flight Route: </span>
                     <span className="text-gray-300 font-medium">{activeEntry.flightPlanName}</span>
                   </div>
                   <div>

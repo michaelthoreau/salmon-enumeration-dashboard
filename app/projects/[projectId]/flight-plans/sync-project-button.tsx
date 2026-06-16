@@ -159,7 +159,7 @@ export default function SyncProjectButton({ projectId }: Props) {
 
             {/* Results Section */}
             {stage === 'completed' && results.length === 0 && !error && (
-              <p>All flight plans and flights are fully synchronized with S3. No mismatches found.</p>
+              <p>All flight routes and flights are fully synchronized with S3. No mismatches found.</p>
             )}
 
             {(results.length > 0 || (stage === 'syncing' && results.length > 0)) && (

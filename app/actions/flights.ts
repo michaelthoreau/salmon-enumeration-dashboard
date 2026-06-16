@@ -51,7 +51,7 @@ export async function createFlight(_prev: State, formData: FormData): Promise<St
   const timezone = (formData.get('timezone') as string | null)?.trim() || 'UTC'
   const notes = (formData.get('notes') as string | null)?.trim() || null
 
-  if (!flightPlanId) return { error: 'Flight plan is required.' }
+  if (!flightPlanId) return { error: 'Flight route is required.' }
   if (!timestampRaw) return { error: 'Flight timestamp is required.' }
 
   // datetime-local gives wall-clock time; interpret it in the project timezone

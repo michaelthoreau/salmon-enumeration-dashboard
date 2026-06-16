@@ -34,7 +34,7 @@ export function DeleteFlightPlanButton({
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent showCloseButton>
           <DialogHeader>
-            <DialogTitle>Delete flight plan?</DialogTitle>
+            <DialogTitle>Delete flight route?</DialogTitle>
           </DialogHeader>
           <p className="text-sm text-gray-600">Are you sure you want to delete <strong>{plan.displayName || plan.name}</strong>?</p>
           {state?.error && <p className="text-sm text-destructive">{state.error}</p>}
@@ -115,7 +115,7 @@ export function EditFlightPlanButton({
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent showCloseButton>
           <DialogHeader>
-            <DialogTitle>Edit flight plan</DialogTitle>
+            <DialogTitle>Edit flight route</DialogTitle>
           </DialogHeader>
 
           <form action={action} className="flex flex-col gap-4 py-2">

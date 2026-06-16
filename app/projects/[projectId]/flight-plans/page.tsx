@@ -37,7 +37,7 @@ export default async function FlightPlansPage({ params }: PageProps) {
       <section>
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-lg font-semibold text-gray-900">
-            Flight plans{' '}
+            Flight routes{' '}
             <span className="text-sm font-normal text-gray-500">({active.length})</span>
           </h2>
           <div className="flex items-center gap-2">
@@ -47,7 +47,7 @@ export default async function FlightPlansPage({ params }: PageProps) {
         </div>
         <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
           {active.length === 0 ? (
-            <p className="text-sm text-gray-500 p-6">No flight plans yet.</p>
+            <p className="text-sm text-gray-500 p-6">No flight routes yet.</p>
           ) : (
             <table className="w-full text-sm">
               <thead className="bg-gray-50 border-b border-gray-200">

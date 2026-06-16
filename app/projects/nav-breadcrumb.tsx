@@ -22,7 +22,7 @@ const SEGMENTS = [
     crumbs: (m: RegExpMatchArray) => [
       { label: 'Projects', href: '/projects' },
       { label: prettify(m[1]), href: `/projects/${m[1]}` },
-      { label: 'Flight Plans', href: null },
+      { label: 'Flight Routes', href: null },
     ],
   },
   {
@@ -30,7 +30,7 @@ const SEGMENTS = [
     crumbs: (m: RegExpMatchArray) => [
       { label: 'Projects', href: '/projects' },
       { label: prettify(m[1]), href: `/projects/${m[1]}` },
-      { label: 'Flight Plans', href: `/projects/${m[1]}/flight-plans` },
+      { label: 'Flight Routes', href: `/projects/${m[1]}/flight-plans` },
       { label: prettify(m[2]), href: `/projects/${m[1]}/flight-plans/${m[2]}/flights` },
     ],
   },
@@ -64,7 +64,7 @@ const SEGMENTS = [
     crumbs: (m: RegExpMatchArray) => [
       { label: 'Projects', href: '/projects' },
       { label: prettify(m[1]), href: `/projects/${m[1]}` },
-      { label: 'Flight Plans', href: `/projects/${m[1]}/flight-plans` },
+      { label: 'Flight Routes', href: `/projects/${m[1]}/flight-plans` },
       { label: prettify(m[2]), href: `/projects/${m[1]}/flight-plans/${m[2]}/flights` },
       { label: 'Flight', href: null },
     ],

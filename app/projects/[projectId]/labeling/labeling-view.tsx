@@ -562,7 +562,7 @@ export default function LabelingView({ projectId, tasks: initialTasks, queues: i
                     </th>
                   )}
                   <th className="text-left px-4 py-3 font-medium text-gray-600">File</th>
-                  <th className="text-left px-4 py-3 font-medium text-gray-600">Flight plan</th>
+                  <th className="text-left px-4 py-3 font-medium text-gray-600">Flight route</th>
                   <th className="text-left px-4 py-3 font-medium text-gray-600">Queue</th>
                   <th className="text-right px-4 py-3 font-medium text-gray-600">Points</th>
                   <th className="text-center px-4 py-3 font-medium text-gray-600">Status</th>

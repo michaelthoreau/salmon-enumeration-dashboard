@@ -21,7 +21,7 @@ interface Props {
 const TABS = [
   { label: 'Today',     href: (id: string) => `/projects/${id}`,             match: (p: string, id: string) => p === `/projects/${id}` },
   { label: 'Dashboard', href: (id: string) => `/projects/${id}/dashboard`,   match: (p: string, id: string) => p.startsWith(`/projects/${id}/dashboard`) },
-  { label: 'Flight plans',  href: (id: string) => `/projects/${id}/flight-plans`, match: (p: string, id: string) => p.startsWith(`/projects/${id}/flight-plans`) },
+  { label: 'Flight routes',  href: (id: string) => `/projects/${id}/flight-plans`, match: (p: string, id: string) => p.startsWith(`/projects/${id}/flight-plans`) },
   { label: 'Dataset',  href: (id: string) => `/projects/${id}/dataset`,       match: (p: string, id: string) => p.startsWith(`/projects/${id}/dataset`) },
   { label: 'Labeling', href: (id: string) => `/projects/${id}/labeling`,      match: (p: string, id: string) => p.startsWith(`/projects/${id}/labeling`) },
 ]

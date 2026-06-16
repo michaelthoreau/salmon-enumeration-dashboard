@@ -222,7 +222,7 @@ export default function FlightsView({
           <Link
             href={from === 'list' ? `/projects/${projectId}/flight-plans` : `/projects/${projectId}`}
             className="p-1 hover:bg-gray-100 rounded-md transition-colors text-gray-500 hover:text-gray-900 mt-0.5 flex-shrink-0"
-            title={from === 'list' ? 'Back to flight plans' : 'Back to project dashboard'}
+            title={from === 'list' ? 'Back to flight routes' : 'Back to project dashboard'}
           >
             <ArrowLeft className="w-5 h-5" />
           </Link>

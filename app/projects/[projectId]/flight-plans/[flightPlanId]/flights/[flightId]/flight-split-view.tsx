@@ -819,7 +819,7 @@ export default function FlightSplitView({
               <div>
                 <p className="font-semibold">Environmental Data Unavailable</p>
                 <p className="text-amber-700/80 dark:text-amber-400/80 mt-0.5 leading-relaxed">
-                  To load local weather conditions and NOAA tide predictions, please set a geographic boundary/point on the parent <strong>Flight Plan</strong>, or upload flight images containing embedded GPS metadata.
+                  To load local weather conditions and NOAA tide predictions, please set a geographic boundary/point on the parent <strong>Flight Route</strong>, or upload flight images containing embedded GPS metadata.
                 </p>
               </div>
             </div>
