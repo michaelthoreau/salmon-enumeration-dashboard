@@ -1,12 +1,15 @@
 'use client'
 
 import Link from 'next/link'
-import { usePathname } from 'next/navigation'
-import { useState, useRef, useEffect } from 'react'
-import { ChevronDownIcon } from 'lucide-react'
+import { usePathname, useRouter } from 'next/navigation'
+import { useState, useRef, useEffect, useTransition } from 'react'
+import { ChevronDownIcon, RefreshCw, Check } from 'lucide-react'
 import { EditProjectButton } from '@/app/projects/project-actions'
 import type { projects } from '@/lib/schema'
 import type { InferSelectModel } from 'drizzle-orm'
+import { Button } from '@/components/ui/button'
+import { syncProjectActiveTasks } from '@/app/actions/projects'
+
 
 type Project = InferSelectModel<typeof projects>
 
@@ -28,8 +31,22 @@ const TABS = [
 
 export default function ProjectNav({ projectId, projectName, projectDescription, isAdmin, project }: Props) {
   const pathname = usePathname()
+  const router = useRouter()
+  const [isPending, startTransition] = useTransition()
+  const [syncSuccess, setSyncSuccess] = useState(false)
   const [open, setOpen] = useState(false)
   const dropdownRef = useRef<HTMLDivElement>(null)
+
+  const handleRefresh = () => {
+    startTransition(async () => {
+      const res = await syncProjectActiveTasks(projectId)
+      if (res?.success) {
+        setSyncSuccess(true)
+        setTimeout(() => setSyncSuccess(false), 2000)
+        router.refresh()
+      }
+    })
+  }
 
   useEffect(() => {
     if (!open) return
@@ -96,6 +113,31 @@ export default function ProjectNav({ projectId, projectName, projectDescription,
             )
           })}
         </nav>
+
+        <div className="ml-auto flex items-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleRefresh}
+            disabled={isPending}
+            className={`flex items-center gap-1.5 transition-all text-xs font-semibold px-2.5 h-7 rounded-md border ${
+              syncSuccess
+                ? 'border-green-200 bg-green-50/70 text-green-700 hover:bg-green-50/70 hover:text-green-700'
+                : 'border-gray-200 bg-white text-gray-600 hover:bg-gray-50 hover:text-gray-900 active:bg-gray-100'
+            }`}
+          >
+            {syncSuccess ? (
+              <Check className="w-3.5 h-3.5 text-green-600 stroke-[3px]" />
+            ) : (
+              <RefreshCw
+                className={`w-3.5 h-3.5 text-gray-400 transition-transform ${
+                  isPending ? 'animate-spin' : ''
+                }`}
+              />
+            )}
+            <span>{syncSuccess ? 'Synced' : isPending ? 'Refreshing...' : 'Refresh'}</span>
+          </Button>
+        </div>
 
       </div>
     </div>

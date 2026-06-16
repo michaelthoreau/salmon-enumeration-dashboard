@@ -1,0 +1,1 @@
+ALTER TABLE `projects` ADD `highlighted_flight_id` text;
