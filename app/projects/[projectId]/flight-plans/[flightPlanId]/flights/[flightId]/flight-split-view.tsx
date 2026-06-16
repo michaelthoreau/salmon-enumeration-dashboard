@@ -485,10 +485,16 @@ export default function FlightSplitView({
                 <ArrowLeft className="w-5 h-5" />
               </Link>
               <div>
-                <h1 className="text-xl font-semibold text-gray-900 leading-tight">
-                  {formattedTime}
+                <span className="text-[10px] font-bold uppercase tracking-wider text-blue-600 block mb-0.5 select-none">
+                  Flight Route
+                </span>
+                <h1 className="text-lg font-bold text-gray-900 leading-snug">
+                  {flightPlan.displayName || flightPlan.name}
                 </h1>
-                <p className="text-[10px] text-gray-400 mt-1 font-mono">
+                <p className="text-sm font-medium text-gray-500 mt-1">
+                  {formattedTime}
+                </p>
+                <p className="text-[10px] text-gray-400 mt-0.5 font-mono">
                   {flight.timestamp.toISOString()}
                 </p>
                 {flight.notes && <p className="text-sm text-gray-500 mt-2">{flight.notes}</p>}
