@@ -201,7 +201,7 @@ def web() -> FastAPI:
                 odm_url("/task/new/init"),
                 data={
                     "name": req.task_name,
-                    "options": '[{"name":"cog","value":true},{"name":"fast-orthophoto","value":true},{"name":"skip-3dmodel","value":true},{"name":"orthophoto-resolution","value":1.0}]',
+                    "options": '[{"name":"cog","value":true},{"name":"fast-orthophoto","value":true},{"name":"skip-3dmodel","value":true},{"name":"orthophoto-resolution","value":1.0},{"name":"crop","value":0}]',
                     "outputs": '["odm_orthophoto/odm_orthophoto.tif","odm_report/report.pdf"]',
                 },
             )
