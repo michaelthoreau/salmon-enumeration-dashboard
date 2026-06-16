@@ -2,10 +2,12 @@
 
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
-import { ChevronLeft, ChevronRight, Calendar, Layers, ArrowRight, CheckCircle2, AlertCircle, Sparkles, Pin, PinOff, Thermometer, Wind, Cloud, Waves } from 'lucide-react'
+import { useRouter } from 'next/navigation'
+import { ChevronLeft, ChevronRight, Calendar, Layers, ArrowRight, CheckCircle2, AlertCircle, Sparkles, Pin, PinOff, EyeOff, Thermometer, Wind, Cloud, Waves } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { buttonVariants } from '@/components/ui/button'
 import { highlightFlight } from '@/app/actions/projects'
+import { setFlightPriority } from '@/app/actions/flights'
 
 
 interface FlightRow {
@@ -117,6 +119,7 @@ interface FlightCardProps {
   currentHighlightIds: string[]
   timezone: string
   handleToggleHighlight: (id: string) => void
+  handleHideFlight: (id: string, flightPlanId: string) => void
 }
 
 function FlightCard({
@@ -126,6 +129,7 @@ function FlightCard({
   currentHighlightIds,
   timezone,
   handleToggleHighlight,
+  handleHideFlight,
 }: FlightCardProps) {
   const [data, setData] = useState<{ weather: any; tides: any } | null>(null)
   const [loading, setLoading] = useState(false)
@@ -193,6 +197,136 @@ function FlightCard({
     }
   }
 
+  // Helper to compute Tide SVG path parameters and last peak time
+  const getTideSvgData = (predictionsList: any[], width: number, height: number, padX: number, padY: number) => {
+    if (!predictionsList || predictionsList.length === 0) return null
+
+    // Find all extrema across the entire predictions list to determine previous tide events
+    const allExtrema: { type: 'high' | 'low'; time: Date; value: number }[] = []
+    for (let i = 1; i < predictionsList.length - 1; i++) {
+      const prev = predictionsList[i - 1].value
+      const curr = predictionsList[i].value
+      const next = predictionsList[i + 1].value
+      if (curr > prev && curr > next) {
+        allExtrema.push({ type: 'high', time: new Date(predictionsList[i].time), value: curr })
+      } else if (curr < prev && curr < next) {
+        allExtrema.push({ type: 'low', time: new Date(predictionsList[i].time), value: curr })
+      }
+    }
+
+    const flightTimeMs = new Date(flight.timestamp).getTime()
+
+    // Find the most recent extrema before the flight timestamp
+    const pastExtrema = allExtrema
+      .filter((e) => e.time.getTime() < flightTimeMs)
+      .sort((a, b) => b.time.getTime() - a.time.getTime())
+
+    const lastExtrema = pastExtrema[0]
+    let lastPeakText = ''
+    if (lastExtrema) {
+      const diffMs = flightTimeMs - lastExtrema.time.getTime()
+      const diffHrs = Math.floor(diffMs / (1000 * 60 * 60))
+      const diffMins = Math.floor((diffMs % (1000 * 60 * 60)) / (1000 * 60))
+      const typeText = lastExtrema.type === 'high' ? 'high tide' : 'low tide'
+      lastPeakText = `${diffHrs}h ${diffMins}m since last ${typeText} (${lastExtrema.value.toFixed(1)} ft)`
+    } else {
+      lastPeakText = 'No previous peaks found'
+    }
+
+    // Filter predictions to a 24-hour window centered on the flight (-12h to +12h)
+    const startWindowMs = flightTimeMs - 12 * 60 * 60 * 1000
+    const endWindowMs = flightTimeMs + 12 * 60 * 60 * 1000
+    const windowPredictions = predictionsList.filter((p: any) => {
+      const t = new Date(p.time).getTime()
+      return t >= startWindowMs && t <= endWindowMs
+    })
+
+    if (windowPredictions.length === 0) {
+      return {
+        pathD: '',
+        fillD: '',
+        dotX: 0,
+        dotY: 0,
+        closestValue: 0,
+        isRising: false,
+        scaleY0: 0,
+        minVal: 0,
+        maxVal: 0,
+        highsLows: [],
+        lastPeakText,
+      }
+    }
+
+    const values = windowPredictions.map((p) => p.value)
+    const minVal = Math.min(...values)
+    const maxVal = Math.max(...values)
+    const valRange = maxVal - minVal || 1
+
+    const scaleX = (idx: number) => padX + (idx / (windowPredictions.length - 1)) * (width - 2 * padX)
+    const scaleY = (val: number) => {
+      const pct = (val - minVal) / valRange
+      return height - padY - pct * (height - 2 * padY)
+    }
+
+    // Build curve path
+    const points = windowPredictions.map((p, idx) => `${scaleX(idx).toFixed(1)},${scaleY(p.value).toFixed(1)}`)
+    const pathD = `M ${points.join(' L ')}`
+    const fillD = `${pathD} L ${scaleX(windowPredictions.length - 1).toFixed(1)},${height} L ${scaleX(0).toFixed(1)},${height} Z`
+
+    // Find closest prediction inside the 24h window
+    let closestIdx = 0
+    let minDiff = Infinity
+    windowPredictions.forEach((p, idx) => {
+      const diff = Math.abs(new Date(p.time).getTime() - flightTimeMs)
+      if (diff < minDiff) {
+        minDiff = diff
+        closestIdx = idx
+      }
+    })
+
+    const closestPred = windowPredictions[closestIdx]
+    const dotX = scaleX(closestIdx)
+    const dotY = scaleY(closestPred.value)
+
+    // Determine tide direction (rising or falling)
+    let isRising = false
+    if (closestIdx < windowPredictions.length - 1) {
+      isRising = windowPredictions[closestIdx + 1].value > closestPred.value
+    } else if (closestIdx > 0) {
+      isRising = closestPred.value > windowPredictions[closestIdx - 1].value
+    }
+
+    // Local highs/lows inside the 24-hour window
+    const windowHighsLows: { type: 'high' | 'low'; x: number; y: number; val: number }[] = []
+    for (let i = 1; i < windowPredictions.length - 1; i++) {
+      const prev = windowPredictions[i - 1].value
+      const curr = windowPredictions[i].value
+      const next = windowPredictions[i + 1].value
+      if (curr > prev && curr > next) {
+        windowHighsLows.push({ type: 'high', x: scaleX(i), y: scaleY(curr), val: curr })
+      } else if (curr < prev && curr < next) {
+        windowHighsLows.push({ type: 'low', x: scaleX(i), y: scaleY(curr), val: curr })
+      }
+    }
+
+    return {
+      pathD,
+      fillD,
+      dotX,
+      dotY,
+      closestValue: closestPred.value,
+      isRising,
+      scaleY0: scaleY(0),
+      minVal,
+      maxVal,
+      highsLows: windowHighsLows,
+      lastPeakText,
+    }
+  }
+
+  const predictions = data?.tides?.predictions || []
+  const tideSvg = predictions.length > 0 ? getTideSvgData(predictions, 350, 80, 15, 15) : null
+
   const weather = data?.weather
 
   return (
@@ -209,18 +343,27 @@ function FlightCard({
               {flight.flightPlanName}
             </Link>
             {isAdmin && (
-              <button
-                onClick={() => handleToggleHighlight(flight.id)}
-                className={cn(
-                  "p-1 rounded transition-colors cursor-pointer",
-                  currentHighlightIds.includes(flight.id)
-                    ? "text-blue-600 bg-blue-50 hover:bg-blue-100 hover:text-blue-700"
-                    : "text-gray-400 hover:text-blue-600 hover:bg-gray-50"
-                )}
-                title={currentHighlightIds.includes(flight.id) ? "Clear Highlight" : "Highlight this flight at top"}
-              >
-                <Pin className={cn("w-3.5 h-3.5", currentHighlightIds.includes(flight.id) && "fill-blue-600")} />
-              </button>
+              <div className="flex items-center gap-1">
+                <button
+                  onClick={() => handleToggleHighlight(flight.id)}
+                  className={cn(
+                    "p-1 rounded transition-colors cursor-pointer",
+                    currentHighlightIds.includes(flight.id)
+                      ? "text-blue-600 bg-blue-50 hover:bg-blue-100 hover:text-blue-700"
+                      : "text-gray-400 hover:text-blue-600 hover:bg-gray-50"
+                  )}
+                  title={currentHighlightIds.includes(flight.id) ? "Clear Highlight" : "Highlight this flight at top"}
+                >
+                  <Pin className={cn("w-3.5 h-3.5", currentHighlightIds.includes(flight.id) && "fill-blue-600")} />
+                </button>
+                <button
+                  onClick={() => handleHideFlight(flight.id, flight.flightPlanId)}
+                  className="p-1 rounded text-gray-400 hover:text-red-600 hover:bg-gray-55 transition-colors cursor-pointer"
+                  title="Hide flight from recents permanently"
+                >
+                  <EyeOff className="w-3.5 h-3.5" />
+                </button>
+              </div>
             )}
           </div>
 
@@ -255,76 +398,157 @@ function FlightCard({
           </Link>
         </div>
       </div>
-
-      {/* Right Side: Weather and Tides Info Card */}
-      <div className="md:w-72 flex-shrink-0 flex items-center">
+      {/* Right Side: Weather and Tides Info Card with SVG Graph */}
+      <div className="md:w-[28rem] flex-shrink-0 flex items-center">
         {loading ? (
-          <div className="w-full p-4 rounded-xl border border-gray-150 bg-gray-55/5 flex flex-col gap-2.5 animate-pulse">
-            <div className="h-3.5 bg-gray-205 rounded w-1/2"></div>
-            <div className="grid grid-cols-2 gap-2">
-              <div className="h-7 bg-gray-205 rounded"></div>
-              <div className="h-7 bg-gray-205 rounded"></div>
+          <div className="w-full p-4 rounded-xl border border-gray-150 bg-gray-55/5 flex flex-col gap-3 animate-pulse">
+            <div className="h-4 bg-gray-205 rounded w-1/3"></div>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="h-10 bg-gray-205 rounded"></div>
+              <div className="h-10 bg-gray-205 rounded"></div>
             </div>
+            <div className="h-14 bg-gray-205 rounded w-full"></div>
           </div>
         ) : error || !data ? (
-          <div className="w-full py-4 px-4 rounded-xl border border-gray-155 bg-red-50/20 flex flex-col items-center justify-center text-center text-red-700/60 gap-0.5 select-none">
-            <AlertCircle className="w-4 h-4 text-red-400" />
-            <span className="text-[10px] font-bold uppercase">Unavailable</span>
+          <div className="w-full py-6 px-4 rounded-xl border border-gray-155 bg-red-50/20 flex flex-col items-center justify-center text-center text-red-700/60 gap-1 select-none">
+            <AlertCircle className="w-5 h-5 text-red-400" />
+            <span className="text-[10px] font-bold uppercase tracking-wider">Unavailable</span>
             <span className="text-[9px] text-red-500/50">Error fetching weather/tides</span>
           </div>
         ) : (
-          <div className="w-full bg-gray-50/70 border border-gray-150 rounded-xl p-3 flex flex-col gap-2 text-xs text-gray-650">
-            {/* Weather row */}
-            {weather ? (
-              <div className="flex flex-col gap-1.5 border-b border-gray-150 pb-2">
-                <div className="flex items-center justify-between text-[10px] text-gray-450 uppercase font-bold tracking-wider">
-                  <span>Conditions</span>
-                  <span className="text-[9px] font-mono text-gray-400">Open-Meteo</span>
+          <div className="w-full bg-gray-50/70 border border-gray-150 rounded-xl p-3.5 flex flex-col gap-3.5 text-xs text-gray-655">
+            {/* Grid for weather conditions & tide text metrics */}
+            <div className="grid grid-cols-2 gap-4">
+              {/* Weather info */}
+              {weather ? (
+                <div className="flex flex-col gap-1.5 min-w-0">
+                  <div className="flex items-center justify-between text-[9px] text-gray-450 uppercase font-bold tracking-wider">
+                    <span>Conditions</span>
+                    <span className="text-[8px] font-mono text-gray-400">Open-Meteo</span>
+                  </div>
+                  <div className="flex flex-col gap-1.5 text-gray-750 font-medium pt-0.5">
+                    <div className="flex items-center gap-1.5">
+                      <Thermometer className="w-3.5 h-3.5 text-orange-500 flex-shrink-0" />
+                      <span className="truncate">{Math.round((weather.temperature * 9) / 5 + 32)}°F</span>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <Cloud className="w-3.5 h-3.5 text-blue-400 flex-shrink-0" />
+                      <span className="truncate">{weather.cloudCover}% Cover</span>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <Wind className="w-3.5 h-3.5 text-teal-500 flex-shrink-0" />
+                      <span className="truncate">{Math.round(weather.windSpeed * 0.621371)} mph ({weather.windDirection}°)</span>
+                    </div>
+                  </div>
                 </div>
-                <div className="grid grid-cols-2 gap-2 text-gray-750 font-medium">
-                  <div className="flex items-center gap-1.5">
-                    <Thermometer className="w-3.5 h-3.5 text-orange-500 flex-shrink-0" />
-                    <span>{Math.round((weather.temperature * 9) / 5 + 32)}°F</span>
-                  </div>
-                  <div className="flex items-center gap-1.5">
-                    <Cloud className="w-3.5 h-3.5 text-blue-400 flex-shrink-0" />
-                    <span className="truncate">{weather.cloudCover}% Cover</span>
-                  </div>
-                  <div className="flex items-center gap-1.5 col-span-2">
-                    <Wind className="w-3.5 h-3.5 text-teal-500 flex-shrink-0" />
-                    <span className="truncate">{Math.round(weather.windSpeed * 0.621371)} mph ({weather.windDirection}°)</span>
-                  </div>
+              ) : (
+                <div className="text-[10px] text-gray-400 flex items-center gap-1 select-none">
+                  <span>No weather data</span>
                 </div>
-              </div>
-            ) : null}
+              )}
 
-            {/* Tide row */}
-            {closestTide ? (
-              <div className="flex flex-col gap-1.5 pt-0.5">
-                <div className="flex items-center justify-between text-[10px] text-gray-450 uppercase font-bold tracking-wider">
-                  <span>Tide Height</span>
-                  <span className="text-[9px] font-mono text-gray-400">NOAA</span>
-                </div>
-                <div className="flex items-center justify-between text-gray-750 font-medium">
-                  <div className="flex items-center gap-1.5 min-w-0">
-                    <Waves className="w-3.5 h-3.5 text-blue-500 flex-shrink-0" />
-                    <span className="text-gray-800 font-semibold">{closestTide.value.toFixed(1)} ft</span>
+              {/* Tides text metrics */}
+              {closestTide ? (
+                <div className="flex flex-col gap-1.5 min-w-0">
+                  <div className="flex items-center justify-between text-[9px] text-gray-455 uppercase font-bold tracking-wider">
+                    <span>Tide</span>
+                    <span className="text-[8px] font-mono text-gray-400">NOAA</span>
                   </div>
-                  <span className={cn(
-                    "text-[10px] font-bold px-1.5 py-0.5 rounded",
-                    isTideRising ? "bg-green-50 text-green-700 border border-green-200" : "bg-blue-50 text-blue-700 border border-blue-200"
-                  )}>
-                    {isTideRising ? 'Rising' : 'Falling'}
-                  </span>
+                  <div className="flex flex-col gap-1 text-gray-750 font-medium pt-0.5">
+                    <div className="flex items-center gap-1.5">
+                      <Waves className="w-3.5 h-3.5 text-blue-500 flex-shrink-0" />
+                      <span className="font-bold text-gray-800">{closestTide.value.toFixed(1)} ft</span>
+                    </div>
+                    <div>
+                      <span className={cn(
+                        "text-[9px] font-bold px-1.5 py-0.5 rounded uppercase tracking-wider",
+                        tideSvg?.isRising ? "bg-green-50 text-green-700 border border-green-200" : "bg-blue-50 text-blue-700 border border-blue-200"
+                      )}>
+                        {tideSvg?.isRising ? 'Rising' : 'Falling'}
+                      </span>
+                    </div>
+                    <span className="text-[9px] text-gray-400 truncate mt-1 animate-in fade-in" title={data.tides.stationName}>
+                      {data.tides.stationName}
+                    </span>
+                    {tideSvg?.lastPeakText && (
+                      <span className="text-[9px] text-blue-800 font-semibold block leading-tight mt-1">
+                        {tideSvg.lastPeakText}
+                      </span>
+                    )}
+                  </div>
                 </div>
-                <span className="text-[9px] text-gray-400 truncate mt-0.5" title={data.tides.stationName}>
-                  {data.tides.stationName}
-                </span>
-              </div>
-            ) : (
-              <div className="text-[10px] text-gray-400 flex items-center gap-1 select-none">
-                <Waves className="w-3.5 h-3.5 text-gray-300 flex-shrink-0" />
-                <span>No predictions available</span>
+              ) : (
+                <div className="text-[10px] text-gray-400 flex items-center gap-1 select-none">
+                  <span>No tide station data</span>
+                </div>
+              )}
+            </div>
+
+            {/* Tide SVG Graph */}
+            {tideSvg && tideSvg.pathD && (
+              <div className="relative pt-1 w-full border-t border-gray-150/60 pt-2 flex flex-col gap-1">
+                <span className="text-[9px] text-gray-455 font-semibold uppercase tracking-wider">Tide Curve (24h centered)</span>
+                <svg viewBox="0 0 350 80" className="w-full h-16 overflow-visible mt-0.5">
+                  <defs>
+                    <linearGradient id={`tide-gradient-${flight.id}`} x1="0%" y1="0%" x2="0%" y2="100%">
+                      <stop offset="0%" stopColor="#3b82f6" stopOpacity="0.18" />
+                      <stop offset="100%" stopColor="#3b82f6" stopOpacity="0.01" />
+                    </linearGradient>
+                  </defs>
+
+                  {/* 0.0 MLLW reference line */}
+                  {tideSvg.minVal < 0 && tideSvg.maxVal > 0 && (
+                    <line
+                      x1="0"
+                      y1={tideSvg.scaleY0}
+                      x2="350"
+                      y2={tideSvg.scaleY0}
+                      stroke="#cbd5e1"
+                      strokeDasharray="2,2"
+                      strokeWidth="1"
+                    />
+                  )}
+
+                  {/* Wave Fill Area */}
+                  <path d={tideSvg.fillD} fill={`url(#tide-gradient-${flight.id})`} />
+
+                  {/* Wave Curve */}
+                  <path
+                    d={tideSvg.pathD}
+                    fill="none"
+                    stroke="#3b82f6"
+                    strokeWidth="1.5"
+                    strokeLinecap="round"
+                  />
+
+                  {/* Highs and Lows Labels */}
+                  {tideSvg.highsLows.map((hl, idx) => (
+                    <g key={idx}>
+                      <circle cx={hl.x} cy={hl.y} r="2.5" fill={hl.type === 'high' ? '#3b82f6' : '#64748b'} />
+                      <text
+                        x={hl.x}
+                        y={hl.type === 'high' ? hl.y - 6 : hl.y + 10}
+                        textAnchor="middle"
+                        fontSize="9"
+                        fontWeight="700"
+                        fill={hl.type === 'high' ? '#1d4ed8' : '#334155'}
+                        className="select-none font-sans"
+                      >
+                        {hl.type === 'high' ? 'H' : 'L'}: {hl.val.toFixed(1)}ft
+                      </text>
+                    </g>
+                  ))}
+
+                  {/* Active Indicator Dot */}
+                  <circle
+                    cx={tideSvg.dotX}
+                    cy={tideSvg.dotY}
+                    r="4"
+                    fill="#ef4444"
+                    stroke="#ffffff"
+                    strokeWidth="1.5"
+                  />
+                </svg>
               </div>
             )}
           </div>
@@ -352,6 +576,28 @@ export default function TodayFlightsView({
   const [currentHighlightIds, setCurrentHighlightIds] = useState<string[]>(
     highlightedFlightId ? highlightedFlightId.split(',').filter(Boolean) : []
   )
+  const router = useRouter()
+
+  const handleHideFlight = async (flightId: string, flightPlanId: string) => {
+    if (!confirm('Are you sure you want to permanently hide this flight from the recents view?')) return
+
+    const formData = new FormData()
+    formData.append('id', flightId)
+    formData.append('projectId', projectId)
+    formData.append('flightPlanId', flightPlanId)
+    formData.append('lowPriority', 'true')
+
+    try {
+      const res = await setFlightPriority(null, formData)
+      if (res?.error) {
+        alert(res.error)
+      } else {
+        router.refresh()
+      }
+    } catch (err) {
+      alert('Failed to hide flight: ' + String(err))
+    }
+  }
 
   useEffect(() => {
     setCurrentHighlightIds(
@@ -630,6 +876,7 @@ export default function TodayFlightsView({
                 currentHighlightIds={currentHighlightIds}
                 timezone={timezone}
                 handleToggleHighlight={handleToggleHighlight}
+                handleHideFlight={handleHideFlight}
               />
             ))
           )}
