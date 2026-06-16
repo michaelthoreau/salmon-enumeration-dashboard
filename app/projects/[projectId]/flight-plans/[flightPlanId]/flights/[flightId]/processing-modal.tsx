@@ -557,6 +557,7 @@ export default function ProcessingModal({
                       <option value="1">Use all images (1/1)</option>
                       <option value="2">Use 1 every 2 images (1/2)</option>
                       <option value="3">Use 1 every 3 images (1/3)</option>
+                      <option value="4">Use 1 every 4 images (1/4)</option>
                       <option value="5">Use 1 every 5 images (1/5)</option>
                       <option value="10">Use 1 every 10 images (1/10)</option>
                     </select>
