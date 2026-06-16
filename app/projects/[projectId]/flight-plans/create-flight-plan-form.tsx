@@ -24,13 +24,13 @@ export default function CreateFlightPlanForm({ projectId }: { projectId: string 
   return (
     <>
       <Button variant="outline" size="sm" onClick={() => setOpen(true)}>
-        New flight plan
+        New flight route
       </Button>
 
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent showCloseButton>
           <DialogHeader>
-            <DialogTitle>New flight plan</DialogTitle>
+            <DialogTitle>New flight route</DialogTitle>
           </DialogHeader>
 
           <form action={action} className="flex flex-col gap-4 py-2">

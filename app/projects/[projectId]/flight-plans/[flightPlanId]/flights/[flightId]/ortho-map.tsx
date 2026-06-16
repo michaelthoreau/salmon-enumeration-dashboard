@@ -194,7 +194,7 @@ export default function OrthoMap({
             tiles: ['https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'],
             tileSize: 256,
             attribution: 'Tiles &copy; Esri',
-            maxzoom: 19
+            maxzoom: 17
           })
 
           // Add Esri satellite layer at bottom
@@ -525,7 +525,7 @@ export default function OrthoMap({
     const map = mapRef.current
     map.resize()
 
-    // 1. Check if we have initialLocation (flight plan pin/polygon)
+    // 1. Check if we have initialLocation (flight route pin/polygon)
     if (initialLocation) {
       try {
         const geo = JSON.parse(initialLocation)
@@ -715,7 +715,7 @@ export default function OrthoMap({
   }
 
   async function handleClearSaved() {
-    if (!confirm('Are you sure you want to clear the location for this flight plan?')) return
+    if (!confirm('Are you sure you want to clear the location for this flight route?')) return
     setIsSaving(true)
     try {
       if (onSaveLocation) {
@@ -823,7 +823,7 @@ export default function OrthoMap({
               onClick={() => setPanelOpen(true)}
             >
               <MapPin className="w-4 h-4 text-blue-600" />
-              <span>Flight Plan Location</span>
+              <span>Flight Route Location</span>
               <ChevronDown className="w-3.5 h-3.5 text-gray-500 ml-0.5" />
             </Button>
           ) : (
@@ -832,7 +832,7 @@ export default function OrthoMap({
                 <div className="space-y-2.5">
                   <div className="flex items-center justify-between pb-1.5 border-b border-gray-100">
                     <p className="text-xs font-semibold text-gray-700 select-none">
-                      Flight Plan Location
+                      Flight Route Location
                     </p>
                     <button
                       onClick={() => setPanelOpen(false)}

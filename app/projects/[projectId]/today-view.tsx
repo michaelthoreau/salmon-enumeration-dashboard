@@ -31,13 +31,14 @@ interface Props {
   isAdmin: boolean
 }
 
-function getLocalDateStr(date: Date, tz: string): string {
+function getLocalDateStr(date: Date | string, tz: string): string {
+  const dObj = typeof date === 'string' ? new Date(date) : date
   const parts = new Intl.DateTimeFormat('en-US', {
     timeZone: tz,
     year: 'numeric',
     month: '2-digit',
     day: '2-digit',
-  }).formatToParts(date)
+  }).formatToParts(dObj)
   const y = parts.find((p) => p.type === 'year')!.value
   const m = parts.find((p) => p.type === 'month')!.value
   const d = parts.find((p) => p.type === 'day')!.value
@@ -163,10 +164,19 @@ export default function TodayFlightsView({
   const mapRef = useRef<any | null>(null)
   const [mapReady, setMapReady] = useState(false)
 
-  // Filter flights matching the selected local date
-  const filteredFlights = flights.filter(
-    (f) => getLocalDateStr(f.timestamp, timezone) === selectedDate
-  )
+  const isToday = selectedDate === initialDate
+  const now = new Date()
+  const last24hMs = 24 * 60 * 60 * 1000
+
+  // Filter flights matching the selected local date (or last 24h if looking at today's default view)
+  const filteredFlights = flights.filter((f) => {
+    if (isToday) {
+      const diff = now.getTime() - new Date(f.timestamp).getTime()
+      return diff >= 0 && diff <= last24hMs
+    } else {
+      return getLocalDateStr(f.timestamp, timezone) === selectedDate
+    }
+  })
 
   // Generate GeoJSON representation for the map
   const geojsonFeatures = filteredFlights
@@ -246,7 +256,7 @@ export default function TodayFlightsView({
             tiles: ['https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'],
             tileSize: 256,
             attribution: 'Tiles &copy; Esri',
-            maxzoom: 19,
+            maxzoom: 17,
           })
 
           // Add Esri satellite layer at bottom
@@ -429,8 +439,10 @@ export default function TodayFlightsView({
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 pb-4 border-b border-gray-200">
         <div>
           <h1 className="text-xl font-bold text-gray-900 leading-tight">Today&apos;s Flights</h1>
-          <p className="text-xs text-gray-500 mt-1">
-            Logged flights and processing queues for {formatLongDate(selectedDate)}
+          <p className="text-xs text-gray-550 mt-1">
+            {isToday
+              ? 'Logged flights and processing queues for the last 24 hours'
+              : `Logged flights and processing queues for ${formatLongDate(selectedDate)}`}
           </p>
         </div>
 

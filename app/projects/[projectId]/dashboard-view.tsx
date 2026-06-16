@@ -138,7 +138,7 @@ export default function ProjectDashboardView({ projectId, projectName, plans, is
             tiles: ['https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'],
             tileSize: 256,
             attribution: 'Tiles &copy; Esri &mdash; Source: Esri, i-cubed, USDA, USGS, AEX, GeoEye, Getmapping, Aerogrid, IGN, IGP, UPR-EGP, and the GIS User Community',
-            maxzoom: 19
+            maxzoom: 17
           })
 
           // Add Esri satellite layer at bottom
@@ -361,7 +361,7 @@ export default function ProjectDashboardView({ projectId, projectName, plans, is
             </h1>
           </div>
           <p className="text-sm text-gray-500 mt-1.5 leading-relaxed">
-            Overview of customized flight plan locations, logged flight frequencies, and schedules.
+            Overview of customized flight route locations, logged flight frequencies, and schedules.
           </p>
         </div>
 
@@ -386,7 +386,7 @@ export default function ProjectDashboardView({ projectId, projectName, plans, is
         <section className="lg:col-span-5 flex flex-col gap-4 min-h-[500px]">
           <div className="flex items-center justify-between">
             <h2 className="text-xs font-bold uppercase tracking-wider text-gray-400 select-none">
-              {isCustomizing ? 'All Flight Plans' : 'Monitored Flight Plans'} ({displayPlans.length})
+              {isCustomizing ? 'All Flight Routes' : 'Monitored Flight Routes'} ({displayPlans.length})
             </h2>
             {visiblePlans.length === 0 && !isCustomizing && (
               <span className="text-[10px] bg-amber-50 text-amber-600 border border-amber-200 rounded px-2 py-0.5 font-medium select-none">
@@ -399,7 +399,7 @@ export default function ProjectDashboardView({ projectId, projectName, plans, is
             {displayPlans.length === 0 ? (
               <div className="text-center py-16 text-gray-400 bg-white rounded-2xl border border-gray-200/60 p-6 shadow-sm border-dashed">
                 <span className="text-3xl block mb-2">🗺️</span>
-                <p className="text-sm font-semibold text-gray-600">No flight plans visible.</p>
+                <p className="text-sm font-semibold text-gray-600">No flight routes visible.</p>
                 <p className="text-xs text-gray-500 mt-1 max-w-xs mx-auto">
                   {isAdmin
                     ? 'Click "Customize Dashboard" above to check which plans should display on this screen.'
@@ -547,7 +547,7 @@ export default function ProjectDashboardView({ projectId, projectName, plans, is
             <div className="absolute bottom-4 left-4 z-40 bg-white/95 backdrop-blur-sm px-3 py-2 rounded-xl shadow-md border border-gray-200/60 flex items-center gap-2 pointer-events-none select-none max-w-sm">
               <Sparkles className="w-4 h-4 text-yellow-500 animate-pulse flex-shrink-0" />
               <p className="text-[10px] font-medium text-gray-600 leading-snug">
-                Click shapes on the map to inspect individual flight plan summaries and logged calendars.
+                Click shapes on the map to inspect individual flight route summaries and logged calendars.
               </p>
             </div>
 

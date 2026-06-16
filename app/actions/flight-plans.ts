@@ -24,14 +24,14 @@ export async function createFlightPlan(_prev: State, formData: FormData): Promis
   const name = slugify(rawName)
 
   if (!projectId) return { error: 'Project is required.' }
-  if (!name) return { error: 'Flight plan name is required.' }
+  if (!name) return { error: 'Flight route name is required.' }
 
   const [existing] = await db
     .select()
     .from(flightPlans)
     .where(and(eq(flightPlans.projectId, projectId), eq(flightPlans.name, name)))
 
-  if (existing) return { error: `A flight plan named "${name}" already exists in this project.` }
+  if (existing) return { error: `A flight route named "${name}" already exists in this project.` }
 
   await db.insert(flightPlans).values({
     id: randomUUID(),
@@ -46,7 +46,7 @@ export async function createFlightPlan(_prev: State, formData: FormData): Promis
 
   revalidatePath(`/projects/${projectId}/flight-plans`)
   revalidatePath(`/projects/${projectId}`)
-  return { success: `Flight plan "${displayName || name}" created.` }
+  return { success: `Flight route "${displayName || name}" created.` }
 }
 
 export async function updateFlightPlan(_prev: State, formData: FormData): Promise<State> {
@@ -59,14 +59,14 @@ export async function updateFlightPlan(_prev: State, formData: FormData): Promis
   const displayName = (formData.get('displayName') as string | null)?.trim() || null
   const description = (formData.get('description') as string | null)?.trim() || null
 
-  if (!id) return { error: 'Flight plan ID is required.' }
+  if (!id) return { error: 'Flight route ID is required.' }
   if (!name) return { error: 'Name is required.' }
 
   await db.update(flightPlans).set({ name, displayName, description }).where(eq(flightPlans.id, id))
 
   revalidatePath(`/projects/${projectId}/flight-plans`)
   revalidatePath(`/projects/${projectId}`)
-  return { success: 'Flight plan updated.' }
+  return { success: 'Flight route updated.' }
 }
 
 export async function deleteFlightPlan(_prev: State, formData: FormData): Promise<State> {
@@ -75,13 +75,13 @@ export async function deleteFlightPlan(_prev: State, formData: FormData): Promis
 
   const id = (formData.get('id') as string | null)?.trim() ?? ''
   const projectId = (formData.get('projectId') as string | null)?.trim() ?? ''
-  if (!id) return { error: 'Flight plan ID is required.' }
+  if (!id) return { error: 'Flight route ID is required.' }
 
   await db.update(flightPlans).set({ deletedAt: new Date() }).where(eq(flightPlans.id, id))
 
   revalidatePath(`/projects/${projectId}/flight-plans`)
   revalidatePath(`/projects/${projectId}`)
-  return { success: 'Flight plan deleted.' }
+  return { success: 'Flight route deleted.' }
 }
 
 export async function restoreFlightPlan(_prev: State, formData: FormData): Promise<State> {
@@ -90,12 +90,12 @@ export async function restoreFlightPlan(_prev: State, formData: FormData): Promi
 
   const id = (formData.get('id') as string | null)?.trim() ?? ''
   const projectId = (formData.get('projectId') as string | null)?.trim() ?? ''
-  if (!id) return { error: 'Flight plan ID is required.' }
+  if (!id) return { error: 'Flight route ID is required.' }
 
   await db.update(flightPlans).set({ deletedAt: null }).where(eq(flightPlans.id, id))
   revalidatePath(`/projects/${projectId}/flight-plans`)
   revalidatePath(`/projects/${projectId}`)
-  return { success: 'Flight plan restored.' }
+  return { success: 'Flight route restored.' }
 }
 
 export async function updateFlightPlanLocation(
@@ -114,7 +114,7 @@ export async function updateFlightPlanLocation(
   if (plan) {
     revalidatePath(`/projects/${plan.projectId}`)
   }
-  return { success: 'Flight plan location updated.' }
+  return { success: 'Flight route location updated.' }
 }
 
 export async function toggleFlightPlanDashboardVisibility(

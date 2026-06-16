@@ -56,19 +56,19 @@ export default async function ProjectTodayPage({ params }: PageProps) {
     )
   }
 
-  const allFlights = await db
-    .select()
-    .from(flights)
-    .where(
-      and(
-        inArray(
-          flights.flightPlanId,
-          plans.map((p) => p.id)
-        ),
-        isNull(flights.deletedAt)
-      )
-    )
-    .orderBy(desc(flights.timestamp))
+  const visiblePlanIds = plans.filter((p) => p.showOnDashboard).map((p) => p.id)
+  const allFlights = visiblePlanIds.length > 0
+    ? await db
+        .select()
+        .from(flights)
+        .where(
+          and(
+            inArray(flights.flightPlanId, visiblePlanIds),
+            isNull(flights.deletedAt)
+          )
+        )
+        .orderBy(desc(flights.timestamp))
+    : []
 
   if (allFlights.length === 0) {
     return (
