@@ -86,12 +86,7 @@ function StatusBadge({ status, imageCount }: { status: OdmTaskStatus | GeorefTas
     )
   }
   if (imageCount > 0) {
-    return (
-      <span className="inline-flex items-center gap-1 rounded-md bg-purple-50 border border-purple-200 px-2 py-0.5 text-xs text-purple-700 font-medium">
-        <PlayCircle className="w-3 h-3 text-purple-500" />
-        <span>Ready to Process</span>
-      </span>
-    )
+    return null
   }
   return (
     <span className="inline-flex items-center gap-1 rounded-md bg-gray-50 border border-gray-200 px-2 py-0.5 text-xs text-gray-400 font-medium">
