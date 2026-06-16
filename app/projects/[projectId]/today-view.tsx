@@ -134,29 +134,8 @@ function FlightCard({
   const loc = flight.flightPlanLocation
 
   useEffect(() => {
-    if (!loc) return
-
-    let lat: number | null = null
-    let lng: number | null = null
-    try {
-      const geom = JSON.parse(loc)
-      if (geom.type === 'Point') {
-        lng = geom.coordinates[0]
-        lat = geom.coordinates[1]
-      } else if (geom.type === 'Polygon') {
-        const ring = geom.coordinates[0] || []
-        if (ring.length > 0) {
-          const sumLat = ring.reduce((acc: number, pt: number[]) => acc + pt[1], 0)
-          const sumLng = ring.reduce((acc: number, pt: number[]) => acc + pt[0], 0)
-          lat = sumLat / ring.length
-          lng = sumLng / ring.length
-        }
-      }
-    } catch (e) {
-      console.error('Failed to parse location coordinates:', e)
-    }
-
-    if (lat === null || lng === null) return
+    const lat = 59.1828446
+    const lng = -158.5463867
 
     let active = true
     setLoading(true)
@@ -279,12 +258,7 @@ function FlightCard({
 
       {/* Right Side: Weather and Tides Info Card */}
       <div className="md:w-72 flex-shrink-0 flex items-center">
-        {!loc ? (
-          <div className="w-full py-4 px-4 rounded-xl border border-dashed border-gray-150 bg-gray-55/5 flex flex-col items-center justify-center text-center text-gray-400 gap-1 select-none">
-            <span className="text-[10px] font-bold tracking-wider uppercase text-gray-400">No Location Set</span>
-            <span className="text-[9px] text-gray-400 max-w-[180px]">Set flight plan coordinates to view weather & tides</span>
-          </div>
-        ) : loading ? (
+        {loading ? (
           <div className="w-full p-4 rounded-xl border border-gray-150 bg-gray-55/5 flex flex-col gap-2.5 animate-pulse">
             <div className="h-3.5 bg-gray-205 rounded w-1/2"></div>
             <div className="grid grid-cols-2 gap-2">

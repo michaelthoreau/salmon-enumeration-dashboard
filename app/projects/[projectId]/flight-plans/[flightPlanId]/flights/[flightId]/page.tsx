@@ -164,8 +164,8 @@ export default async function FlightDetailPage({ params, searchParams }: PagePro
 
   try {
     const [weather, tides] = await Promise.all([
-      fetchHistoricalWeather(59.1753183, -158.5199954, flight.timestamp),
-      fetchTidePredictions(59.1753183, -158.5199954, flight.timestamp),
+      fetchHistoricalWeather(59.1828446, -158.5463867, flight.timestamp),
+      fetchTidePredictions(59.1828446, -158.5463867, flight.timestamp),
     ])
     weatherData = weather
     tideData = tides
