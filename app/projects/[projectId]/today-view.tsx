@@ -1,12 +1,12 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import Link from 'next/link'
-import { ChevronLeft, ChevronRight, Calendar, Layers, Map, Navigation, ArrowRight, Play, CheckCircle2, AlertCircle, Sparkles, Pin, PinOff } from 'lucide-react'
+import { ChevronLeft, ChevronRight, Calendar, Layers, ArrowRight, CheckCircle2, AlertCircle, Sparkles, Pin, PinOff } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { buttonVariants } from '@/components/ui/button'
 import { highlightFlight } from '@/app/actions/projects'
-import 'maplibre-gl/dist/maplibre-gl.css'
+
 
 interface FlightRow {
   id: string
@@ -110,39 +110,7 @@ function StatusBadge({ status, imageCount }: { status: string | null; imageCount
   )
 }
 
-function updateMapBasemap(map: any, currentBasemap: 'street' | 'satellite') {
-  if (!map) return
 
-  // Toggle satellite layer
-  if (map.getLayer('esri-satellite-layer')) {
-    map.setLayoutProperty(
-      'esri-satellite-layer',
-      'visibility',
-      currentBasemap === 'satellite' ? 'visible' : 'none'
-    )
-  }
-
-  // Toggle vector background/fill layers
-  const style = map.getStyle()
-  if (style && style.layers) {
-    for (const layer of style.layers) {
-      if (layer.type === 'fill' || layer.type === 'background') {
-        if (
-          layer.id === 'today-flights-fill' ||
-          layer.id === 'today-flights-line' ||
-          layer.id === 'today-flights-point'
-        ) {
-          continue
-        }
-        map.setLayoutProperty(
-          layer.id,
-          'visibility',
-          currentBasemap === 'street' ? 'visible' : 'none'
-        )
-      }
-    }
-  }
-}
 
 export default function TodayFlightsView({
   projectId,
@@ -382,184 +350,140 @@ export default function TodayFlightsView({
         </div>
       </div>
 
-      {/* Main Grid View */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-stretch">
-        
-        {/* Left Side: Flights List */}
-        <section className="lg:col-span-6 flex flex-col gap-4 min-h-[400px]">
-          <div className="flex items-center justify-between">
-            <h2 className="text-xs font-bold uppercase tracking-wider text-gray-400 select-none">
-              Logged Flights ({totalFlights})
-            </h2>
-          </div>
+      {/* Main Flights Section */}
+      <section className="flex flex-col gap-4 max-w-5xl mx-auto min-h-[400px]">
+        <div className="flex items-center justify-between">
+          <h2 className="text-xs font-bold uppercase tracking-wider text-gray-400 select-none">
+            Logged Flights ({totalFlights})
+          </h2>
+        </div>
 
-          <div className="space-y-3 overflow-y-auto no-scrollbar flex-1 max-h-[600px] pr-1">
-            {filteredFlights.length === 0 ? (
-              <div className="text-center py-16 text-gray-400 bg-white rounded-2xl border border-gray-200/60 p-6 shadow-sm border-dashed">
-                <span className="text-3xl block mb-2">✈️</span>
-                <p className="text-sm font-semibold text-gray-600">
-                  {selectedDate === initialDate
-                    ? 'No flights logged in the last 24 hours.'
-                    : selectedDate === yesterdayDate
-                    ? 'No flights logged yesterday.'
-                    : 'No flights logged on this date.'}
-                </p>
-                <p className="text-xs text-gray-500 mt-1 max-w-xs mx-auto">
-                  Use the navigation header above to browse other days or jump to a day containing data.
-                </p>
+        <div className="space-y-4">
+          {filteredFlights.length === 0 ? (
+            <div className="text-center py-16 text-gray-400 bg-white rounded-2xl border border-gray-200/60 p-6 shadow-sm border-dashed">
+              <span className="text-3xl block mb-2">✈️</span>
+              <p className="text-sm font-semibold text-gray-600">
+                {selectedDate === initialDate
+                  ? 'No flights logged in the last 24 hours.'
+                  : selectedDate === yesterdayDate
+                  ? 'No flights logged yesterday.'
+                  : 'No flights logged on this date.'}
+              </p>
+              <p className="text-xs text-gray-550 mt-1 max-w-xs mx-auto">
+                Use the navigation header above to browse other days or jump to a day containing data.
+              </p>
 
-                {datesWithFlights.length > 0 && (
-                  <div className="mt-6 pt-6 border-t border-gray-100">
-                    <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 select-none mb-2.5">
-                      Jump directly to dates with flights:
-                    </p>
-                    <div className="flex flex-wrap gap-1.5 justify-center">
-                      {datesWithFlights.slice(0, 5).map((dt) => (
-                        <button
-                          key={dt}
-                          onClick={() => setSelectedDate(dt)}
-                          className="inline-flex items-center rounded-lg bg-gray-50 border border-gray-200/80 px-2.5 py-1 text-xs text-gray-600 hover:bg-gray-100 font-medium transition-colors"
-                        >
-                          {dt === initialDate
-                            ? 'Today'
-                            : dt === yesterdayDate
-                            ? 'Yesterday'
-                            : dt}
-                        </button>
-                      ))}
-                    </div>
+              {datesWithFlights.length > 0 && (
+                <div className="mt-6 pt-6 border-t border-gray-100">
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 select-none mb-2.5">
+                    Jump directly to dates with flights:
+                  </p>
+                  <div className="flex flex-wrap gap-1.5 justify-center">
+                    {datesWithFlights.slice(0, 5).map((dt) => (
+                      <button
+                        key={dt}
+                        onClick={() => setSelectedDate(dt)}
+                        className="inline-flex items-center rounded-lg bg-gray-50 border border-gray-200/80 px-2.5 py-1 text-xs text-gray-600 hover:bg-gray-100 font-medium transition-colors"
+                      >
+                        {dt === initialDate
+                          ? 'Today'
+                          : dt === yesterdayDate
+                          ? 'Yesterday'
+                          : dt}
+                      </button>
+                    ))}
                   </div>
-                )}
-              </div>
-            ) : (
-              filteredFlights.map((flight) => {
-                const hasLoc = !!flight.flightPlanLocation
-                return (
-                  <div
-                    key={flight.id}
-                    className="group bg-white rounded-2xl border border-gray-200/80 p-4 transition-all shadow-sm hover:shadow-md flex flex-col gap-3 relative"
-                  >
-                    {/* Header: Plan link, Time and zooming icon */}
-                    <div className="flex items-start justify-between gap-4">
-                      <div className="space-y-0.5">
-                        <div className="flex items-center gap-1.5 flex-wrap">
-                          <Link
-                            href={`/projects/${projectId}/flight-plans/${flight.flightPlanId}/flights`}
-                            className="text-sm font-semibold text-gray-900 hover:text-blue-600 transition-colors leading-tight"
+                </div>
+              )}
+            </div>
+          ) : (
+            filteredFlights.map((flight) => {
+              return (
+                <div
+                  key={flight.id}
+                  className="group bg-white rounded-2xl border border-gray-200/80 p-5 transition-all shadow-sm hover:shadow-md flex flex-row items-stretch justify-between gap-6 relative"
+                >
+                  {/* Left Side: Content */}
+                  <div className="flex-1 flex flex-col justify-between min-w-0">
+                    <div className="space-y-1.5">
+                      {/* Header line: Title & Admin Pin */}
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <Link
+                          href={`/projects/${projectId}/flight-plans/${flight.flightPlanId}/flights`}
+                          className="text-base font-bold text-gray-900 hover:text-blue-600 transition-colors leading-tight"
+                        >
+                          {flight.flightPlanName}
+                        </Link>
+                        {isAdmin && (
+                          <button
+                            onClick={() => handleToggleHighlight(flight.id)}
+                            className={cn(
+                              "p-1 rounded transition-colors cursor-pointer",
+                              currentHighlightIds.includes(flight.id)
+                                ? "text-blue-600 bg-blue-50 hover:bg-blue-100 hover:text-blue-700"
+                                : "text-gray-400 hover:text-blue-600 hover:bg-gray-50"
+                            )}
+                            title={currentHighlightIds.includes(flight.id) ? "Clear Highlight" : "Highlight this flight at top"}
                           >
-                            {flight.flightPlanName}
-                          </Link>
-                          {hasLoc && (
-                            <button
-                              onClick={() => handleFocusPlan(flight.flightPlanLocation)}
-                              className="p-1 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded transition-colors cursor-pointer"
-                              title="Zoom to location on map"
-                            >
-                              <Navigation className="w-3.5 h-3.5" />
-                            </button>
-                          )}
-                          {isAdmin && (
-                            <button
-                              onClick={() => handleToggleHighlight(flight.id)}
-                              className={cn(
-                                "p-1 rounded transition-colors cursor-pointer",
-                                currentHighlightIds.includes(flight.id)
-                                  ? "text-blue-600 bg-blue-50 hover:bg-blue-100 hover:text-blue-700"
-                                  : "text-gray-400 hover:text-blue-600 hover:bg-gray-50"
-                              )}
-                              title={currentHighlightIds.includes(flight.id) ? "Clear Highlight" : "Highlight this flight at top"}
-                            >
-                              <Pin className={cn("w-3.5 h-3.5", currentHighlightIds.includes(flight.id) && "fill-blue-600")} />
-                            </button>
-                          )}
-                        </div>
-                        <span className="text-[10px] text-gray-400 font-medium block">
-                          Logged: {formatTimeOnly(flight.timestamp, timezone)} local time
-                        </span>
+                            <Pin className={cn("w-3.5 h-3.5", currentHighlightIds.includes(flight.id) && "fill-blue-600")} />
+                          </button>
+                        )}
                       </div>
-                      
+
+                      {/* Metadata Row */}
+                      <div className="flex flex-wrap items-center gap-x-2 text-xs text-gray-500 font-medium">
+                        <span>{formatTimeOnly(flight.timestamp, timezone)} local time</span>
+                        <span>•</span>
+                        <span>{flight.imageCount} images</span>
+                        <span>•</span>
+                        <StatusBadge status={flight.taskStatus} imageCount={flight.imageCount} />
+                      </div>
+
+                      {/* Flight Notes */}
+                      {flight.notes && (
+                        <p className="text-xs text-gray-550 pt-1 leading-relaxed line-clamp-2" title={flight.notes}>
+                          {flight.notes}
+                        </p>
+                      )}
+                    </div>
+
+                    {/* Open Details Action */}
+                    <div className="mt-4 flex items-center">
                       <Link
                         href={`/projects/${projectId}/flight-plans/${flight.flightPlanId}/flights/${flight.id}?returnTo=${encodeURIComponent(`/projects/${projectId}`)}`}
                         className={cn(
                           buttonVariants({ variant: 'outline', size: 'sm' }),
-                          "text-xs font-semibold gap-1.5 h-8"
+                          "text-xs font-semibold gap-1.5 h-8 px-3 rounded-lg"
                         )}
                       >
                         <span>Open Details</span>
                         <ArrowRight className="w-3.5 h-3.5 text-gray-500 group-hover:translate-x-0.5 transition-transform" />
                       </Link>
                     </div>
-
-                    {/* Flight notes */}
-                    {flight.notes && (
-                      <p className="text-xs text-gray-500 border-t border-gray-50 pt-2 leading-relaxed">
-                        {flight.notes}
-                      </p>
-                    )}
-
-                    {/* Footer: status and stats */}
-                    <div className="flex flex-wrap items-center justify-between gap-2.5 border-t border-gray-50 pt-3 mt-1">
-                      <div className="flex flex-wrap gap-2 items-center text-xs">
-                        <span className="inline-flex items-center gap-1 rounded-md bg-gray-50 border border-gray-200 px-2 py-0.5 text-xs text-gray-600 font-medium">
-                          <span>{flight.imageCount} images</span>
-                        </span>
-                        <StatusBadge status={flight.taskStatus} imageCount={flight.imageCount} />
-                      </div>
-                    </div>
                   </div>
-                )
-              })
-            )}
-          </div>
-        </section>
 
-        {/* Right Side: Map Area */}
-        <section className="lg:col-span-6 flex flex-col min-h-[400px]">
-          <div className="flex-1 rounded-2xl border border-gray-200 overflow-hidden shadow-sm relative min-h-[400px]">
-            <div ref={mapContainerRef} className="w-full h-full absolute inset-0" />
-
-            {/* Map Info Overlay Banner */}
-            {geojsonFeatures.length > 0 && (
-              <div className="absolute bottom-4 left-4 z-40 bg-white/95 backdrop-blur-sm px-3 py-2 rounded-xl shadow-md border border-gray-200/60 flex items-center gap-2 pointer-events-none select-none max-w-xs">
-                <Sparkles className="w-4 h-4 text-emerald-500 animate-pulse flex-shrink-0" />
-                <p className="text-[10px] font-medium text-gray-600 leading-snug">
-                  Click shapes on the map to jump straight into recent flights.
-                </p>
-              </div>
-            )}
-
-            {/* Basemap Switcher Control */}
-            <div className="absolute bottom-12 right-4 z-40 bg-white/90 hover:bg-white backdrop-blur-sm p-1 rounded-xl shadow-md border border-gray-200/80 flex gap-1 pointer-events-auto select-none transition-all">
-              <button
-                type="button"
-                onClick={() => setBasemap('street')}
-                className={cn(
-                  "px-2.5 py-1.5 rounded-lg text-[10px] font-bold transition-all flex items-center gap-1.5 h-7",
-                  basemap === 'street'
-                    ? "bg-blue-600 text-white shadow-sm"
-                    : "text-gray-600 hover:text-gray-900 hover:bg-gray-100"
-                )}
-              >
-                <Map className="w-3.5 h-3.5" />
-                <span>Street</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => setBasemap('satellite')}
-                className={cn(
-                  "px-2.5 py-1.5 rounded-lg text-[10px] font-bold transition-all flex items-center gap-1.5 h-7",
-                  basemap === 'satellite'
-                    ? "bg-blue-600 text-white shadow-sm"
-                    : "text-gray-600 hover:text-gray-900 hover:bg-gray-100"
-                )}
-              >
-                <Layers className="w-3.5 h-3.5" />
-                <span>Satellite</span>
-              </button>
-            </div>
-          </div>
-        </section>
-      </div>
+                  {/* Right Side: Orthophoto Preview / Placeholder */}
+                  <div className="flex-shrink-0 w-28 h-28 sm:w-32 sm:h-32 relative self-center">
+                    {flight.taskStatus === 'completed' && flight.outputKey ? (
+                      <img
+                        src={`/api/tiles/preview?key=${encodeURIComponent(flight.outputKey)}&size=300`}
+                        alt={`${flight.flightPlanName} Orthophoto Preview`}
+                        className="w-full h-full object-cover rounded-xl border border-gray-200/60 bg-gray-50"
+                        loading="lazy"
+                      />
+                    ) : (
+                      <div className="w-full h-full rounded-xl border border-dashed border-gray-200 bg-gray-50/50 flex flex-col items-center justify-center text-gray-400 gap-1.5 select-none">
+                        <Layers className="w-5 h-5 text-gray-300" />
+                        <span className="text-[10px] font-medium tracking-wider uppercase text-gray-400">No Map</span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )
+            })
+          )}
+        </div>
+      </section>
     </div>
   )
 }
