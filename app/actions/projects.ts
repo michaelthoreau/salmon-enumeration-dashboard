@@ -1,9 +1,10 @@
 'use server'
 
 import { db } from '@/lib/db'
-import { projects } from '@/lib/schema'
-import { eq, isNull } from 'drizzle-orm'
+import { projects, flights, flightPlans } from '@/lib/schema'
+import { eq, isNull, and, inArray } from 'drizzle-orm'
 import { getSession } from '@/lib/session'
+import { syncActiveTasks } from '@/lib/tasks-sync'
 import { randomUUID } from 'crypto'
 import { revalidatePath } from 'next/cache'
 
@@ -131,4 +132,39 @@ export async function highlightFlight(
   revalidatePath(`/projects/${projectId}`)
   return { success: flightId ? 'Flight highlighted.' : 'Flight highlight cleared.' }
 }
+
+export async function syncProjectActiveTasks(
+  projectId: string
+): Promise<{ success: boolean; error?: string }> {
+  const session = await getSession()
+  if (!session) return { error: 'Unauthorized.', success: false }
+
+  try {
+    const activePlans = await db
+      .select({ id: flightPlans.id })
+      .from(flightPlans)
+      .where(and(eq(flightPlans.projectId, projectId), isNull(flightPlans.deletedAt)))
+
+    if (activePlans.length === 0) return { success: true }
+    const planIds = activePlans.map((p) => p.id)
+
+    const activeFlights = await db
+      .select({ id: flights.id })
+      .from(flights)
+      .where(and(inArray(flights.flightPlanId, planIds), isNull(flights.deletedAt)))
+
+    if (activeFlights.length === 0) return { success: true }
+    const flightIds = activeFlights.map((f) => f.id)
+
+    await syncActiveTasks(flightIds)
+
+    revalidatePath(`/projects/${projectId}`)
+    revalidatePath(`/projects/${projectId}`, 'layout')
+    return { success: true }
+  } catch (err) {
+    console.error('[syncProjectActiveTasks] Failed to sync project tasks:', err)
+    return { success: false, error: err instanceof Error ? err.message : String(err) }
+  }
+}
+
 
