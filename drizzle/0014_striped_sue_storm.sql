@@ -1,0 +1,1 @@
+ALTER TABLE `flights` ADD `low_priority` integer DEFAULT false NOT NULL;
