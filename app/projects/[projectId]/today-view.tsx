@@ -165,6 +165,15 @@ export default function TodayFlightsView({
   const [mapReady, setMapReady] = useState(false)
 
   const isToday = selectedDate === initialDate
+  const yesterdayDate = (() => {
+    const [y, m, d] = initialDate.split('-').map(Number)
+    const date = new Date(y, m - 1, d)
+    date.setDate(date.getDate() - 1)
+    const newY = date.getFullYear()
+    const newM = String(date.getMonth() + 1).padStart(2, '0')
+    const newD = String(date.getDate()).padStart(2, '0')
+    return `${newY}-${newM}-${newD}`
+  })()
   const now = new Date()
   const last24hMs = 24 * 60 * 60 * 1000
 
@@ -438,10 +447,12 @@ export default function TodayFlightsView({
       {/* Upper Calendar Navigation Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 pb-4 border-b border-gray-200">
         <div>
-          <h1 className="text-xl font-bold text-gray-900 leading-tight">Today&apos;s Flights</h1>
+          <h1 className="text-xl font-bold text-gray-900 leading-tight">Recent Flights</h1>
           <p className="text-xs text-gray-550 mt-1">
-            {isToday
-              ? 'Logged flights and processing queues for the last 24 hours'
+            {selectedDate === initialDate
+              ? 'Logged flights and processing queues for Today (last 24 hours)'
+              : selectedDate === yesterdayDate
+              ? 'Logged flights and processing queues for Yesterday'
               : `Logged flights and processing queues for ${formatLongDate(selectedDate)}`}
           </p>
         </div>
@@ -458,7 +469,13 @@ export default function TodayFlightsView({
           
           <div className="flex items-center gap-1.5 px-2.5 py-1 text-xs font-semibold text-gray-700 hover:bg-gray-50 rounded-lg cursor-pointer transition-colors relative">
             <Calendar className="w-4 h-4 text-gray-400" />
-            <span className="font-mono">{selectedDate}</span>
+            <span className="font-mono">
+              {selectedDate === initialDate
+                ? 'Today'
+                : selectedDate === yesterdayDate
+                ? 'Yesterday'
+                : selectedDate}
+            </span>
             <input
               type="date"
               value={selectedDate}
@@ -512,7 +529,13 @@ export default function TodayFlightsView({
             {filteredFlights.length === 0 ? (
               <div className="text-center py-16 text-gray-400 bg-white rounded-2xl border border-gray-200/60 p-6 shadow-sm border-dashed">
                 <span className="text-3xl block mb-2">✈️</span>
-                <p className="text-sm font-semibold text-gray-600">No flights logged on this date.</p>
+                <p className="text-sm font-semibold text-gray-600">
+                  {selectedDate === initialDate
+                    ? 'No flights logged in the last 24 hours.'
+                    : selectedDate === yesterdayDate
+                    ? 'No flights logged yesterday.'
+                    : 'No flights logged on this date.'}
+                </p>
                 <p className="text-xs text-gray-500 mt-1 max-w-xs mx-auto">
                   Use the navigation header above to browse other days or jump to a day containing data.
                 </p>
@@ -529,7 +552,11 @@ export default function TodayFlightsView({
                           onClick={() => setSelectedDate(dt)}
                           className="inline-flex items-center rounded-lg bg-gray-50 border border-gray-200/80 px-2.5 py-1 text-xs text-gray-600 hover:bg-gray-100 font-medium transition-colors"
                         >
-                          {dt}
+                          {dt === initialDate
+                            ? 'Today'
+                            : dt === yesterdayDate
+                            ? 'Yesterday'
+                            : dt}
                         </button>
                       ))}
                     </div>
@@ -614,7 +641,7 @@ export default function TodayFlightsView({
               <div className="absolute bottom-4 left-4 z-40 bg-white/95 backdrop-blur-sm px-3 py-2 rounded-xl shadow-md border border-gray-200/60 flex items-center gap-2 pointer-events-none select-none max-w-xs">
                 <Sparkles className="w-4 h-4 text-emerald-500 animate-pulse flex-shrink-0" />
                 <p className="text-[10px] font-medium text-gray-600 leading-snug">
-                  Click shapes on the map to jump straight into today&apos;s flights.
+                  Click shapes on the map to jump straight into recent flights.
                 </p>
               </div>
             )}

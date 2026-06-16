@@ -56,14 +56,14 @@ export default async function ProjectTodayPage({ params }: PageProps) {
     )
   }
 
-  const visiblePlanIds = plans.filter((p) => p.showOnDashboard).map((p) => p.id)
-  const allFlights = visiblePlanIds.length > 0
+  const activePlanIds = plans.map((p) => p.id)
+  const allFlights = activePlanIds.length > 0
     ? await db
         .select()
         .from(flights)
         .where(
           and(
-            inArray(flights.flightPlanId, visiblePlanIds),
+            inArray(flights.flightPlanId, activePlanIds),
             isNull(flights.deletedAt)
           )
         )
