@@ -80,6 +80,7 @@ export default function CompareMap({
           zoom: initialViewport?.zoom ?? 2,
           center: initialViewport?.center ?? [0, 20],
           attributionControl: false,
+          maxZoom: 26,
         })
         mapBeforeRef.current = mapBefore
  
@@ -90,6 +91,7 @@ export default function CompareMap({
           zoom: initialViewport?.zoom ?? 2,
           center: initialViewport?.center ?? [0, 20],
           attributionControl: false,
+          maxZoom: 26,
         })
         mapAfterRef.current = mapAfter
  
