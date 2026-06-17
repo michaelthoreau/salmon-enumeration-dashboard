@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { cn } from '@/lib/utils'
-import { MapPin, Map, Check, X, RotateCcw, Trash2, Edit, ChevronDown, Image as ImageIcon, Layers } from 'lucide-react'
+import { MapPin, Map, Check, X, RotateCcw, Trash2, Edit, ChevronDown, Image as ImageIcon, Layers, Ruler } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import 'maplibre-gl/dist/maplibre-gl.css'
 
@@ -18,6 +18,65 @@ interface OrthoMapProps {
   flightPlanId?: string
   initialLocation?: string | null
   onSaveLocation?: (locationJson: string | null) => Promise<void>
+}
+
+function haversineDistance(coords1: [number, number], coords2: [number, number]): number {
+  const [lon1, lat1] = coords1
+  const [lon2, lat2] = coords2
+  const R = 6371000 // Radius of Earth in meters
+  const dLat = ((lat2 - lat1) * Math.PI) / 180
+  const dLon = ((lon2 - lon1) * Math.PI) / 180
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos((lat1 * Math.PI) / 180) *
+      Math.cos((lat2 * Math.PI) / 180) *
+      Math.sin(dLon / 2) *
+      Math.sin(dLon / 2)
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
+  return R * c // returns distance in meters
+}
+
+function getMeasureGeoJSON(points: [number, number][], cursorCoords: [number, number] | null) {
+  if (points.length === 0) {
+    return {
+      type: 'FeatureCollection',
+      features: [],
+    }
+  }
+
+  const features: any[] = []
+
+  // Add individual points
+  points.forEach((pt, index) => {
+    features.push({
+      type: 'Feature',
+      geometry: {
+        type: 'Point',
+        coordinates: pt,
+      },
+      properties: {
+        index: index + 1,
+      },
+    })
+  })
+
+  // Add connecting LineString (including current cursor position if active)
+  const linePoints = cursorCoords ? [...points, cursorCoords] : points
+  if (linePoints.length >= 2) {
+    features.push({
+      type: 'Feature',
+      geometry: {
+        type: 'LineString',
+        coordinates: linePoints,
+      },
+      properties: {},
+    })
+  }
+
+  return {
+    type: 'FeatureCollection',
+    features,
+  }
 }
 
 function getGeoJSON(pin: [number, number] | null, points: [number, number][]) {
@@ -121,6 +180,12 @@ export default function OrthoMap({
   const [showPhotos, setShowPhotos] = useState(!outputKey)
   const [basemap, setBasemap] = useState<'street' | 'satellite'>('satellite')
 
+  // ── Measurement states ──────────────────────────────────────────────────────
+  const [isMeasuring, setIsMeasuring] = useState(false)
+  const [measurePoints, setMeasurePoints] = useState<[number, number][]>([])
+  const [measureUnit, setMeasureUnit] = useState<'metric' | 'imperial'>('metric')
+  const [cursorCoords, setCursorCoords] = useState<[number, number] | null>(null)
+
   // Sync showPhotos state if outputKey transitions from null to loaded
   useEffect(() => {
     setShowPhotos(!outputKey)
@@ -170,6 +235,7 @@ export default function OrthoMap({
           zoom: 2,
           center: [0, 20],
           attributionControl: false,
+          maxZoom: 26,
         })
 
         mapRef.current = map
@@ -285,6 +351,49 @@ export default function OrthoMap({
               'circle-opacity': 0.8,
             },
             filter: ['==', 'key', ''],
+          })
+
+          // Add measure source and layers
+          map.addSource('measure-source', {
+            type: 'geojson',
+            data: { type: 'FeatureCollection', features: [] },
+          })
+
+          map.addLayer({
+            id: 'measure-line',
+            type: 'line',
+            source: 'measure-source',
+            paint: {
+              'line-color': '#f59e0b',
+              'line-width': 3,
+              'line-dasharray': [2, 2],
+            },
+            filter: ['==', '$type', 'LineString'],
+          })
+
+          map.addLayer({
+            id: 'measure-point-halo',
+            type: 'circle',
+            source: 'measure-source',
+            paint: {
+              'circle-color': '#f59e0b',
+              'circle-radius': 7,
+              'circle-opacity': 0.4,
+            },
+            filter: ['==', '$type', 'Point'],
+          })
+
+          map.addLayer({
+            id: 'measure-point',
+            type: 'circle',
+            source: 'measure-source',
+            paint: {
+              'circle-color': '#ffffff',
+              'circle-radius': 4,
+              'circle-stroke-color': '#d97706',
+              'circle-stroke-width': 2,
+            },
+            filter: ['==', '$type', 'Point'],
           })
 
           // Hover handlers for photos
@@ -446,6 +555,13 @@ export default function OrthoMap({
           map.moveLayer('location-point')
         }
 
+        // Move measure layers to the top if they exist
+        if (map.getLayer('measure-line')) {
+          map.moveLayer('measure-line')
+          map.moveLayer('measure-point-halo')
+          map.moveLayer('measure-point')
+        }
+
         boundsRef.current = bounds
         if (!initialFitDoneRef.current) {
           map.resize()
@@ -590,12 +706,18 @@ export default function OrthoMap({
     }
   }, [status, outputKey, initialLocation, photos])
 
-  // ── Handle Map Clicks for drawing ──────────────────────────────────────────
+  // ── Handle Map Clicks for drawing and measuring ──────────────────────────
   useEffect(() => {
     if (!mapRef.current) return
     const map = mapRef.current
 
     const handleClick = (e: any) => {
+      if (isMeasuring) {
+        const lngLat: [number, number] = [e.lngLat.lng, e.lngLat.lat]
+        setMeasurePoints((prev) => [...prev, lngLat])
+        return
+      }
+
       if (!isEditing) return
       const lngLat: [number, number] = [e.lngLat.lng, e.lngLat.lat]
 
@@ -612,18 +734,37 @@ export default function OrthoMap({
     return () => {
       map.off('click', handleClick)
     }
-  }, [isEditing])
+  }, [isEditing, isMeasuring])
 
-  // Toggle crosshair cursor during edit mode
+  // ── Handle Map Mouse Move for live measurement preview ──────────────────────
+  useEffect(() => {
+    if (!mapRef.current) return
+    const map = mapRef.current
+
+    const handleMouseMove = (e: any) => {
+      if (isMeasuring && measurePoints.length > 0) {
+        setCursorCoords([e.lngLat.lng, e.lngLat.lat])
+      } else {
+        setCursorCoords(null)
+      }
+    }
+
+    map.on('mousemove', handleMouseMove)
+    return () => {
+      map.off('mousemove', handleMouseMove)
+    }
+  }, [isMeasuring, measurePoints.length])
+
+  // Toggle crosshair cursor during edit or measure mode
   useEffect(() => {
     if (!mapRef.current) return
     const canvas = mapRef.current.getCanvas()
-    if (isEditing) {
+    if (isEditing || isMeasuring) {
       canvas.style.cursor = 'crosshair'
     } else {
       canvas.style.cursor = ''
     }
-  }, [isEditing])
+  }, [isEditing, isMeasuring])
 
   // Update GeoJSON source representation when drawing/loading state changes
   useEffect(() => {
@@ -633,6 +774,32 @@ export default function OrthoMap({
       source.setData(getGeoJSON(pin, points))
     }
   }, [pin, points, status])
+
+  // Update Measure GeoJSON source representation when points or cursor position change
+  useEffect(() => {
+    if (!mapRef.current || !mapReadyRef.current) return
+    const source = mapRef.current.getSource('measure-source')
+    if (source) {
+      source.setData(getMeasureGeoJSON(measurePoints, cursorCoords))
+    }
+  }, [measurePoints, cursorCoords, status])
+
+  // Show/hide measure layers based on isMeasuring state
+  useEffect(() => {
+    if (!mapRef.current || !mapReadyRef.current) return
+    const map = mapRef.current
+    const visibility = isMeasuring ? 'visible' : 'none'
+
+    if (map.getLayer('measure-line')) {
+      map.setLayoutProperty('measure-line', 'visibility', visibility)
+    }
+    if (map.getLayer('measure-point-halo')) {
+      map.setLayoutProperty('measure-point-halo', 'visibility', visibility)
+    }
+    if (map.getLayer('measure-point')) {
+      map.setLayoutProperty('measure-point', 'visibility', visibility)
+    }
+  }, [isMeasuring, status])
 
   // Show/hide location layer on map based on panelOpen/isEditing state
   useEffect(() => {
@@ -812,21 +979,44 @@ export default function OrthoMap({
         </div>
       )}
 
-      {/* ─── Draw Panel Overlay ─── */}
-      {editable && status === 'ready' && (
-        <div className="absolute top-4 left-4 z-40 pointer-events-auto">
-          {!panelOpen && isEditing === null ? (
-            <Button
-              size="sm"
-              variant="outline"
-              className="bg-white/95 border border-gray-200/80 hover:bg-gray-50 text-xs font-semibold gap-2 h-9 rounded-xl shadow-md"
-              onClick={() => setPanelOpen(true)}
-            >
-              <MapPin className="w-4 h-4 text-blue-600" />
-              <span>Flight Route Location</span>
-              <ChevronDown className="w-3.5 h-3.5 text-gray-500 ml-0.5" />
-            </Button>
-          ) : (
+      {/* ─── Draw & Measure Panel Overlay ─── */}
+      {status === 'ready' && (
+        <div className="absolute top-4 left-4 z-40 pointer-events-auto flex flex-col gap-2">
+          {/* Default State: Show both "Flight Route Location" and "Measure Distance" buttons side by side if neither mode is active */}
+          {!panelOpen && isEditing === null && !isMeasuring && (
+            <div className="flex gap-2">
+              {editable && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="bg-white/95 border border-gray-200/80 hover:bg-gray-50 text-xs font-semibold gap-2 h-9 rounded-xl shadow-md"
+                  onClick={() => setPanelOpen(true)}
+                >
+                  <MapPin className="w-4 h-4 text-blue-600" />
+                  <span>Flight Route Location</span>
+                  <ChevronDown className="w-3.5 h-3.5 text-gray-500 ml-0.5" />
+                </Button>
+              )}
+              <Button
+                size="sm"
+                variant="outline"
+                className="bg-white/95 border border-gray-200/80 hover:bg-gray-50 text-xs font-semibold gap-2 h-9 rounded-xl shadow-md"
+                onClick={() => {
+                  setIsMeasuring(true)
+                  setMeasurePoints([])
+                  setCursorCoords(null)
+                  setIsEditing(null)
+                  setPanelOpen(false)
+                }}
+              >
+                <Ruler className="w-4 h-4 text-amber-500" />
+                <span>Measure</span>
+              </Button>
+            </div>
+          )}
+
+          {/* Active Flight Route Edit Panel */}
+          {editable && (panelOpen || isEditing !== null) && !isMeasuring && (
             <div className="bg-white/95 backdrop-blur-sm px-4 py-3 rounded-2xl shadow-xl border border-gray-200/80 flex flex-col gap-3 min-w-[220px]">
               {isEditing === null ? (
                 <div className="space-y-2.5">
@@ -836,7 +1026,7 @@ export default function OrthoMap({
                     </p>
                     <button
                       onClick={() => setPanelOpen(false)}
-                      className="p-1 hover:bg-gray-100 rounded-md transition-colors text-gray-400 hover:text-gray-600"
+                      className="p-1 hover:bg-gray-100 rounded-md transition-colors text-gray-400 hover:text-gray-600 cursor-pointer"
                     >
                       <X className="w-3.5 h-3.5" />
                     </button>
@@ -864,7 +1054,7 @@ export default function OrthoMap({
                       <Button
                         size="sm"
                         variant="ghost"
-                        className="w-full justify-start text-xs font-medium gap-2 h-8 text-red-600 hover:text-red-700 hover:bg-red-50"
+                        className="w-full justify-start text-xs font-medium gap-2 h-8 text-red-650 hover:text-red-700 hover:bg-red-50"
                         onClick={handleClearSaved}
                         disabled={isSaving}
                       >
@@ -885,17 +1075,17 @@ export default function OrthoMap({
                   </div>
 
                   {isEditing === 'polygon' && (
-                    <div className="text-[10px] text-gray-500 bg-gray-50 p-2 rounded-lg border border-gray-100 flex justify-between items-center select-none font-medium">
+                    <div className="text-[10px] text-gray-550 bg-gray-50 p-2 rounded-lg border border-gray-100 flex justify-between items-center select-none font-medium">
                       <span>Points: {points.length}</span>
                       {points.length > 0 && (
                         <Button
                           size="icon"
                           variant="ghost"
-                          className="w-5 h-5 hover:bg-gray-200 rounded-md"
+                          className="w-5 h-5 hover:bg-gray-200 rounded-md cursor-pointer"
                           onClick={() => setPoints((prev) => prev.slice(0, -1))}
                           title="Undo last point"
                         >
-                          <RotateCcw className="w-3 h-3 text-gray-600" />
+                          <RotateCcw className="w-3.5 h-3.5 text-gray-600" />
                         </Button>
                       )}
                     </div>
@@ -929,6 +1119,134 @@ export default function OrthoMap({
                   </div>
                 </div>
               )}
+            </div>
+          )}
+
+          {/* Active Distance Measurement Panel */}
+          {isMeasuring && (
+            <div className="bg-white/95 backdrop-blur-sm px-4 py-3.5 rounded-2xl shadow-xl border border-gray-200/80 flex flex-col gap-3 min-w-[240px] animate-in fade-in slide-in-from-top-2 duration-250">
+              <div className="flex items-center justify-between pb-1.5 border-b border-gray-100">
+                <div className="flex items-center gap-1.5">
+                  <Ruler className="w-4 h-4 text-amber-500" />
+                  <p className="text-xs font-semibold text-gray-700 select-none">
+                    Measure
+                  </p>
+                </div>
+                <button
+                  onClick={() => {
+                    setIsMeasuring(false)
+                    setMeasurePoints([])
+                    setCursorCoords(null)
+                  }}
+                  className="p-1 hover:bg-gray-100 rounded-md transition-colors text-gray-400 hover:text-gray-600 cursor-pointer"
+                  title="Close measurement tool"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+
+              {/* Cumulative Distance Display */}
+              <div className="bg-gray-50 border border-gray-100 rounded-xl p-3 flex flex-col items-center justify-center select-none text-center">
+                <span className="text-[10px] uppercase font-bold text-gray-400 tracking-wider">
+                  Total Distance
+                </span>
+                <span className="text-xl font-bold text-gray-900 mt-0.5 tabular-nums">
+                  {measureUnit === 'metric' ? (
+                    // Decimal meters with cm resolution (2 decimal places)
+                    <>
+                      {(() => {
+                        const baseMeters = measurePoints.reduce((acc, pt, idx) => {
+                          if (idx === 0) return 0
+                          return acc + haversineDistance(measurePoints[idx - 1], pt)
+                        }, 0)
+                        const extraMeters = (measurePoints.length > 0 && cursorCoords)
+                          ? haversineDistance(measurePoints[measurePoints.length - 1], cursorCoords)
+                          : 0
+                        return (baseMeters + extraMeters).toFixed(2)
+                      })()}{' '}
+                      <span className="text-sm font-medium text-gray-500">m</span>
+                    </>
+                  ) : (
+                    // Inches (1 decimal place)
+                    <>
+                      {(() => {
+                        const baseMeters = measurePoints.reduce((acc, pt, idx) => {
+                          if (idx === 0) return 0
+                          return acc + haversineDistance(measurePoints[idx - 1], pt)
+                        }, 0)
+                        const extraMeters = (measurePoints.length > 0 && cursorCoords)
+                          ? haversineDistance(measurePoints[measurePoints.length - 1], cursorCoords)
+                          : 0
+                        const totalInches = (baseMeters + extraMeters) * 39.3700787
+                        return totalInches.toFixed(1)
+                      })()}{' '}
+                      <span className="text-sm font-medium text-gray-500">in</span>
+                    </>
+                  )}
+                </span>
+                <p className="text-[9px] text-gray-400 mt-1.5 font-medium leading-tight">
+                  {measurePoints.length === 0
+                    ? 'Click on the map to start measuring'
+                    : `Segment path with ${measurePoints.length} node${measurePoints.length === 1 ? '' : 's'}`}
+                </p>
+              </div>
+
+              {/* Unit Toggle Control (Metric vs Inches) */}
+              <div className="flex items-center justify-between bg-gray-100/80 p-0.5 rounded-lg border border-gray-250 select-none">
+                <button
+                  type="button"
+                  onClick={() => setMeasureUnit('metric')}
+                  className={cn(
+                    "flex-1 text-[10px] font-bold py-1 px-2.5 rounded-md transition-all cursor-pointer",
+                    measureUnit === 'metric'
+                      ? "bg-white text-gray-900 shadow-sm border border-gray-250/30"
+                      : "text-gray-555 hover:text-gray-800"
+                  )}
+                >
+                  Metric (m)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setMeasureUnit('imperial')}
+                  className={cn(
+                    "flex-1 text-[10px] font-bold py-1 px-2.5 rounded-md transition-all cursor-pointer",
+                    measureUnit === 'imperial'
+                      ? "bg-white text-gray-900 shadow-sm border border-gray-250/30"
+                      : "text-gray-555 hover:text-gray-800"
+                  )}
+                >
+                  Inches (in)
+                </button>
+              </div>
+
+              {/* Action Buttons */}
+              <div className="flex gap-2 border-t border-gray-100 pt-3">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="flex-1 text-xs h-8 hover:bg-gray-50 font-medium cursor-pointer"
+                  onClick={() => setMeasurePoints((prev) => prev.slice(0, -1))}
+                  disabled={measurePoints.length === 0}
+                  title="Remove last coordinate node"
+                >
+                  <RotateCcw className="w-3.5 h-3.5 mr-1" />
+                  Undo
+                </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="flex-1 text-xs h-8 text-red-655 hover:text-red-700 hover:bg-red-50 font-semibold cursor-pointer"
+                  onClick={() => {
+                    setMeasurePoints([])
+                    setCursorCoords(null)
+                  }}
+                  disabled={measurePoints.length === 0}
+                  title="Clear path"
+                >
+                  <Trash2 className="w-3.5 h-3.5 mr-1" />
+                  Clear
+                </Button>
+              </div>
             </div>
           )}
         </div>

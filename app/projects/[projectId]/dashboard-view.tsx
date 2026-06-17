@@ -122,6 +122,7 @@ export default function ProjectDashboardView({ projectId, projectName, plans, is
           zoom: 2,
           center: [-152, 61], // Center Alaska by default
           attributionControl: false,
+          maxZoom: 26,
         })
 
         mapRef.current = map
