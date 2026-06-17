@@ -14,7 +14,7 @@ async function openPresignedUrl(key: string, download = false): Promise<void> {
 
 interface TaskState {
   taskId: string
-  type: 'odm' | 'georef'
+  type: 'odm' | 'georef' | 'upload'
   status: 'pending' | 'uploading' | 'queued' | 'running' | 'failed' | 'completed' | 'canceled'
   progress: number
   uploadedImages: number
@@ -35,7 +35,7 @@ interface ProcessingModalProps {
   flightPlanId: string
   initialActiveTask: {
     taskId: string
-    type: 'odm' | 'georef'
+    type: 'odm' | 'georef' | 'upload'
     status: TaskState['status']
     odmUuid?: string | null
     outputKey: string | null
@@ -71,6 +71,13 @@ function formatDuration(ms: number): string {
   return `${s}s`
 }
 
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`
+  return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} GB`
+}
+
 export default function ProcessingModal({
   isOpen,
   onClose,
@@ -80,7 +87,7 @@ export default function ProcessingModal({
   initialActiveTask,
 }: ProcessingModalProps) {
   const router = useRouter()
-  const [method, setMethod] = useState<'odm' | 'georef'>('georef')
+  const [method, setMethod] = useState<'odm' | 'georef' | 'upload'>('georef')
 
   // Georef config state
   const [dewarp, setDewarp] = useState(true)
@@ -88,6 +95,11 @@ export default function ProcessingModal({
   const [altitudeOffset, setAltitudeOffset] = useState<number>(0)
   const [specifiedAltitude, setSpecifiedAltitude] = useState<number>(50)
   const [sampleFactor, setSampleFactor] = useState<number>(1)
+
+  // GeoTIFF Upload state
+  const geotiffInputRef = useRef<HTMLInputElement>(null)
+  const uploadXhrRef = useRef<XMLHttpRequest | null>(null)
+  const [selectedGeotiffFile, setSelectedGeotiffFile] = useState<File | null>(null)
 
   // Task processing state
   const [task, setTask] = useState<TaskState | null>(null)
@@ -97,6 +109,161 @@ export default function ProcessingModal({
 
   const logRef = useRef<HTMLPreElement>(null)
   const outputLineRef = useRef(0)
+
+  // Clear file selection when modal closes
+  useEffect(() => {
+    if (!isOpen) {
+      setSelectedGeotiffFile(null)
+    }
+  }, [isOpen])
+
+  const handleFileSelected = (file: File) => {
+    const ext = file.name.split('.').pop()?.toLowerCase()
+    if (ext !== 'tif' && ext !== 'tiff') {
+      setStartError('Please select a valid GeoTIFF file (.tif or .tiff)')
+      setSelectedGeotiffFile(null)
+      return
+    }
+    setStartError(null)
+    setSelectedGeotiffFile(file)
+  }
+
+  async function startGeotiffUpload() {
+    if (!selectedGeotiffFile) return
+    setStarting(true)
+    setStartError(null)
+    outputLineRef.current = 0
+
+    try {
+      const res = await fetch('/api/upload/presign-geotiff', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          flightId,
+          contentType: selectedGeotiffFile.type || 'image/tiff',
+          size: selectedGeotiffFile.size,
+        }),
+      })
+
+      if (!res.ok) {
+        const errData = await res.json()
+        throw new Error(errData.error ?? 'Failed to get presigned upload URL')
+      }
+
+      const { upload } = await res.json()
+      const { url, fields } = upload
+
+      setTask({
+        taskId: 'upload-geotiff',
+        type: 'upload',
+        status: 'uploading',
+        progress: 0,
+        uploadedImages: 0,
+        totalImages: 1,
+        processingTime: 0,
+        imagesCount: 1,
+        output: ['Initiating S3 direct upload...'],
+        outputKey: null,
+        reportKey: null,
+        error: null,
+      })
+
+      const xhr = new XMLHttpRequest()
+      uploadXhrRef.current = xhr
+
+      const uploadPromise = new Promise<void>((resolve, reject) => {
+        const formData = new FormData()
+        for (const [k, v] of Object.entries(fields)) {
+          formData.append(k, v as string)
+        }
+        formData.append('file', selectedGeotiffFile)
+
+        xhr.open('POST', url)
+
+        xhr.upload.onprogress = (e) => {
+          if (e.lengthComputable) {
+            const pct = Math.round((e.loaded / e.total) * 100)
+            setTask((prev) => {
+              if (!prev) return null
+              return {
+                ...prev,
+                progress: pct,
+                output: [...prev.output.slice(-20), `Uploading: ${pct}% (${formatBytes(e.loaded)} / ${formatBytes(e.total)})`],
+              }
+            })
+          }
+        }
+
+        xhr.onload = () => {
+          if (xhr.status >= 200 && xhr.status < 300) {
+            resolve()
+          } else {
+            reject(new Error(`S3 upload failed: Responded with status ${xhr.status}`))
+          }
+        }
+
+        xhr.onerror = () => reject(new Error('Network error during S3 upload.'))
+        xhr.onabort = () => reject(new Error('Upload canceled by user.'))
+        xhr.send(formData)
+      })
+
+      setStarting(false)
+      await uploadPromise
+
+      setTask((prev) => {
+        if (!prev) return null
+        return {
+          ...prev,
+          status: 'running',
+          progress: 99,
+          output: [...prev.output, 'S3 upload complete. Registering orthomap and pre-fetching map bounds...'],
+        }
+      })
+
+      const registerRes = await fetch('/api/upload/register-geotiff', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          key: fields.key,
+          flightId,
+        }),
+      })
+
+      if (!registerRes.ok) {
+        const regErr = await registerRes.json()
+        throw new Error(regErr.error ?? 'Registration failed')
+      }
+
+      const regData = await registerRes.json()
+
+      setTask((prev) => {
+        if (!prev) return null
+        return {
+          ...prev,
+          status: 'completed',
+          progress: 100,
+          outputKey: fields.key,
+          output: [...prev.output, 'Success! Processed GeoTIFF uploaded and registered successfully.'],
+        }
+      })
+
+      router.refresh()
+    } catch (err: any) {
+      console.error(err)
+      setTask((prev) => {
+        if (!prev) return null
+        return {
+          ...prev,
+          status: 'failed',
+          error: err.message || String(err),
+          output: [...prev.output, `Error: ${err.message || String(err)}`],
+        }
+      })
+    } finally {
+      uploadXhrRef.current = null
+      setStarting(false)
+    }
+  }
 
   // Initialize from initial active task if present
   useEffect(() => {
@@ -152,7 +319,7 @@ export default function ProcessingModal({
   }, [task?.output.length])
 
   // Polling logic
-  const pollStatus = useCallback(async (taskId: string, type: 'odm' | 'georef') => {
+  const pollStatus = useCallback(async (taskId: string, type: 'odm' | 'georef' | 'upload') => {
     const line = outputLineRef.current
     const endpoint = type === 'odm'
       ? `/api/odm/tasks/${taskId}?outputLine=${line}`
@@ -209,6 +376,7 @@ export default function ProcessingModal({
   // Auto-polling useEffect hook
   useEffect(() => {
     if (!task) return
+    if (task.type === 'upload') return // Skip polling for direct geotiff uploads
     if (TERMINAL_STATUSES.has(task.status)) return
 
     let cancelledPoll = false
@@ -296,6 +464,14 @@ export default function ProcessingModal({
   // Cancel processing
   async function handleCancel() {
     if (!task) return
+    if (task.type === 'upload') {
+      if (confirm('Are you sure you want to cancel the upload?')) {
+        uploadXhrRef.current?.abort()
+        setTask((prev) => prev ? { ...prev, status: 'canceled' } : null)
+        router.refresh()
+      }
+      return
+    }
     if (!confirm('Are you sure you want to cancel and stop this task?')) return
     setCancelling(true)
 
@@ -359,9 +535,8 @@ export default function ProcessingModal({
           {!task ? (
             /* Configure Task Screen */
             <div className="space-y-6">
-              
-              {/* Method Selection Toggles */}
-              <div className="grid grid-cols-2 gap-4">
+                           {/* Method Selection Toggles */}
+              <div className="grid grid-cols-3 gap-4">
                 
                 {/* Georef Option */}
                 <label className={`flex flex-col p-4 rounded-xl border-2 text-left cursor-pointer transition-all ${
@@ -380,12 +555,12 @@ export default function ProcessingModal({
                   <span className="flex items-center justify-between mb-2">
                     <span className="font-semibold text-slate-900 dark:text-white flex items-center gap-2">
                       <Map className="w-4 h-4 text-emerald-600" />
-                      Quick Georeference
+                      Quick Georef
                     </span>
                     <span className="text-[10px] uppercase font-bold tracking-wide px-2 py-0.5 rounded bg-emerald-600/10 text-emerald-600">Fast</span>
                   </span>
-                  <span className="text-xs text-slate-500 dark:text-slate-400">
-                    Fast flat-earth camera projection. Processes in 1-2 minutes. Ideal for quick check of camera coverage and alignments in the field.
+                  <span className="text-xs text-slate-550 dark:text-slate-400 leading-snug">
+                    Fast flat-earth camera projection. Processes in 1-2 minutes. Ideal for quick checks in the field.
                   </span>
                 </label>
 
@@ -406,12 +581,41 @@ export default function ProcessingModal({
                   <span className="flex items-center justify-between mb-2">
                     <span className="font-semibold text-slate-900 dark:text-white flex items-center gap-2">
                       <Layers className="w-4 h-4 text-blue-500" />
-                      3-D Reconstruction (ODM)
+                      3-D Recon (ODM)
                     </span>
                     <span className="text-[10px] uppercase font-bold tracking-wide px-2 py-0.5 rounded bg-blue-600/10 text-blue-500">Premium</span>
                   </span>
-                  <span className="text-xs text-slate-500 dark:text-slate-400">
-                    Full structure-from-motion (SfM) photogrammetry pipeline. Processes in 10-30 minutes. High details, accurate elevations, but slower.
+                  <span className="text-xs text-slate-550 dark:text-slate-400 leading-snug">
+                    Structure-from-motion photogrammetry pipeline. Processes in 10-30 minutes. High details.
+                  </span>
+                </label>
+
+                {/* Upload GeoTIFF Option */}
+                <label className={`flex flex-col p-4 rounded-xl border-2 text-left cursor-pointer transition-all ${
+                  method === 'upload'
+                    ? 'border-purple-600 bg-purple-50/20 dark:bg-purple-950/10'
+                    : 'border-slate-200 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700'
+                }`}>
+                  <input 
+                    type="radio" 
+                    name="method" 
+                    value="upload" 
+                    checked={method === 'upload'} 
+                    onChange={() => setMethod('upload')}
+                    className="sr-only"
+                  />
+                  <span className="flex items-center justify-between mb-2">
+                    <span className="font-semibold text-slate-900 dark:text-white flex items-center gap-2">
+                      <svg className="w-4 h-4 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
+                          d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5" />
+                      </svg>
+                      Upload GeoTIFF
+                    </span>
+                    <span className="text-[10px] uppercase font-bold tracking-wide px-2 py-0.5 rounded bg-purple-600/10 text-purple-600">Direct</span>
+                  </span>
+                  <span className="text-xs text-slate-550 dark:text-slate-400 leading-snug">
+                    Directly upload a pre-processed orthophoto (GeoTIFF) file. Bypasses cloud processing.
                   </span>
                 </label>
 
@@ -569,6 +773,80 @@ export default function ProcessingModal({
                 </div>
               )}
 
+              {/* Upload Option Configuration */}
+              {method === 'upload' && (
+                <div className="p-5 bg-slate-50 dark:bg-slate-800/40 rounded-xl border border-slate-100 dark:border-slate-800/60 space-y-4 animate-in fade-in duration-200">
+                  <h4 className="text-sm font-semibold text-slate-900 dark:text-white">Upload Processed GeoTIFF</h4>
+                  
+                  {/* File Upload Selector/Dropzone */}
+                  {!selectedGeotiffFile ? (
+                    <div
+                      onDragOver={(e) => {
+                        e.preventDefault()
+                        e.currentTarget.classList.add('border-purple-500', 'bg-purple-50/30')
+                      }}
+                      onDragLeave={(e) => {
+                        e.currentTarget.classList.remove('border-purple-500', 'bg-purple-50/30')
+                      }}
+                      onDrop={(e) => {
+                        e.preventDefault()
+                        e.currentTarget.classList.remove('border-purple-500', 'bg-purple-50/30')
+                        const file = e.dataTransfer.files?.[0]
+                        if (file) handleFileSelected(file)
+                      }}
+                      onClick={() => geotiffInputRef.current?.click()}
+                      className="flex flex-col items-center justify-center gap-3 rounded-xl border-2 border-dashed border-slate-300 bg-white dark:bg-slate-900/50 px-8 py-10 text-center cursor-pointer hover:border-purple-400 hover:bg-purple-50/20 transition-colors"
+                    >
+                      <svg className="w-10 h-10 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
+                          d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5" />
+                      </svg>
+                      <div>
+                        <p className="text-xs font-semibold text-slate-700 dark:text-slate-300">
+                          Click to select or drag & drop GeoTIFF file
+                        </p>
+                        <p className="text-[10px] text-slate-500 mt-1">
+                          Accepts .tif or .tiff files (up to 5 GB)
+                        </p>
+                      </div>
+                      <input
+                        ref={geotiffInputRef}
+                        type="file"
+                        accept=".tif,.tiff,image/tiff"
+                        className="hidden"
+                        onChange={(e) => {
+                          const file = e.target.files?.[0]
+                          if (file) handleFileSelected(file)
+                        }}
+                      />
+                    </div>
+                  ) : (
+                    <div className="flex items-center justify-between p-3.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl">
+                      <div className="flex items-center gap-3 min-w-0">
+                        <span className="w-8 h-8 rounded-lg bg-purple-50 dark:bg-purple-950/20 text-purple-650 flex items-center justify-center shrink-0">
+                          🌍
+                        </span>
+                        <div className="min-w-0">
+                          <p className="text-xs font-semibold text-slate-800 dark:text-slate-200 truncate max-w-[280px]">
+                            {selectedGeotiffFile.name}
+                          </p>
+                          <p className="text-[10px] text-slate-500 font-mono">
+                            {formatBytes(selectedGeotiffFile.size)}
+                          </p>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setSelectedGeotiffFile(null)}
+                        className="p-1 text-slate-400 hover:text-red-500 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+
               {startError && (
                 <div className="flex items-center gap-2 p-3 text-xs text-red-600 bg-red-50 dark:bg-red-950/20 border border-red-200 dark:border-red-900/30 rounded-xl">
                   <AlertTriangle className="w-4 h-4 shrink-0" />
@@ -588,13 +866,13 @@ export default function ProcessingModal({
                       {task.status}
                     </span>
                     <span className="text-xs text-slate-500 dark:text-slate-400 capitalize font-medium">
-                      {task.type === 'odm' ? '3-D Reconstruction' : 'Quick Georeference'}
+                      {task.type === 'odm' ? '3-D Reconstruction' : task.type === 'georef' ? 'Quick Georeference' : 'GeoTIFF Upload'}
                     </span>
                   </div>
                   <h4 className="text-base font-semibold text-slate-900 dark:text-white">
-                    {task.status === 'uploading' && 'Uploading flight images…'}
+                    {task.status === 'uploading' && (task.type === 'upload' ? 'Uploading GeoTIFF orthomap...' : 'Uploading flight images…')}
                     {task.status === 'queued' && 'Task queued in processing node…'}
-                    {task.status === 'running' && 'Processing images & assembling tiles…'}
+                    {task.status === 'running' && (task.type === 'upload' ? 'Registering map & fetching bounds...' : 'Processing images & assembling tiles…')}
                     {task.status === 'completed' && 'Processing completed successfully!'}
                     {task.status === 'failed' && 'Task processing failed'}
                     {task.status === 'canceled' && 'Task canceled by user'}
@@ -714,19 +992,19 @@ export default function ProcessingModal({
                 </button>
                 <button
                   type="button"
-                  onClick={startProcessing}
-                  disabled={starting}
+                  onClick={method === 'upload' ? startGeotiffUpload : startProcessing}
+                  disabled={starting || (method === 'upload' && !selectedGeotiffFile)}
                   className="px-4 py-2 text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 rounded-lg shadow-sm transition-all flex items-center gap-1.5"
                 >
                   {starting ? (
                     <>
                       <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                      <span>Contacting Node…</span>
+                      <span>{method === 'upload' ? 'Uploading...' : 'Contacting Node…'}</span>
                     </>
                   ) : (
                     <>
                       <Play className="w-3.5 h-3.5 fill-current" />
-                      <span>Start Processing</span>
+                      <span>{method === 'upload' ? 'Upload & Apply' : 'Start Processing'}</span>
                     </>
                   )}
                 </button>
