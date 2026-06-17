@@ -590,7 +590,7 @@ export default function ProcessingModal({
                   </span>
                 </label>
 
-                {/* Upload GeoTIFF Option */}
+                {/* Upload GeoTIFF Option (Temporarily Hidden)
                 <label className={`flex flex-col p-4 rounded-xl border-2 text-left cursor-pointer transition-all ${
                   method === 'upload'
                     ? 'border-purple-600 bg-purple-50/20 dark:bg-purple-950/10'
@@ -618,6 +618,7 @@ export default function ProcessingModal({
                     Directly upload a pre-processed orthophoto (GeoTIFF) file. Bypasses cloud processing.
                   </span>
                 </label>
+                */}
 
               </div>
 
