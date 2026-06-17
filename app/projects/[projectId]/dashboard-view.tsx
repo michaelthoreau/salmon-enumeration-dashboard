@@ -129,6 +129,15 @@ export default function ProjectDashboardView({ projectId, projectName, plans, is
         map.addControl(new maplibre.AttributionControl({ compact: true }))
         map.addControl(new maplibre.NavigationControl(), 'top-right')
 
+        const compass = mapContainerRef.current?.querySelector('.maplibregl-ctrl-compass') as HTMLButtonElement | null
+        if (compass) {
+          compass.addEventListener('click', (e) => {
+            e.preventDefault()
+            e.stopPropagation()
+            map.resetNorthPitch()
+          }, { capture: true })
+        }
+
         map.on('load', () => {
           if (cancelled) return
           setMapReady(true)
