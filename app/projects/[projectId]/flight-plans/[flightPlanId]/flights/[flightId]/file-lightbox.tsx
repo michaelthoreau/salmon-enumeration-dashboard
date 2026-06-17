@@ -20,10 +20,16 @@ import type { Split } from '@/lib/schema'
 import { assignFileSplit } from '@/app/actions/files'
 
 const IMAGE_EXTS = new Set(['jpg', 'jpeg', 'png', 'webp', 'gif'])
+const VIDEO_EXTS = new Set(['mp4', 'mov'])
 
 function isImage(key: string): boolean {
   const ext = key.split('.').pop()?.toLowerCase() ?? ''
   return IMAGE_EXTS.has(ext)
+}
+
+function isVideo(key: string): boolean {
+  const ext = key.split('.').pop()?.toLowerCase() ?? ''
+  return VIDEO_EXTS.has(ext)
 }
 
 function formatBytes(bytes: number): string {
@@ -229,7 +235,7 @@ export default function FileLightbox({ files: initialFiles, timezone, canWrite =
               <td
                 className="px-4 py-3 font-mono text-xs text-blue-600 cursor-pointer"
                 onClick={() => {
-                  if (isImage(file.key) && onImageClick) {
+                  if ((isImage(file.key) || isVideo(file.key)) && onImageClick) {
                     onImageClick(file)
                   } else {
                     downloadSingle(file.key)
@@ -237,14 +243,18 @@ export default function FileLightbox({ files: initialFiles, timezone, canWrite =
                 }}
               >
                 <div className="flex items-center gap-2">
-                  {img && (
+                  {img ? (
                     // eslint-disable-next-line @next/next/no-img-element
                     <img
                       src={thumbnailUrl(file.key, file.etag, 64)}
                       alt=""
                       className="w-8 h-8 rounded object-cover bg-gray-100 shrink-0"
                     />
-                  )}
+                  ) : isVideo(file.key) ? (
+                    <div className="w-8 h-8 rounded bg-slate-100 flex items-center justify-center text-slate-500 shrink-0">
+                      🎥
+                    </div>
+                  ) : null}
                   <span className="hover:underline">{filename}</span>
                 </div>
               </td>

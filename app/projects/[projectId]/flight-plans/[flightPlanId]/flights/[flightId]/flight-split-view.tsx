@@ -11,6 +11,7 @@ import FileLightbox from './file-lightbox'
 import EditFlightButton from './edit-flight-button'
 import OrthoMap from './ortho-map'
 import ProcessingModal from './processing-modal'
+import VideoPlayer from './video-player'
 import { Layers } from 'lucide-react'
 import { assignFileSplit, syncFlightFiles } from '@/app/actions/files'
 import { updateFlightPlanLocation } from '@/app/actions/flight-plans'
@@ -24,10 +25,16 @@ type OdmTask = InferSelectModel<typeof odmTasks>
 type GeorefTask = InferSelectModel<typeof georefTasks>
 
 const IMAGE_EXTS = new Set(['jpg', 'jpeg', 'png', 'webp', 'gif'])
+const VIDEO_EXTS = new Set(['mp4', 'mov'])
 
 function isImage(key: string): boolean {
   const ext = key.split('.').pop()?.toLowerCase() ?? ''
   return IMAGE_EXTS.has(ext)
+}
+
+function isVideo(key: string): boolean {
+  const ext = key.split('.').pop()?.toLowerCase() ?? ''
+  return VIDEO_EXTS.has(ext)
 }
 
 async function openPresignedUrl(key: string, download = false): Promise<void> {
@@ -387,7 +394,7 @@ export default function FlightSplitView({
   }, [geotiffKey])
 
   // Image list filtering
-  const images = displayObjects.filter((o) => isImage(o.key))
+  const images = displayObjects.filter((o) => isImage(o.key) || isVideo(o.key))
   const [activeImage, setActiveImage] = useState<FileEntry | null>(images[0] ?? null)
   const [lightboxImage, setLightboxImage] = useState<FileEntry | null>(null)
 
@@ -884,7 +891,7 @@ export default function FlightSplitView({
               )}
             >
               <ImageIcon className="w-4 h-4" />
-              Flight Images ({images.length})
+              Flight Files ({images.length})
             </button>
           </div>
 
@@ -951,79 +958,85 @@ export default function FlightSplitView({
               {images.length === 0 ? (
                 <div className="flex-1 flex flex-col items-center justify-center text-gray-400 p-8">
                   <span className="text-4xl mb-2">📸</span>
-                  <p className="text-sm font-medium">No images uploaded to S3 yet.</p>
+                  <p className="text-sm font-medium">No files uploaded to S3 yet.</p>
                 </div>
               ) : (
                 <>
                   {/* Large Viewport Area */}
                   {activeImage && (
                     <div className="flex-1 min-h-0 flex flex-col overflow-hidden bg-gray-950">
-                      {/* Active Image Header Bar */}
-                      <div className="bg-gray-900 border-b border-gray-800 px-6 py-3 flex items-center justify-between text-gray-200 flex-shrink-0">
-                        <div className="min-w-0">
-                          <h3 className="text-sm font-mono font-medium truncate">
+                      {/* Combined Metadata & Actions Header */}
+                      <div className="bg-gray-900 border-b border-gray-800 px-6 py-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-gray-300 flex-shrink-0">
+                        <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+                          <span className="text-xs font-mono font-medium text-white truncate max-w-[240px]" title={activeImage.key.split('/').pop()}>
                             {activeImage.key.split('/').pop()}
-                          </h3>
-                        </div>
-                        <div className="flex items-center gap-4 text-xs text-gray-400">
-                          <span>{formatBytes(activeImage.size)}</span>
+                          </span>
+                          <span className="text-[11px] text-gray-500 font-mono">{formatBytes(activeImage.size)}</span>
                           {activeImageDownloadUrl && (
                             <a
                               href={activeImageDownloadUrl}
-                              className="text-gray-300 hover:text-white flex items-center gap-1 font-medium transition-colors"
+                              className="text-xs text-blue-400 hover:text-blue-300 flex items-center gap-1 font-medium transition-colors"
                             >
                               <DownloadIcon className="w-3.5 h-3.5" /> Download
                             </a>
                           )}
                         </div>
-                      </div>
 
-                      {/* Interactive Viewport */}
-                      <div className="flex-1 min-h-0 flex items-center justify-center p-4 relative">
-                        {/* eslint-disable-next-line @next/next/no-img-element */}
-                        <img
-                          key={activeImage.key}
-                          src={thumbnailUrl(activeImage.key, activeImage.etag, 1200)}
-                          alt={activeImage.key.split('/').pop()}
-                          className="max-w-full max-h-full object-contain shadow-2xl rounded"
-                        />
-                      </div>
-
-                      {/* Split Selection / Metadata Footer */}
-                      <div className="bg-gray-900 border-t border-gray-800 px-6 py-3 flex items-center justify-between text-gray-300 flex-shrink-0">
-                        <div className="flex items-center gap-3">
-                          <span className="text-xs text-gray-400">Dataset Split:</span>
-                          {canWrite ? (
-                            <select
-                              value={activeSplit}
-                              onChange={(e) => handleSplitChange(e.target.value)}
-                              className={cn(
-                                'text-xs rounded border px-3 py-1 font-medium focus:outline-none focus:ring-1 cursor-pointer transition-colors',
-                                SPLIT_SELECT_CLASSES[activeSplit]
-                              )}
-                            >
-                              <option value="none">Unassigned</option>
-                              <option value="train">Train</option>
-                              <option value="val">Validation</option>
-                              <option value="test">Testing</option>
-                            </select>
-                          ) : (
-                            <span
-                              className={cn(
-                                'inline-flex items-center rounded px-2.5 py-0.5 text-xs font-semibold capitalize',
-                                activeSplit === 'train' && 'bg-blue-900/30 text-blue-300',
-                                activeSplit === 'val' && 'bg-amber-900/30 text-amber-300',
-                                activeSplit === 'test' && 'bg-green-900/30 text-green-300',
-                                activeSplit === 'none' && 'bg-gray-800 text-gray-500'
-                              )}
-                            >
-                              {activeSplit === 'none' ? 'unassigned' : activeSplit}
-                            </span>
-                          )}
+                        <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs text-gray-400">Dataset Split:</span>
+                            {canWrite ? (
+                              <select
+                                value={activeSplit}
+                                onChange={(e) => handleSplitChange(e.target.value)}
+                                className={cn(
+                                  'text-xs rounded border px-3 py-1 font-medium focus:outline-none focus:ring-1 cursor-pointer transition-colors',
+                                  SPLIT_SELECT_CLASSES[activeSplit]
+                                )}
+                              >
+                                <option value="none">Unassigned</option>
+                                <option value="train">Train</option>
+                                <option value="val">Validation</option>
+                                <option value="test">Testing</option>
+                              </select>
+                            ) : (
+                              <span
+                                className={cn(
+                                  'inline-flex items-center rounded px-2.5 py-0.5 text-xs font-semibold capitalize',
+                                  activeSplit === 'train' && 'bg-blue-900/30 text-blue-300',
+                                  activeSplit === 'val' && 'bg-amber-900/30 text-amber-300',
+                                  activeSplit === 'test' && 'bg-green-900/30 text-green-300',
+                                  activeSplit === 'none' && 'bg-gray-800 text-gray-500'
+                                )}
+                              >
+                                {activeSplit === 'none' ? 'unassigned' : activeSplit}
+                              </span>
+                            )}
+                          </div>
+                          <p className="text-[10px] text-gray-500 font-mono">
+                            Modified: {new Date(activeImage.lastModifiedIso).toLocaleString()}
+                          </p>
                         </div>
-                        <p className="text-[10px] text-gray-500 font-mono">
-                          Last Modified: {new Date(activeImage.lastModifiedIso).toLocaleString()}
-                        </p>
+                      </div>
+
+                      {/* Interactive Viewport (Takes up full area) */}
+                      <div className="flex-1 min-h-0 flex items-center justify-center relative">
+                        {isVideo(activeImage.key) ? (
+                          <div className="w-full h-full">
+                            <VideoPlayer
+                              videoUrl={activeImageDownloadUrl}
+                              filename={activeImage.key.split('/').pop() || ''}
+                            />
+                          </div>
+                        ) : (
+                          /* eslint-disable-next-line @next/next/no-img-element */
+                          <img
+                            key={activeImage.key}
+                            src={thumbnailUrl(activeImage.key, activeImage.etag, 1200)}
+                            alt={activeImage.key.split('/').pop()}
+                            className="max-w-full max-h-full object-contain shadow-2xl rounded"
+                          />
+                        )}
                       </div>
                     </div>
                   )}
@@ -1046,13 +1059,20 @@ export default function FlightSplitView({
                             )}
                           >
                             <div className="w-full flex-1 min-h-0 bg-gray-100 overflow-hidden rounded mb-1 relative">
-                              {/* eslint-disable-next-line @next/next/no-img-element */}
-                              <img
-                                src={thumbnailUrl(img.key, img.etag, 320)}
-                                alt=""
-                                className="w-full h-full object-cover"
-                                loading="lazy"
-                              />
+                              {isVideo(img.key) ? (
+                                <div className="w-full h-full bg-slate-900 flex flex-col items-center justify-center text-slate-400 text-xs">
+                                  <span className="text-2xl mb-1">🎥</span>
+                                  <span className="text-[9px] font-semibold uppercase tracking-wider text-slate-500">Video</span>
+                                </div>
+                              ) : (
+                                /* eslint-disable-next-line @next/next/no-img-element */
+                                <img
+                                  src={thumbnailUrl(img.key, img.etag, 320)}
+                                  alt=""
+                                  className="w-full h-full object-cover"
+                                  loading="lazy"
+                                />
+                              )}
                             </div>
                             <span className="text-[9px] font-mono text-gray-600 block truncate px-0.5 select-none">
                               {filename}
