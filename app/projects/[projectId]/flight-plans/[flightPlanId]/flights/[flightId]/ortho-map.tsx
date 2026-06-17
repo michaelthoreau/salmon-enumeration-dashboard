@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { cn } from '@/lib/utils'
-import { MapPin, Map, Check, X, RotateCcw, Trash2, Edit, ChevronDown, Image as ImageIcon, Layers, Ruler } from 'lucide-react'
+import { MapPin, Map, Check, X, RotateCcw, Trash2, Edit, ChevronDown, Image as ImageIcon, Layers, Ruler, Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import 'maplibre-gl/dist/maplibre-gl.css'
 
@@ -185,6 +185,7 @@ export default function OrthoMap({
   const [measurePoints, setMeasurePoints] = useState<[number, number][]>([])
   const [measureUnit, setMeasureUnit] = useState<'metric' | 'imperial'>('metric')
   const [cursorCoords, setCursorCoords] = useState<[number, number] | null>(null)
+  const [isTilesLoading, setIsTilesLoading] = useState(false)
 
   // Sync showPhotos state if outputKey transitions from null to loaded
   useEffect(() => {
@@ -250,6 +251,22 @@ export default function OrthoMap({
             map.resetNorthPitch()
           }, { capture: true })
         }
+
+        const handleSourceData = (e: any) => {
+          if (e.sourceId === 'ortho') {
+            const loaded = map.isSourceLoaded('ortho')
+            setIsTilesLoading(!loaded)
+          }
+        }
+
+        const handleSourceDataLoading = (e: any) => {
+          if (e.sourceId === 'ortho') {
+            setIsTilesLoading(true)
+          }
+        }
+
+        map.on('sourcedataloading', handleSourceDataLoading)
+        map.on('sourcedata', handleSourceData)
 
         map.on('moveend', () => {
           if (cancelled) return
@@ -498,6 +515,7 @@ export default function OrthoMap({
 
     async function applyLayer() {
       setStatus('loading')
+      setIsTilesLoading(true)
       
       // Wait for the map to be ready (style loaded)
       await new Promise<void>((resolve) => {
@@ -1308,6 +1326,13 @@ export default function OrthoMap({
             <Layers className="w-3.5 h-3.5" />
             <span>Satellite</span>
           </button>
+        </div>
+      )}
+
+      {isTilesLoading && (
+        <div className="absolute bottom-12 left-4 z-40 bg-white/95 backdrop-blur-sm px-3 py-2 rounded-xl shadow-md border border-gray-200/80 flex items-center gap-2 text-[10px] font-bold uppercase tracking-wider text-gray-500 pointer-events-none select-none animate-in fade-in duration-200">
+          <Loader2 className="w-3.5 h-3.5 text-blue-600 animate-spin" />
+          <span>Loading Tiles...</span>
         </div>
       )}
     </div>

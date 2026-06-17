@@ -94,13 +94,18 @@ def web() -> FastAPI:
         bucket: str | None = Query(None),
         _: None = Depends(_require_auth),
     ) -> dict:
+        import time
         from rio_tiler.io import COGReader
 
+        start_time = time.time()
+        print(f"[INFO] Started metadata read for S3 key: {key}")
         with rasterio.Env(**_gdal_env):
             with COGReader(_s3_url(key, bucket)) as cog:
                 meta = cog.info()
                 bounds = list(cog.geographic_bounds)  # [W, S, E, N] in WGS-84
 
+        duration = (time.time() - start_time) * 1000
+        print(f"[INFO] Completed metadata read for S3 key: {key} in {duration:.1f}ms (bounds: {bounds}, minzoom: {meta.minzoom}, maxzoom: {meta.maxzoom})")
         return {
             "bounds": bounds,
             "minzoom": meta.minzoom,
@@ -116,16 +121,28 @@ def web() -> FastAPI:
         bucket: str | None = Query(None),
         _: None = Depends(_require_auth),
     ) -> Response:
+        import time
         from rio_tiler.io import COGReader
 
+        start_time = time.time()
+        print(f"[PREVIEW] Started preview for key: {key} (max_size: {max_size})")
         try:
             with rasterio.Env(**_gdal_env):
                 with COGReader(_s3_url(key, bucket)) as cog:
+                    read_start = time.time()
                     img = cog.preview(max_size=max_size)
+                    read_duration = (time.time() - read_start) * 1000
+
+                    render_start = time.time()
                     content = img.render(img_format="PNG")
+                    render_duration = (time.time() - render_start) * 1000
         except Exception as exc:
+            total_duration = (time.time() - start_time) * 1000
+            print(f"[PREVIEW] Error generating preview for key: {key} after {total_duration:.1f}ms: {exc}")
             raise HTTPException(status_code=500, detail=str(exc)) from exc
 
+        total_duration = (time.time() - start_time) * 1000
+        print(f"[PREVIEW] Completed preview for key: {key} in {total_duration:.1f}ms (COG read: {read_duration:.1f}ms, PNG render: {render_duration:.1f}ms)")
         return Response(content=content, media_type="image/png")
 
     # ── GET /tiles/{z}/{x}/{y} ─────────────────────────────────────────────────
@@ -139,20 +156,35 @@ def web() -> FastAPI:
         bucket: str | None = Query(None),
         _: None = Depends(_require_auth),
     ) -> Response:
+        import time
         from rio_tiler.errors import TileOutsideBounds
         from rio_tiler.io import COGReader
 
+        start_time = time.time()
         try:
             with rasterio.Env(**_gdal_env):
                 with COGReader(_s3_url(key, bucket)) as cog:
+                    read_start = time.time()
                     img = cog.tile(x, y, z)
+                    read_duration = (time.time() - read_start) * 1000
+
+                    render_start = time.time()
                     content = img.render(img_format="PNG")
+                    render_duration = (time.time() - render_start) * 1000
         except TileOutsideBounds:
             # Transparent tile — MapLibre treats 204 as empty
+            total_duration = (time.time() - start_time) * 1000
+            # Logging 204s is useful but keep it minimal to avoid spam
+            # We can log at debug/info level
+            print(f"[TILE] Tile {z}/{x}/{y} outside bounds for key {key} (took {total_duration:.1f}ms) -> 204")
             return Response(status_code=204)
         except Exception as exc:
+            total_duration = (time.time() - start_time) * 1000
+            print(f"[TILE] Error loading tile {z}/{x}/{y} for key {key} after {total_duration:.1f}ms: {exc}")
             raise HTTPException(status_code=500, detail=str(exc)) from exc
 
+        total_duration = (time.time() - start_time) * 1000
+        print(f"[TILE] Tile {z}/{x}/{y} loaded for key {key} in {total_duration:.1f}ms (COG read: {read_duration:.1f}ms, PNG render: {render_duration:.1f}ms)")
         return Response(content=content, media_type="image/png")
 
     # ── GET /diff-tiles/{z}/{x}/{y} ───────────────────────────────────────────
@@ -170,13 +202,17 @@ def web() -> FastAPI:
         bucket: str | None = Query(None),
         _: None = Depends(_require_auth),
     ) -> Response:
+        import time
         from rio_tiler.errors import TileOutsideBounds
         from rio_tiler.io import COGReader
         import numpy as np
         from PIL import Image
         import io
 
+        start_time = time.time()
+
         # Fetch Left Tile (key1)
+        t1_start = time.time()
         try:
             with rasterio.Env(**_gdal_env):
                 with COGReader(_s3_url(key1, bucket)) as cog1:
@@ -184,9 +220,13 @@ def web() -> FastAPI:
         except TileOutsideBounds:
             img1 = None
         except Exception as exc:
+            total_duration = (time.time() - start_time) * 1000
+            print(f"[DIFF_TILE] Error reading key1: {exc} after {total_duration:.1f}ms")
             raise HTTPException(status_code=500, detail=f"Error reading key1: {exc}") from exc
+        t1_duration = (time.time() - t1_start) * 1000
 
         # Fetch Right Tile (key2)
+        t2_start = time.time()
         try:
             with rasterio.Env(**_gdal_env):
                 with COGReader(_s3_url(key2, bucket)) as cog2:
@@ -194,12 +234,18 @@ def web() -> FastAPI:
         except TileOutsideBounds:
             img2 = None
         except Exception as exc:
+            total_duration = (time.time() - start_time) * 1000
+            print(f"[DIFF_TILE] Error reading key2: {exc} after {total_duration:.1f}ms")
             raise HTTPException(status_code=500, detail=f"Error reading key2: {exc}") from exc
+        t2_duration = (time.time() - t2_start) * 1000
 
         # If both are outside bounds, return transparent (empty tile)
         if img1 is None and img2 is None:
+            total_duration = (time.time() - start_time) * 1000
+            print(f"[DIFF_TILE] Tile {z}/{x}/{y} both outside bounds (took {total_duration:.1f}ms) -> 204")
             return Response(status_code=204)
 
+        diff_start = time.time()
         # Standard width/height of tiles (typically 256)
         width = img1.width if img1 else img2.width
         height = img1.height if img1 else img2.height
@@ -241,6 +287,8 @@ def web() -> FastAPI:
 
         # Check if the output is completely transparent
         if not np.any(out_mask):
+            total_duration = (time.time() - start_time) * 1000
+            print(f"[DIFF_TILE] Tile {z}/{x}/{y} diff mask is fully transparent (took {total_duration:.1f}ms) -> 204")
             return Response(status_code=204)
 
         # Map to Alpha: opacity scales with diff magnitude
@@ -264,14 +312,21 @@ def web() -> FastAPI:
             out_r = np.where(diff_sig < 0, np.clip(100 + diff_sig_abs * 1.5, 0, 255), 0).astype(np.uint8)
             out_g = np.where(diff_sig > 0, np.clip(100 + diff_sig_abs * 1.5, 0, 255), 0).astype(np.uint8)
 
+        diff_duration = (time.time() - diff_start) * 1000
+
         # Merge channels into RGBA PNG
+        png_start = time.time()
         rgba = np.stack([out_r, out_g, out_b, alpha_channel], axis=-1)
         pil_img = Image.fromarray(rgba, mode="RGBA")
 
         buf = io.BytesIO()
         pil_img.save(buf, format="PNG")
         content = buf.getvalue()
+        png_duration = (time.time() - png_start) * 1000
 
+        total_duration = (time.time() - start_time) * 1000
+        print(f"[DIFF_TILE] Tile {z}/{x}/{y} diff for key1: {key1}, key2: {key2} finished in {total_duration:.1f}ms "
+              f"(Read1: {t1_duration:.1f}ms, Read2: {t2_duration:.1f}ms, Calc: {diff_duration:.1f}ms, PNG: {png_duration:.1f}ms)")
         return Response(content=content, media_type="image/png")
 
     return web_app
