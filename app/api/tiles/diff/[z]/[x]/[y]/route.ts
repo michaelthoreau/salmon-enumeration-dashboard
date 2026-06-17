@@ -39,6 +39,8 @@ export async function GET(
     `&max_diff=${encodeURIComponent(maxDiff)}` +
     (bucket ? `&bucket=${encodeURIComponent(bucket)}` : '')
 
+  const startTime = Date.now()
+  let fetchStartTime = Date.now()
   let res: Response
   try {
     res = await fetch(targetUrl, {
@@ -46,21 +48,26 @@ export async function GET(
       cache: 'no-store',
     })
   } catch (err) {
-    console.error(`[Diff Tile Image Route] Error reaching tile server for tile ${z}/${x}/${y}:`, err)
+    console.error(`[Diff Tile Image Route] Error reaching tile server for tile ${z}/${x}/${y} after ${Date.now() - startTime}ms:`, err)
     return new NextResponse('Tile server unreachable', { status: 502 })
   }
+  const fetchDuration = Date.now() - fetchStartTime
 
   if (res.status === 204) {
+    console.log(`[Diff Tile Route] Tile ${z}/${x}/${y} (key1: ${key1}, key2: ${key2}): total ${Date.now() - startTime}ms (fetch ${fetchDuration}ms) -> 204 (No Content)`)
     return new NextResponse(null, { status: 204 })
   }
 
   if (!res.ok) {
     const text = await res.text()
-    console.error(`[Diff Tile Image Route] Tile server returned non-ok status: ${res.status}. Body: ${text}`)
+    console.error(`[Diff Tile Image Route] Tile server returned non-ok status: ${res.status}. Body: ${text} (took total ${Date.now() - startTime}ms, fetch ${fetchDuration}ms)`)
     return new NextResponse('Tile server error', { status: 502 })
   }
 
   const buffer = await res.arrayBuffer()
+  const totalDuration = Date.now() - startTime
+  console.log(`[Diff Tile Route] Tile ${z}/${x}/${y} (key1: ${key1}, key2: ${key2}): total ${totalDuration}ms (fetch ${fetchDuration}ms) -> 200 OK`)
+
   return new NextResponse(buffer, {
     status: 200,
     headers: {

@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useRef, useState, useCallback } from 'react'
-import { X, Sliders, Maximize2, Map, Layers } from 'lucide-react'
+import { X, Sliders, Maximize2, Map, Layers, Loader2 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { buttonVariants } from '@/components/ui/button'
 import 'maplibre-gl/dist/maplibre-gl.css'
@@ -45,6 +45,7 @@ export default function CompareMap({
   
   const [sliderPosition, setSliderPosition] = useState(50)
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading')
+  const [isTilesLoading, setIsTilesLoading] = useState(false)
   const [errorMsg, setErrorMsg] = useState('')
   const [showDiff, setShowDiff] = useState(false)
   const [colormap, setColormap] = useState<'red-green' | 'red-blue' | 'grayscale'>('red-green')
@@ -114,6 +115,40 @@ export default function CompareMap({
             mapAfter.resetNorthPitch()
           }, { capture: true })
         }
+
+        const handleSourceDataBefore = (e: any) => {
+          if (e.sourceId === 'ortho-before') {
+            const loaded = mapBefore.isSourceLoaded('ortho-before')
+            const loadedAfter = mapAfterRef.current ? mapAfterRef.current.isSourceLoaded('ortho-after') : true
+            setIsTilesLoading(!loaded || !loadedAfter)
+          }
+        }
+
+        const handleSourceDataLoadingBefore = (e: any) => {
+          if (e.sourceId === 'ortho-before') {
+            setIsTilesLoading(true)
+          }
+        }
+
+        mapBefore.on('sourcedataloading', handleSourceDataLoadingBefore)
+        mapBefore.on('sourcedata', handleSourceDataBefore)
+
+        const handleSourceDataAfter = (e: any) => {
+          if (e.sourceId === 'ortho-after') {
+            const loaded = mapAfter.isSourceLoaded('ortho-after')
+            const loadedBefore = mapBeforeRef.current ? mapBeforeRef.current.isSourceLoaded('ortho-before') : true
+            setIsTilesLoading(!loaded || !loadedBefore)
+          }
+        }
+
+        const handleSourceDataLoadingAfter = (e: any) => {
+          if (e.sourceId === 'ortho-after') {
+            setIsTilesLoading(true)
+          }
+        }
+
+        mapAfter.on('sourcedataloading', handleSourceDataLoadingAfter)
+        mapAfter.on('sourcedata', handleSourceDataAfter)
  
         // Wait for styles to load
         mapBefore.on('load', () => {
@@ -238,6 +273,7 @@ export default function CompareMap({
     let cancelled = false
 
     async function applyLayerA() {
+      setIsTilesLoading(true)
       // Wait for mapBefore to be ready
       await new Promise<void>((resolve) => {
         const check = setInterval(() => {
@@ -296,6 +332,7 @@ export default function CompareMap({
     let cancelled = false
 
     async function applyLayerB() {
+      setIsTilesLoading(true)
       // Wait for mapAfter to be ready
       await new Promise<void>((resolve) => {
         const check = setInterval(() => {
@@ -604,6 +641,13 @@ export default function CompareMap({
             <Layers className="w-3.5 h-3.5" />
             <span>Satellite</span>
           </button>
+        </div>
+      )}
+
+      {isTilesLoading && (
+        <div className="absolute bottom-12 left-4 z-40 bg-white/95 backdrop-blur-sm px-3 py-2 rounded-xl shadow-md border border-gray-200/80 flex items-center gap-2 text-[10px] font-bold uppercase tracking-wider text-gray-500 pointer-events-none select-none animate-in fade-in duration-200">
+          <Loader2 className="w-3.5 h-3.5 text-blue-600 animate-spin" />
+          <span>Loading Tiles...</span>
         </div>
       )}
     </div>
