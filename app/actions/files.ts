@@ -71,7 +71,9 @@ export async function syncFlightFiles(
           lower.endsWith('.jpeg') ||
           lower.endsWith('.png') ||
           lower.endsWith('.tif') ||
-          lower.endsWith('.tiff')) &&
+          lower.endsWith('.tiff') ||
+          lower.endsWith('.mp4') ||
+          lower.endsWith('.mov')) &&
         !o.key.includes('/odm/')
       )
     })
@@ -173,7 +175,9 @@ export async function syncProjectFiles(
             lower.endsWith('.jpeg') ||
             lower.endsWith('.png') ||
             lower.endsWith('.tif') ||
-            lower.endsWith('.tiff')) &&
+            lower.endsWith('.tiff') ||
+            lower.endsWith('.mp4') ||
+            lower.endsWith('.mov')) &&
           !o.key.includes('/odm/')
         )
       })

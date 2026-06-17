@@ -31,6 +31,7 @@ const nextConfig: NextConfig = {
               cspScriptSrc,
               "style-src 'self' 'unsafe-inline'",
               `img-src 'self' data: blob: ${s3Host} https://server.arcgisonline.com`,
+              `media-src 'self' blob: ${s3Host}`,
               "font-src 'self'",
               `connect-src 'self' ${s3Host} https://tiles.openfreemap.org https://server.arcgisonline.com`,
               "worker-src blob: 'self'",
