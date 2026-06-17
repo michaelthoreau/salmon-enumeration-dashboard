@@ -33,6 +33,10 @@ export default function VideoPlayer({ videoUrl, filename }: VideoPlayerProps) {
     const handlePlaying = () => setIsLoading(false)
     const handleCanPlay = () => setIsLoading(false)
     const handleRateChange = () => setPlaybackRate(video.playbackRate)
+    const handleSeeked = () => {
+      setCurrentTime(video.currentTime)
+      setIsLoading(false)
+    }
 
     const handleProgress = () => {
       const ranges: { start: number; end: number }[] = []
@@ -54,6 +58,8 @@ export default function VideoPlayer({ videoUrl, filename }: VideoPlayerProps) {
     video.addEventListener('playing', handlePlaying)
     video.addEventListener('canplay', handleCanPlay)
     video.addEventListener('ratechange', handleRateChange)
+    video.addEventListener('seeking', handleWaiting)
+    video.addEventListener('seeked', handleSeeked)
 
     // Trigger initial load
     setIsLoading(true)
@@ -70,6 +76,8 @@ export default function VideoPlayer({ videoUrl, filename }: VideoPlayerProps) {
       video.removeEventListener('playing', handlePlaying)
       video.removeEventListener('canplay', handleCanPlay)
       video.removeEventListener('ratechange', handleRateChange)
+      video.removeEventListener('seeking', handleWaiting)
+      video.removeEventListener('seeked', handleSeeked)
     }
   }, [videoUrl])
 
