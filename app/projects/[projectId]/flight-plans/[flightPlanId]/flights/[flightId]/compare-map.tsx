@@ -83,7 +83,17 @@ export default function CompareMap({
           maxZoom: 26,
         })
         mapBeforeRef.current = mapBefore
+        mapBefore.addControl(new maplibre.NavigationControl(), 'top-right')
  
+        const compassBefore = containerBeforeRef.current?.querySelector('.maplibregl-ctrl-compass') as HTMLButtonElement | null
+        if (compassBefore) {
+          compassBefore.addEventListener('click', (e) => {
+            e.preventDefault()
+            e.stopPropagation()
+            mapBefore.resetNorthPitch()
+          }, { capture: true })
+        }
+
         // Init After Map
         const mapAfter = new maplibre.Map({
           container: containerAfterRef.current!,
@@ -94,6 +104,16 @@ export default function CompareMap({
           maxZoom: 26,
         })
         mapAfterRef.current = mapAfter
+        mapAfter.addControl(new maplibre.NavigationControl(), 'top-right')
+
+        const compassAfter = containerAfterRef.current?.querySelector('.maplibregl-ctrl-compass') as HTMLButtonElement | null
+        if (compassAfter) {
+          compassAfter.addEventListener('click', (e) => {
+            e.preventDefault()
+            e.stopPropagation()
+            mapAfter.resetNorthPitch()
+          }, { capture: true })
+        }
  
         // Wait for styles to load
         mapBefore.on('load', () => {
@@ -548,7 +568,7 @@ export default function CompareMap({
         onClick={onExit}
         className={cn(
           buttonVariants({ variant: 'outline', size: 'sm' }),
-          "absolute top-4 right-4 z-50 bg-white/95 backdrop-blur-sm shadow-md hover:bg-gray-100 gap-1.5"
+          "absolute top-4 right-14 z-50 bg-white/95 backdrop-blur-sm shadow-md hover:bg-gray-100 gap-1.5"
         )}
       >
         <X className="w-4 h-4" />

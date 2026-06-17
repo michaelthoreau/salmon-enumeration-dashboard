@@ -240,6 +240,16 @@ export default function OrthoMap({
 
         mapRef.current = map
         map.addControl(new maplibre.AttributionControl({ compact: true }))
+        map.addControl(new maplibre.NavigationControl(), 'top-right')
+
+        const compass = containerRef.current.querySelector('.maplibregl-ctrl-compass') as HTMLButtonElement | null
+        if (compass) {
+          compass.addEventListener('click', (e) => {
+            e.preventDefault()
+            e.stopPropagation()
+            map.resetNorthPitch()
+          }, { capture: true })
+        }
 
         map.on('moveend', () => {
           if (cancelled) return
@@ -755,6 +765,24 @@ export default function OrthoMap({
     }
   }, [isMeasuring, measurePoints.length])
 
+  // ── Handle Escape key to cancel measurement ──────────────────────────────
+  useEffect(() => {
+    if (!isMeasuring) return
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setIsMeasuring(false)
+        setMeasurePoints([])
+        setCursorCoords(null)
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [isMeasuring])
+
   // Toggle crosshair cursor during edit or measure mode
   useEffect(() => {
     if (!mapRef.current) return
@@ -950,7 +978,7 @@ export default function OrthoMap({
 
       {/* ─── Floating Photos Toggle Checkbox ─── */}
       {status === 'ready' && photos && photos.length > 0 && (
-        <div className="absolute top-4 right-4 z-40 bg-white/95 backdrop-blur-sm px-3.5 py-2.5 rounded-2xl shadow-xl border border-gray-200/80 flex flex-col gap-1.5 select-none pointer-events-auto min-w-[170px]">
+        <div className="absolute top-28 right-4 z-40 bg-white/95 backdrop-blur-sm px-3.5 py-2.5 rounded-2xl shadow-xl border border-gray-200/80 flex flex-col gap-1.5 select-none pointer-events-auto min-w-[170px]">
           <div className="flex items-center gap-2.5">
             <input
               type="checkbox"
