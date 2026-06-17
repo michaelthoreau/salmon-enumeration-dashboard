@@ -19,7 +19,6 @@ export default function VideoPlayer({ videoUrl, filename }: VideoPlayerProps) {
   const [isLoading, setIsLoading] = useState(true)
   const [fps, setFps] = useState(29.97) // Default standard drone FPS, can be adjusted
   const [playbackRate, setPlaybackRate] = useState(1)
-  const [isBuffering, setIsBuffering] = useState(false)
 
   // Sync state with video element
   useEffect(() => {
@@ -30,66 +29,13 @@ export default function VideoPlayer({ videoUrl, filename }: VideoPlayerProps) {
     const handlePause = () => setIsPlaying(false)
     const handleTimeUpdate = () => setCurrentTime(video.currentTime)
     const handleDurationChange = () => setDuration(video.duration)
+    const handleWaiting = () => setIsLoading(true)
+    const handlePlaying = () => setIsLoading(false)
+    const handleCanPlay = () => setIsLoading(false)
     const handleRateChange = () => setPlaybackRate(video.playbackRate)
-
-    // Custom buffering logic: wait for at least 10 seconds of buffer (or until end of video)
-    const BUFFER_THRESHOLD_SEC = 10
-
-    const checkBufferAndResume = () => {
-      const time = video.currentTime
-      let bufferedAhead = 0
-
-      for (let i = 0; i < video.buffered.length; i++) {
-        const start = video.buffered.start(i)
-        const end = video.buffered.end(i)
-        if (time >= start && time <= end) {
-          bufferedAhead = end - time
-          break
-        }
-      }
-
-      const isNearEnd = duration > 0 && (duration - time) < BUFFER_THRESHOLD_SEC
-
-      if (isBuffering) {
-        // If we are currently waiting for buffer, only resume when we have enough buffered ahead
-        if (bufferedAhead >= BUFFER_THRESHOLD_SEC || isNearEnd) {
-          setIsBuffering(false)
-          setIsLoading(false)
-          if (isPlaying) {
-            video.play().catch(() => {})
-          }
-        }
-      } else {
-        // If we are playing but buffer drops below 0.5s, trigger buffering state
-        if (bufferedAhead < 0.5 && !isNearEnd && isPlaying) {
-          setIsBuffering(true)
-          setIsLoading(true)
-          video.pause()
-        }
-      }
-    }
-
-    const handleWaiting = () => {
-      setIsBuffering(true)
-      setIsLoading(true)
-      video.pause()
-    }
-
-    const handlePlaying = () => {
-      if (!isBuffering) {
-        setIsLoading(false)
-      }
-    }
-
-    const handleCanPlay = () => {
-      if (!isBuffering) {
-        setIsLoading(false)
-      }
-    }
-
     const handleSeeked = () => {
       setCurrentTime(video.currentTime)
-      checkBufferAndResume()
+      setIsLoading(false)
     }
 
     const handleProgress = () => {
@@ -101,15 +47,11 @@ export default function VideoPlayer({ videoUrl, filename }: VideoPlayerProps) {
         })
       }
       setBufferedRanges(ranges)
-      checkBufferAndResume()
     }
 
     video.addEventListener('play', handlePlay)
     video.addEventListener('pause', handlePause)
-    video.addEventListener('timeupdate', () => {
-      handleTimeUpdate()
-      checkBufferAndResume()
-    })
+    video.addEventListener('timeupdate', handleTimeUpdate)
     video.addEventListener('durationchange', handleDurationChange)
     video.addEventListener('progress', handleProgress)
     video.addEventListener('waiting', handleWaiting)
@@ -137,7 +79,7 @@ export default function VideoPlayer({ videoUrl, filename }: VideoPlayerProps) {
       video.removeEventListener('seeking', handleWaiting)
       video.removeEventListener('seeked', handleSeeked)
     }
-  }, [videoUrl, isPlaying, isBuffering, duration])
+  }, [videoUrl])
 
   // Keep playback rate in sync when changed
   useEffect(() => {
