@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { cn } from '@/lib/utils'
 import { Button, buttonVariants } from '@/components/ui/button'
-import { MapIcon, ImageIcon, DownloadIcon, ArrowLeft, Maximize2, RefreshCw, X, Wind, Cloud, Droplet, Thermometer, Compass, Waves, AlertTriangle } from 'lucide-react'
+import { MapIcon, ImageIcon, DownloadIcon, ArrowLeft, Maximize2, RefreshCw, X, Wind, Cloud, Droplet, Thermometer, Compass, Waves, AlertTriangle, ZoomIn, ZoomOut } from 'lucide-react'
 import FlightUploader from './flight-uploader'
 import FileLightbox from './file-lightbox'
 import EditFlightButton from './edit-flight-button'
@@ -141,7 +141,19 @@ export default function FlightSplitView({
   const getTideSvgData = useCallback((width: number, height: number, padX: number, padY: number) => {
     if (!tides || !tides.predictions || tides.predictions.length === 0) return null
 
-    const predictions = tides.predictions
+    const flightTimeMs = new Date(flight.timestamp).getTime()
+
+    // Filter predictions to show a narrower window: from 12 hours before to 24 hours after the flight
+    const minTimeMs = flightTimeMs - 12 * 60 * 60 * 1000
+    const maxTimeMs = flightTimeMs + 24 * 60 * 60 * 1000
+
+    const predictions = tides.predictions.filter((p) => {
+      const t = new Date(p.time).getTime()
+      return t >= minTimeMs && t <= maxTimeMs
+    })
+
+    if (predictions.length === 0) return null
+
     const values = predictions.map((p) => p.value)
     const minVal = Math.min(...values)
     const maxVal = Math.max(...values)
@@ -161,7 +173,6 @@ export default function FlightSplitView({
     // Find closest prediction to flight timestamp
     let closestIdx = 0
     let minDiff = Infinity
-    const flightTimeMs = new Date(flight.timestamp).getTime()
 
     predictions.forEach((p, idx) => {
       const diff = Math.abs(new Date(p.time).getTime() - flightTimeMs)
@@ -397,6 +408,23 @@ export default function FlightSplitView({
   const images = displayObjects.filter((o) => isImage(o.key) || isVideo(o.key))
   const [activeImage, setActiveImage] = useState<FileEntry | null>(images[0] ?? null)
   const [lightboxImage, setLightboxImage] = useState<FileEntry | null>(null)
+  const [lightboxFullResUrl, setLightboxFullResUrl] = useState<string | null>(null)
+  const [isFullResLoading, setIsFullResLoading] = useState(false)
+
+  // Zoom and pan state for lightbox image
+  const [zoomScale, setZoomScale] = useState(1)
+  const [panOffset, setPanOffset] = useState({ x: 0, y: 0 })
+  const [isDragging, setIsDragging] = useState(false)
+  const dragStartRef = useRef({ x: 0, y: 0 })
+
+  // Reset full res and zoom state when lightbox image changes
+  useEffect(() => {
+    setLightboxFullResUrl(null)
+    setIsFullResLoading(false)
+    setZoomScale(1)
+    setPanOffset({ x: 0, y: 0 })
+    setIsDragging(false)
+  }, [lightboxImage])
 
   // Sync activeImage if the images list changes (e.g. after upload refresh or file deletion)
   useEffect(() => {
@@ -1135,13 +1163,89 @@ export default function FlightSplitView({
           <div className="relative bg-gray-950 border border-gray-800 rounded-2xl overflow-hidden max-w-5xl w-full max-h-[90vh] flex flex-col shadow-2xl z-10">
             {/* Header */}
             <div className="bg-gray-900 border-b border-gray-800 px-6 py-3 flex items-center justify-between text-gray-200">
-              <div className="min-w-0">
+              <div className="min-w-0 flex items-center gap-3">
                 <h3 className="text-sm font-mono font-medium truncate">
                   {lightboxImage.key.split('/').pop()}
                 </h3>
+                <span className="text-xs text-gray-500 font-mono">{formatBytes(lightboxImage.size)}</span>
               </div>
-              <div className="flex items-center gap-4 text-xs text-gray-400 mr-2">
-                <span>{formatBytes(lightboxImage.size)}</span>
+              <div className="flex items-center gap-3 text-xs text-gray-400 mr-2">
+                {/* Zoom Controls */}
+                <div className="flex items-center bg-gray-800 rounded-lg p-0.5 border border-gray-700">
+                  <button
+                    onClick={() => {
+                      setZoomScale(prev => Math.max(1, prev - 0.5))
+                      if (zoomScale <= 1.5) setPanOffset({ x: 0, y: 0 })
+                    }}
+                    disabled={zoomScale <= 1}
+                    className="p-1 hover:bg-gray-700 rounded text-gray-300 hover:text-white disabled:opacity-40 disabled:hover:bg-transparent cursor-pointer"
+                    title="Zoom Out"
+                  >
+                    <ZoomOut className="w-3.5 h-3.5" />
+                  </button>
+                  <span className="px-2 font-mono text-[10px] text-gray-300 min-w-[45px] text-center select-none">
+                    {Math.round(zoomScale * 100)}%
+                  </span>
+                  <button
+                    onClick={() => setZoomScale(prev => Math.min(5, prev + 0.5))}
+                    disabled={zoomScale >= 5}
+                    className="p-1 hover:bg-gray-700 rounded text-gray-300 hover:text-white disabled:opacity-40 disabled:hover:bg-transparent cursor-pointer"
+                    title="Zoom In"
+                  >
+                    <ZoomIn className="w-3.5 h-3.5" />
+                  </button>
+                  {zoomScale > 1 && (
+                    <button
+                      onClick={() => {
+                        setZoomScale(1)
+                        setPanOffset({ x: 0, y: 0 })
+                      }}
+                      className="px-1.5 py-0.5 hover:bg-gray-700 rounded text-[9px] font-bold text-blue-400 hover:text-blue-300 cursor-pointer"
+                    >
+                      RESET
+                    </button>
+                  )}
+                </div>
+
+                {/* Full Res Toggle Button */}
+                {!lightboxFullResUrl ? (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={isFullResLoading}
+                    onClick={async (e) => {
+                      e.preventDefault()
+                      setIsFullResLoading(true)
+                      try {
+                        const res = await fetch(`/api/files/presign?key=${encodeURIComponent(lightboxImage.key)}`)
+                        if (res.ok) {
+                          const { url } = await res.json()
+                          setLightboxFullResUrl(url)
+                        }
+                      } catch (err) {
+                        console.error('Failed to load full res image:', err)
+                      } finally {
+                        setIsFullResLoading(false)
+                      }
+                    }}
+                    className="text-blue-400 hover:text-blue-300 border-blue-900/50 hover:border-blue-800 bg-blue-950/30 hover:bg-blue-950/50 flex items-center gap-1.5 font-semibold h-7 text-[11px] rounded-lg transition-colors cursor-pointer disabled:opacity-50"
+                  >
+                    {isFullResLoading ? (
+                      <>
+                        <RefreshCw className="w-3 h-3 animate-spin" /> Loading...
+                      </>
+                    ) : (
+                      <>
+                        <Maximize2 className="w-3 h-3" /> Load Full Res
+                      </>
+                    )}
+                  </Button>
+                ) : (
+                  <span className="text-green-400 font-semibold flex items-center gap-1 bg-green-950/30 border border-green-900/50 px-2.5 h-7 rounded-lg text-[11px]">
+                    ✓ Full Res Loaded
+                  </span>
+                )}
+
                 <button
                   onClick={async (e) => {
                     e.preventDefault()
@@ -1160,12 +1264,72 @@ export default function FlightSplitView({
               </div>
             </div>
             {/* Viewport */}
-            <div className="flex-1 min-h-0 flex items-center justify-center p-6 bg-gray-950">
-              <img
-                src={thumbnailUrl(lightboxImage.key, lightboxImage.etag, 1200)}
-                alt={lightboxImage.key.split('/').pop()}
-                className="max-w-full max-h-[70vh] object-contain rounded"
-              />
+            <div 
+              className={cn(
+                "flex-1 min-h-0 flex items-center justify-center p-6 bg-gray-950 relative select-none overflow-hidden",
+                zoomScale > 1 ? "cursor-grab active:cursor-grabbing" : ""
+              )}
+              onMouseDown={(e) => {
+                if (zoomScale <= 1) return
+                e.preventDefault()
+                setIsDragging(true)
+                dragStartRef.current = { x: e.clientX - panOffset.x, y: e.clientY - panOffset.y }
+              }}
+              onMouseMove={(e) => {
+                if (!isDragging || zoomScale <= 1) return
+                e.preventDefault()
+                const newX = e.clientX - dragStartRef.current.x
+                const newY = e.clientY - dragStartRef.current.y
+                
+                // Bound panning to prevent dragging completely out of view
+                const maxPanX = (zoomScale - 1) * 400
+                const maxPanY = (zoomScale - 1) * 300
+                setPanOffset({
+                  x: Math.max(-maxPanX, Math.min(maxPanX, newX)),
+                  y: Math.max(-maxPanY, Math.min(maxPanY, newY))
+                })
+              }}
+              onMouseUp={() => setIsDragging(false)}
+              onMouseLeave={() => setIsDragging(false)}
+              onDoubleClick={() => {
+                setZoomScale(1)
+                setPanOffset({ x: 0, y: 0 })
+              }}
+              onWheel={(e) => {
+                e.preventDefault()
+                const delta = e.deltaY < 0 ? 0.25 : -0.25
+                setZoomScale(prev => {
+                  const next = Math.max(1, Math.min(5, prev + delta))
+                  if (next === 1) {
+                    setPanOffset({ x: 0, y: 0 })
+                  }
+                  return next
+                })
+              }}
+            >
+              <div
+                style={{
+                  transform: `translate(${panOffset.x}px, ${panOffset.y}px) scale(${zoomScale})`,
+                  transition: isDragging ? 'none' : 'transform 0.15s ease-out',
+                }}
+                className="max-w-full max-h-[70vh] flex items-center justify-center"
+              >
+                <img
+                  src={lightboxFullResUrl || thumbnailUrl(lightboxImage.key, lightboxImage.etag, 1200)}
+                  alt={lightboxImage.key.split('/').pop()}
+                  className="max-w-full max-h-[70vh] object-contain rounded pointer-events-none"
+                />
+              </div>
+              {isFullResLoading && (
+                <div className="absolute inset-0 flex items-center justify-center bg-black/40 backdrop-blur-xs pointer-events-none">
+                  <RefreshCw className="w-8 h-8 text-blue-500 animate-spin" />
+                </div>
+              )}
+              {zoomScale > 1 && (
+                <div className="absolute bottom-4 left-1/2 -translate-x-1/2 bg-black/60 backdrop-blur-xs px-3 py-1.5 rounded-full text-[10px] text-gray-300 font-medium pointer-events-none select-none">
+                  Drag to pan • Scroll or use buttons to zoom
+                </div>
+              )}
             </div>
           </div>
         </div>
