@@ -105,11 +105,18 @@ def _find_or_create_flight(flight_plan_id: str, timestamp: str, folder_name: str
     """Find an existing flight by folder_name stored in notes, or create a new one.
     Using notes as a stable key prevents duplicate flights when multiple files
     from the same mission trigger separate Lambda invocations.
+    Matches by Chinook flight name suffix so root-level and Matrice-prefixed
+    paths for the same flight are treated as identical.
     """
+    chinook_seg = _chinook_segment(folder_name) if _is_chinook_path(folder_name) else None
     flights = _frontend_get("/api/v1/flights", {"flightPlanId": flight_plan_id})
     for f in (flights or []):
-        if f.get("notes") == folder_name:
+        notes = f.get("notes", "")
+        if notes == folder_name:
             print(f"Matched flight: {f['id']} ({f.get('timestamp')})")
+            return f["id"]
+        if chinook_seg and notes.endswith(chinook_seg):
+            print(f"Matched flight by Chinook suffix: {f['id']} ({f.get('timestamp')})")
             return f["id"]
 
     result = _frontend_post("/api/v1/flights", {
