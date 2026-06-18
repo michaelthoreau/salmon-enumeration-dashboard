@@ -2,6 +2,7 @@
 import json
 import os
 import re
+import uuid as _uuid
 import urllib.request
 import urllib.parse
 import boto3
@@ -11,6 +12,13 @@ BUCKET_NAME = os.environ["BUCKET_NAME"]
 FRONTEND_API_URL = os.environ["FRONTEND_API_URL"]
 FRONTEND_API_KEY = os.environ["FRONTEND_API_KEY"]
 FRONTEND_PROJECT_ID = os.environ.get("FRONTEND_PROJECT_ID", "")
+
+DJI_OPENAPI_KEY = os.environ.get("DJI_OPENAPI_KEY", "")
+DJI_BASE_URL = os.environ.get("DJI_BASE_URL", "https://es-flight-api-us.djigate.com")
+
+# Module-level caches — persist across warm Lambda invocations
+_dji_device_cache: dict = {}   # dji_project_id → [device, ...]
+_dji_wayline_cache: dict = {}  # wayline_uuid → name
 
 CONTENT_TYPES = {
     ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
@@ -112,8 +120,91 @@ def _find_or_create_flight(flight_plan_id: str, timestamp: str, folder_name: str
     print(f"Created flight: {result['id']} at {result.get('timestamp')}")
     return result["id"]
 
+#DJI API helpers for DITB route name lookup
+def _dji_get(path: str, project_uuid: str = "", params: dict = None) -> dict:
+    url = f"{DJI_BASE_URL}{path}"
+    if params:
+        url += "?" + urllib.parse.urlencode(params)
+    headers = {
+        "X-User-Token": DJI_OPENAPI_KEY,
+        "Content-Type": "application/json",
+        "X-Language": "en",
+        "X-Request-Id": str(_uuid.uuid4()),
+    }
+    if project_uuid:
+        headers["X-Project-Uuid"] = project_uuid
+    req = urllib.request.Request(url, headers=headers)
+    with urllib.request.urlopen(req, timeout=15) as resp:
+        return json.loads(resp.read())
+
+
+def _get_ditb_plan_name(dji_project_id: str, created_at: int, fh2_file_path: str) -> str:
+    """
+    Resolve the route (wayline) name for a Drone in the Box flight via the DJI API.
+
+    DJI task names (e.g. "Ians-requested-flight 2") differ from the underlying
+    wayline/route name (e.g. "TrainingArea-LinearRouteForTesting"). This function
+    looks up the task by name + timestamp window, then follows the wayline_uuid to
+    get the actual route name so DITB and Chinook-1 flights map to the same plan.
+
+    Chain: project/device → flight-task/list (match by task name) → wayline/{uuid}
+    Returns empty string if the lookup fails or DJI_OPENAPI_KEY is not set.
+    """
+    if not DJI_OPENAPI_KEY or not dji_project_id:
+        return ""
+
+    # Strip timestamp from fh2_file_path to recover the DJI task name
+    # e.g. "Ians-requested-flight 2 2026-06-02 12:02:45 (UTC-08)" → "Ians-requested-flight 2"
+    task_name = re.sub(r'\s+\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}.*$', '', fh2_file_path).strip()
+    if not task_name:
+        return ""
+
+    try:
+        # Step 1: Get dock devices for this project (cached per warm instance)
+        if dji_project_id not in _dji_device_cache:
+            resp = _dji_get("/openapi/v0.1/project/device", project_uuid=dji_project_id)
+            _dji_device_cache[dji_project_id] = (resp.get("data") or {}).get("list") or []
+        devices = _dji_device_cache[dji_project_id]
+
+        # Step 2: Search tasks in a 24h-before to 1h-after window around the sync event
+        # created_at is in seconds; DJI task list API uses milliseconds
+        begin_at = (created_at - 86400) * 1000
+        end_at   = (created_at + 3600) * 1000
+
+        for device in devices:
+            sn = device.get("sn")
+            if not sn:
+                continue
+            tasks_resp = _dji_get(
+                "/openapi/v0.1/flight-task/list",
+                project_uuid=dji_project_id,
+                params={"sn": sn, "begin_at": begin_at, "end_at": end_at},
+            )
+            tasks = (tasks_resp.get("data") or {}).get("list") or []
+
+            for task in tasks:
+                if task.get("name") != task_name:
+                    continue
+                wayline_uuid = task.get("wayline_uuid")
+                if not wayline_uuid:
+                    continue
+
+                # Step 3: Resolve wayline name (cached)
+                if wayline_uuid not in _dji_wayline_cache:
+                    wr = _dji_get(f"/openapi/v0.1/wayline/{wayline_uuid}", project_uuid=dji_project_id)
+                    _dji_wayline_cache[wayline_uuid] = (wr.get("data") or {}).get("name") or ""
+                name = _dji_wayline_cache.get(wayline_uuid, "")
+                if name:
+                    print(f"DITB route resolved: {task_name!r} → {name!r}")
+                    return name
+
+    except Exception as e:
+        print(f"[WARN] DITB wayline lookup failed: {e}")
+
+    return ""
+
+
 #Functions for extracting plan name and timestamp
-#WORKS FOR CHINOOK-1 NOT DRONE IN THE BOX YET
 def _is_chinook_path(fh2_file_path: str) -> bool:
     """Chinook-1 paths are folder-style: 'DroneID/DJI_YYYYMMDDHHMM_NNN_RouteName'"""
     return "/" in fh2_file_path
@@ -175,7 +266,15 @@ def handler(event, _context):
         return {"statusCode": 200, "body": json.dumps({"code": 0})}
 
     folder_name = fh2_file_path
-    plan_name = _parse_plan_name(fh2_file_path)
+    if _is_chinook_path(fh2_file_path):
+        plan_name = _parse_plan_name(fh2_file_path)
+    else:
+        dji_project_id = body.get("project_id", "")
+        created_at     = body.get("created_at", 0)
+        plan_name = _get_ditb_plan_name(dji_project_id, created_at, fh2_file_path)
+        if not plan_name:
+            # Fallback: use task name minus timestamp
+            plan_name = _parse_plan_name(fh2_file_path)
     timestamp = _parse_timestamp(fh2_file_path)
     filename = source_key.split("/")[-1]
 
