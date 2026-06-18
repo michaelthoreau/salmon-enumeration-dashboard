@@ -1,4 +1,5 @@
 import { S3Client, ListObjectsV2Command, DeleteObjectCommand, GetObjectCommand, HeadObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3'
+import { Upload } from '@aws-sdk/lib-storage'
 import { createPresignedPost } from '@aws-sdk/s3-presigned-post'
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner'
 
@@ -190,4 +191,16 @@ export async function getObjectRange(
     contentRange: response.ContentRange,
     acceptRanges: response.AcceptRanges ?? 'bytes',
   }
+}
+
+/** Stream a ReadableStream directly into S3 using multipart upload. */
+export async function uploadStream(
+  key: string,
+  body: ReadableStream<Uint8Array>,
+): Promise<void> {
+  const upload = new Upload({
+    client: getClient(),
+    params: { Bucket: getBucket(), Key: key, Body: body },
+  })
+  await upload.done()
 }

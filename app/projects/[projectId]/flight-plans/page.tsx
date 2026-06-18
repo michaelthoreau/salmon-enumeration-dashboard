@@ -9,6 +9,7 @@ import { buttonVariants } from '@/components/ui/button'
 import CreateFlightPlanForm from './create-flight-plan-form'
 import { DeleteFlightPlanButton, RestoreFlightPlanButton, EditFlightPlanButton } from './flight-plan-actions'
 import SyncProjectButton from './sync-project-button'
+import DjiSyncButton from './dji-sync-button'
 
 interface PageProps {
   params: Promise<{ projectId: string }>
@@ -41,6 +42,7 @@ export default async function FlightPlansPage({ params }: PageProps) {
             <span className="text-sm font-normal text-gray-500">({active.length})</span>
           </h2>
           <div className="flex items-center gap-2">
+            {canWrite && <DjiSyncButton projectId={projectId} />}
             {canWrite && <SyncProjectButton projectId={projectId} />}
             {isAdmin && <CreateFlightPlanForm projectId={projectId} />}
           </div>
