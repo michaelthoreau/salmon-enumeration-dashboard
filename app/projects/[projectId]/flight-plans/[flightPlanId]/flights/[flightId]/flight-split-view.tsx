@@ -412,10 +412,33 @@ export default function FlightSplitView({
   // Calculate total fish count from annotations
   const totalFishCount = annotations.reduce((sum, anno) => sum + (anno.fishCount || 0), 0)
 
-  // Sync annotations if initialAnnotations changes
+  // Sync annotations if initialAnnotations changes (e.g. server-side refresh)
   useEffect(() => {
     setAnnotations(initialAnnotations)
   }, [initialAnnotations])
+
+  // Poll for new annotations every 7s to support concurrent annotators
+  useEffect(() => {
+    const url = `/api/projects/${projectId}/flight-plans/${flightPlanId}/flights/${flightId}/annotations`
+    const poll = async () => {
+      try {
+        const res = await fetch(url)
+        if (!res.ok) return
+        const serverAnnotations = await res.json()
+        setAnnotations((prev) => {
+          // Keep any optimistic (in-flight) entries the current user just added
+          const optimistic = prev.filter((a) => String(a.id).startsWith('__optimistic__'))
+          // Merge: server is the source of truth for all confirmed annotations
+          return [...serverAnnotations, ...optimistic]
+        })
+      } catch {
+        // Network hiccup — silently skip this poll cycle
+      }
+    }
+
+    const interval = setInterval(poll, 7000)
+    return () => clearInterval(interval)
+  }, [projectId, flightPlanId, flightId])
 
   // Image list filtering
   const images = displayObjects.filter((o) => isImage(o.key) || isVideo(o.key))
