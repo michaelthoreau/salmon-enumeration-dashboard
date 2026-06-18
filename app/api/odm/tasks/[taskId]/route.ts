@@ -233,9 +233,8 @@ export async function DELETE(req: NextRequest, { params }: RouteParams): Promise
 
 
 /**
- * Downloads all.zip from NodeODM (which contains only the orthophoto + report
- * thanks to the "outputs" option set at task creation), extracts both files,
- * and uploads them to S3.  Returns the S3 keys for each.
+ * Delegates the slow and memory-intensive output collection phase to the Modal worker
+ * to prevent Vercel serverless functions from running out of memory (OOM).
  */
 async function collectOdmOutputs(
   odmUuid: string,
@@ -254,26 +253,34 @@ async function collectOdmOutputs(
     .where(deq(flightPlans.id, flight.flightPlanId))
   if (!flightPlan) throw new Error('FlightPlan not found when collecting ODM outputs')
 
-  const prefix = flightPrefix(flightPlan.projectId, flight.flightPlanId, flightId)
-  const zipBuffer = await odmDownloadAllZip(odmUuid)
-  const files = unzipSync(new Uint8Array(zipBuffer))
-
-  // ── GeoTIFF (required) ──────────────────────────────────────────────────
-  const tifEntry = Object.keys(files).find(
-    (k) => k.includes('odm_orthophoto') && (k.endsWith('.tif') || k.endsWith('.tiff')),
-  )
-  if (!tifEntry) throw new Error('odm_orthophoto.tif not found in all.zip')
-
-  const outputKey = `${prefix}outputs/orthophoto.tif`
-  await putObject(outputKey, Buffer.from(files[tifEntry]), 'image/tiff')
-
-  // ── Report PDF (optional — may not exist if ODM skipped it) ────────────
-  let reportKey: string | undefined
-  const reportEntry = Object.keys(files).find((k) => k.includes('report') && k.endsWith('.pdf'))
-  if (reportEntry) {
-    reportKey = `${prefix}odm/${flightId}_report.pdf`
-    await putObject(reportKey, Buffer.from(files[reportEntry]), 'application/pdf')
+  const workerUrl = process.env.MODAL_ODM_WORKER_URL
+  const workerToken = process.env.MODAL_ODM_WORKER_TOKEN
+  if (!workerUrl || !workerToken) {
+    throw new Error('MODAL_ODM_WORKER_URL or MODAL_ODM_WORKER_TOKEN not configured')
   }
 
-  return { outputKey, reportKey }
+  console.log(`[ODM Tasks API] Delegating output collection to Modal worker for uuid: ${odmUuid}`);
+  const res = await fetch(`${workerUrl}/collect`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${workerToken}`,
+    },
+    body: JSON.stringify({
+      odm_uuid: odmUuid,
+      flight_id: flightId,
+      project_id: flightPlan.projectId,
+      flight_plan_id: flight.flightPlanId,
+      bucket: process.env.S3_BUCKET_NAME,
+    }),
+  })
+
+  if (!res.ok) {
+    const text = await res.text()
+    throw new Error(`Modal worker collection failed (${res.status}): ${text}`)
+  }
+
+  const data = (await res.json()) as { outputKey: string; reportKey?: string }
+  console.log(`[ODM Tasks API] Successfully collected outputs via Modal worker:`, data);
+  return data
 }

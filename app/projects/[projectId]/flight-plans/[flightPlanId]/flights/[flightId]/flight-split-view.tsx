@@ -102,6 +102,7 @@ interface FlightSplitViewProps {
     stationName: string
     predictions: { time: string; value: number }[]
   } | null
+  initialAnnotations?: any[]
   from?: string
   returnTo?: string
 }
@@ -126,6 +127,7 @@ export default function FlightSplitView({
   localTimestamp,
   weather,
   tides,
+  initialAnnotations = [],
   from,
   returnTo,
 }: FlightSplitViewProps) {
@@ -404,6 +406,17 @@ export default function FlightSplitView({
     }
   }, [geotiffKey])
 
+  // Annotations state
+  const [annotations, setAnnotations] = useState<any[]>(initialAnnotations)
+
+  // Calculate total fish count from annotations
+  const totalFishCount = annotations.reduce((sum, anno) => sum + (anno.fishCount || 0), 0)
+
+  // Sync annotations if initialAnnotations changes
+  useEffect(() => {
+    setAnnotations(initialAnnotations)
+  }, [initialAnnotations])
+
   // Image list filtering
   const images = displayObjects.filter((o) => isImage(o.key) || isVideo(o.key))
   const [activeImage, setActiveImage] = useState<FileEntry | null>(images[0] ?? null)
@@ -535,6 +548,24 @@ export default function FlightSplitView({
                   {flight.timestamp.toISOString()}
                 </p>
                 {flight.notes && <p className="text-sm text-gray-500 mt-2">{flight.notes}</p>}
+                
+                {/* Fish Count Summary Card */}
+                {annotations.length > 0 && (
+                  <div className="mt-3 bg-slate-50 border border-slate-200/60 rounded-lg px-3 py-2 flex items-center justify-between select-none text-xs">
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm">🐟</span>
+                      <span className="text-slate-500 font-medium">
+                        Total Fish Counted:
+                      </span>
+                      <span className="font-bold text-slate-900 tabular-nums">
+                        {totalFishCount}
+                      </span>
+                    </div>
+                    <div className="text-slate-400 font-mono text-[10px]">
+                      {annotations.length} {annotations.length === 1 ? 'annotation' : 'annotations'}
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
             {canWrite && (
@@ -975,6 +1006,49 @@ export default function FlightSplitView({
                 initialLocation={flightPlan.location}
                 onSaveLocation={async (locationJson) => {
                   await updateFlightPlanLocation(flightPlanId, locationJson)
+                }}
+                annotations={annotations}
+                onAddAnnotation={async (anno) => {
+                  try {
+                    const res = await fetch(`/api/projects/${projectId}/flight-plans/${flightPlanId}/flights/${flightId}/annotations`, {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify(anno),
+                    })
+                    if (res.ok) {
+                      const newAnno = await res.json()
+                      setAnnotations((prev) => [...prev, newAnno])
+                    }
+                  } catch (err) {
+                    console.error('Failed to save annotation:', err)
+                  }
+                }}
+                onUpdateAnnotation={async (id, updates) => {
+                  try {
+                    const res = await fetch(`/api/projects/${projectId}/flight-plans/${flightPlanId}/flights/${flightId}/annotations`, {
+                      method: 'PATCH',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ id, ...updates }),
+                    })
+                    if (res.ok) {
+                      const updatedAnno = await res.json()
+                      setAnnotations((prev) => prev.map((a) => (a.id === id ? updatedAnno : a)))
+                    }
+                  } catch (err) {
+                    console.error('Failed to update annotation:', err)
+                  }
+                }}
+                onDeleteAnnotation={async (id) => {
+                  try {
+                    const res = await fetch(`/api/projects/${projectId}/flight-plans/${flightPlanId}/flights/${flightId}/annotations?id=${encodeURIComponent(id)}`, {
+                      method: 'DELETE',
+                    })
+                    if (res.ok) {
+                      setAnnotations((prev) => prev.filter((a) => a.id !== id))
+                    }
+                  } catch (err) {
+                    console.error('Failed to delete annotation:', err)
+                  }
                 }}
               />
             </div>

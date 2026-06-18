@@ -178,3 +178,19 @@ export const apiKeys = sqliteTable('api_keys', {
   lastUsedAt: integer('last_used_at', { mode: 'timestamp' }),
   revokedAt: integer('revoked_at', { mode: 'timestamp' }),
 })
+
+// ─── Annotations ───────────────────────────────────────────────────────────────
+
+export const annotations = sqliteTable('annotations', {
+  id: text('id').primaryKey(), // nanoid
+  flightId: text('flight_id').notNull(), // FK → flights.id
+  shape: text('shape').$type<'point' | 'polygon' | 'linestring'>().notNull(),
+  label: text('label').notNull().default('fish'),
+  fishCount: integer('fish_count').notNull().default(1),
+  confidence: real('confidence').notNull().default(1.0),
+  geometry: text('geometry').notNull(), // GeoJSON Geometry string
+  createdBy: text('created_by').notNull(), // userId
+  createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
+  modifiedAt: integer('modified_at', { mode: 'timestamp' }).notNull(),
+  deletedAt: integer('deleted_at', { mode: 'timestamp' }), // soft delete
+})
