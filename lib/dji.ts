@@ -112,6 +112,13 @@ export async function fetchAllDjiMedia(
   return allItems
 }
 
+const CHINOOK_RE = /^DJI_\d{12}_\d{3}_/
+
+function chinookFlightName(fh2FilePath: string): string | null {
+  const segment = fh2FilePath.includes('/') ? fh2FilePath.split('/').slice(1).join('/') : fh2FilePath
+  return CHINOOK_RE.test(segment) ? segment : null
+}
+
 export function buildFlightTree(allItems: DjiMediaItem[]): DjiFlight[] {
   const childrenOf = new Map<number, DjiMediaItem[]>()
   for (const item of allItems) {
@@ -159,14 +166,35 @@ export function buildFlightTree(allItems: DjiMediaItem[]): DjiFlight[] {
     }
   }
 
+  // Dedup: when DJI returns the same Chinook flight both at root level and
+  // nested under a drone ID folder (partial re-org), merge file lists by ID
+  // so no files are lost from either copy.
+  const byName = new Map<string, DjiFlight>()
+  const deduped: DjiFlight[] = []
+  for (const flight of flights) {
+    const key = chinookFlightName(flight.fh2FilePath)
+    if (!key) {
+      deduped.push(flight)
+      continue
+    }
+    const existing = byName.get(key)
+    if (!existing) {
+      byName.set(key, flight)
+      deduped.push(flight)
+    } else {
+      const seenIds = new Set(existing.files.map((f) => f.id))
+      for (const f of flight.files) {
+        if (!seenIds.has(f.id)) existing.files.push(f)
+      }
+    }
+  }
+
   // Newest first — folder name contains timestamp so lexicographic sort works
-  flights.sort((a, b) => (a.fh2FilePath > b.fh2FilePath ? -1 : 1))
-  return flights
+  deduped.sort((a, b) => (a.fh2FilePath > b.fh2FilePath ? -1 : 1))
+  return deduped
 }
 
 // ─── Path-parsing helpers — keep in sync with webhook_handler.py ─────────────
-
-const CHINOOK_RE = /^DJI_\d{12}_\d{3}_/
 
 export function isChinookPath(fh2FilePath: string): boolean {
   if (fh2FilePath.includes('/')) return true
