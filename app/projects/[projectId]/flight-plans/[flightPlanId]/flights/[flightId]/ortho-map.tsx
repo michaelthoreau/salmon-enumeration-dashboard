@@ -190,6 +190,10 @@ export default function OrthoMap({
 
   // ── Annotation states ──────────────────────────────────────────────────────
   const [isAnnotating, setIsAnnotating] = useState(false)
+  const isAnnotatingRef = useRef(false)
+  const isMeasuringRef = useRef(false)
+  // Refs for callbacks used inside stale-closure map handlers
+  const onDeleteAnnotationRef = useRef(onDeleteAnnotation)
 
   // ── Measurement states ──────────────────────────────────────────────────────
   const [isMeasuring, setIsMeasuring] = useState(false)
@@ -491,7 +495,7 @@ export default function OrthoMap({
 
           // Hover handlers for photos
           map.on('mouseenter', 'photo-layer', (e: any) => {
-            if (isAnnotating) return
+            if (isAnnotatingRef.current || isMeasuringRef.current) return
             map.getCanvas().style.cursor = 'pointer'
             const features = map.queryRenderedFeatures(e.point, { layers: ['photo-layer'] })
             if (features.length > 0) {
@@ -501,7 +505,7 @@ export default function OrthoMap({
           })
 
           map.on('mouseleave', 'photo-layer', () => {
-            if (isAnnotating) return
+            if (isAnnotatingRef.current || isMeasuringRef.current) return
             map.getCanvas().style.cursor = ''
             map.setFilter('photo-hover-layer', ['==', 'key', ''])
           })
@@ -517,7 +521,7 @@ export default function OrthoMap({
           })
 
           map.on('mouseleave', 'annotations-layer', () => {
-            map.getCanvas().style.cursor = isAnnotating ? 'crosshair' : ''
+            map.getCanvas().style.cursor = (isAnnotatingRef.current || isMeasuringRef.current) ? 'crosshair' : ''
             map.setFilter('annotations-hover-layer', ['==', 'id', ''])
           })
 
@@ -604,15 +608,25 @@ export default function OrthoMap({
               deleteBtn.onclick = async (event) => {
                 event.preventDefault()
                 event.stopPropagation()
-                if (confirm('Delete this annotation?')) {
-                  if (onDeleteAnnotation) {
-                    await onDeleteAnnotation(id)
-                  }
-                  popup.remove()
+                if (onDeleteAnnotation) {
+                  await onDeleteAnnotation(id)
                 }
+                popup.remove()
               }
 
               popup.setDOMContent(container).addTo(map)
+            }
+          })
+
+          // Right-click on an annotation = instant delete (no popup)
+          map.on('contextmenu', 'annotations-layer', async (e: any) => {
+            e.preventDefault()
+            const features = map.queryRenderedFeatures(e.point, { layers: ['annotations-layer'] })
+            if (features.length > 0) {
+              const { id } = features[0].properties
+              if (onDeleteAnnotationRef.current) {
+                await onDeleteAnnotationRef.current(id)
+              }
             }
           })
 
@@ -764,8 +778,26 @@ export default function OrthoMap({
         })
         map.addLayer({ id: 'ortho-layer', type: 'raster', source: 'ortho' })
 
-        // Move photo layers to the top above the orthophoto layer
+        // Re-order layers above the orthophoto layer.
+        // Stack order (bottom → top): annotations → location → photos → measure
         console.log('[OrthoMap] Re-ordering layers to keep photos/locations/measurements on top')
+
+        // Annotations sit just above the ortho raster but below photo markers
+        if (map.getLayer('annotations-layer')) {
+          map.moveLayer('annotations-layer')
+        }
+        if (map.getLayer('annotations-hover-layer')) {
+          map.moveLayer('annotations-hover-layer')
+        }
+
+        // Move location layers above annotations
+        if (map.getLayer('location-fill')) {
+          map.moveLayer('location-fill')
+          map.moveLayer('location-line')
+          map.moveLayer('location-point')
+        }
+
+        // Photo markers above location
         if (map.getLayer('photo-hover-layer')) {
           map.moveLayer('photo-hover-layer')
         }
@@ -773,14 +805,7 @@ export default function OrthoMap({
           map.moveLayer('photo-layer')
         }
 
-        // Move location layers to the top if they exist
-        if (map.getLayer('location-fill')) {
-          map.moveLayer('location-fill')
-          map.moveLayer('location-line')
-          map.moveLayer('location-point')
-        }
-
-        // Move measure layers to the top if they exist
+        // Measure tool on top of everything
         if (map.getLayer('measure-line')) {
           map.moveLayer('measure-line')
           map.moveLayer('measure-point-halo')
@@ -947,6 +972,12 @@ export default function OrthoMap({
       }
 
       if (isAnnotating && onAddAnnotation) {
+        // Don't place a new annotation if we clicked an existing one or a photo dot
+        const hits = map.queryRenderedFeatures(e.point, {
+          layers: ['annotations-layer', 'photo-layer'],
+        })
+        if (hits.length > 0) return
+
         const lngLat: [number, number] = [e.lngLat.lng, e.lngLat.lat]
         onAddAnnotation({
           shape: 'point',
@@ -1011,6 +1042,11 @@ export default function OrthoMap({
       window.removeEventListener('keydown', handleKeyDown)
     }
   }, [isMeasuring])
+
+  // Keep refs in sync so stale-closure map handlers always read current values
+  useEffect(() => { isAnnotatingRef.current = isAnnotating }, [isAnnotating])
+  useEffect(() => { isMeasuringRef.current = isMeasuring }, [isMeasuring])
+  useEffect(() => { onDeleteAnnotationRef.current = onDeleteAnnotation }, [onDeleteAnnotation])
 
   // Toggle crosshair cursor during edit, measure, or annotate mode
   useEffect(() => {
@@ -1245,7 +1281,7 @@ export default function OrthoMap({
           {!isMeasuring && (
             <div className="flex gap-2">
               {photos && photos.length > 0 && (
-                <div className="bg-white/95 backdrop-blur-sm px-3.5 h-9 rounded-xl shadow-md border border-gray-200/80 flex items-center gap-2.5 select-none">
+                <div className="bg-white/95 backdrop-blur-sm px-3.5 h-auto py-1.5 rounded-xl shadow-md border border-gray-200/80 flex items-center gap-2.5 select-none">
                   <input
                     type="checkbox"
                     id="show-photos-toggle"
@@ -1273,9 +1309,9 @@ export default function OrthoMap({
                   size="sm"
                   variant={isAnnotating ? "default" : "outline"}
                   className={cn(
-                    "h-9 rounded-xl shadow-md text-xs font-semibold gap-2 transition-all",
-                    isAnnotating 
-                      ? "bg-red-600 hover:bg-red-700 text-white border-red-600" 
+                    "rounded-xl shadow-md text-xs font-semibold gap-2 transition-all h-auto py-1.5",
+                    isAnnotating
+                      ? "bg-red-600 hover:bg-red-700 text-white border-red-600"
                       : "bg-white/95 border border-gray-200/80 hover:bg-gray-50"
                   )}
                   onClick={() => {
@@ -1286,14 +1322,17 @@ export default function OrthoMap({
                   }}
                 >
                   <span className="text-sm">🐟</span>
-                  <span>{isAnnotating ? "Annotating (Click Map)" : "Annotate Fish"}</span>
+                  <span className="flex flex-col items-start leading-tight">
+                    <span>{isAnnotating ? 'Annotating (Click Map)' : 'Annotate Fish'}</span>
+                    <span className="text-[10px] font-normal opacity-75">Right-click marker to remove</span>
+                  </span>
                 </Button>
               )}
 
               <Button
                 size="sm"
                 variant="outline"
-                className="bg-white/95 border border-gray-200/80 hover:bg-gray-50 text-xs font-semibold gap-2 h-9 rounded-xl shadow-md"
+                className="bg-white/95 border border-gray-200/80 hover:bg-gray-50 text-xs font-semibold gap-2 h-auto py-1.5 rounded-xl shadow-md"
                 onClick={() => {
                   setIsMeasuring(true)
                   setMeasurePoints([])

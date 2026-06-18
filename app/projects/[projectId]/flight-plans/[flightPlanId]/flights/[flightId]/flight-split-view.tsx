@@ -559,23 +559,6 @@ export default function FlightSplitView({
                 </p>
                 {flight.notes && <p className="text-sm text-gray-500 mt-2">{flight.notes}</p>}
                 
-                {/* Fish Count Summary Card */}
-                {annotations.length > 0 && (
-                  <div className="mt-3 bg-slate-50 border border-slate-200/60 rounded-lg px-3 py-2 flex items-center justify-between select-none text-xs">
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm">🐟</span>
-                      <span className="text-slate-500 font-medium">
-                        Total Fish Counted:
-                      </span>
-                      <span className="font-bold text-slate-900 tabular-nums">
-                        {totalFishCount}
-                      </span>
-                    </div>
-                    <div className="text-slate-400 font-mono text-[10px]">
-                      {annotations.length} {annotations.length === 1 ? 'annotation' : 'annotations'}
-                    </div>
-                  </div>
-                )}
               </div>
             </div>
             {canWrite && (
@@ -732,6 +715,11 @@ export default function FlightSplitView({
             )}
           </section>
         )}
+
+        {/* Fish Marked Section */}
+        <section className="border-t border-gray-100 pt-4">
+          <p className="text-sm text-gray-700">Fish Marked: <span className="font-semibold">{totalFishCount}</span></p>
+        </section>
 
         {/* Environmental Conditions Section */}
         <section className="border-t border-gray-100 pt-4 space-y-3">
@@ -1019,6 +1007,19 @@ export default function FlightSplitView({
                 }}
                 annotations={annotations}
                 onAddAnnotation={async (anno) => {
+                  // Optimistically add a temp annotation immediately so the
+                  // marker appears on the map without waiting for the server.
+                  const tempId = `__optimistic__${Date.now()}`
+                  const tempAnno = {
+                    id: tempId,
+                    shape: anno.shape,
+                    geometry: anno.geometry,
+                    fishCount: anno.fishCount,
+                    confidence: anno.confidence,
+                    label: null,
+                  }
+                  setAnnotations((prev) => [...prev, tempAnno])
+
                   try {
                     const res = await fetch(`/api/projects/${projectId}/flight-plans/${flightPlanId}/flights/${flightId}/annotations`, {
                       method: 'POST',
@@ -1027,9 +1028,16 @@ export default function FlightSplitView({
                     })
                     if (res.ok) {
                       const newAnno = await res.json()
-                      setAnnotations((prev) => [...prev, newAnno])
+                      // Swap the temp entry for the real one from the server
+                      setAnnotations((prev) => prev.map((a) => (a.id === tempId ? newAnno : a)))
+                    } else {
+                      // Server rejected — roll back
+                      setAnnotations((prev) => prev.filter((a) => a.id !== tempId))
+                      console.error('Failed to save annotation: server returned', res.status)
                     }
                   } catch (err) {
+                    // Network error — roll back
+                    setAnnotations((prev) => prev.filter((a) => a.id !== tempId))
                     console.error('Failed to save annotation:', err)
                   }
                 }}
@@ -1049,16 +1057,26 @@ export default function FlightSplitView({
                   }
                 }}
                 onDeleteAnnotation={async (id) => {
-                  try {
-                    const res = await fetch(`/api/projects/${projectId}/flight-plans/${flightPlanId}/flights/${flightId}/annotations?id=${encodeURIComponent(id)}`, {
-                      method: 'DELETE',
-                    })
-                    if (res.ok) {
-                      setAnnotations((prev) => prev.filter((a) => a.id !== id))
-                    }
-                  } catch (err) {
-                    console.error('Failed to delete annotation:', err)
-                  }
+                  // Optimistically remove immediately
+                  setAnnotations((prev) => {
+                    const removed = prev.find((a) => a.id === id)
+                    ;(async () => {
+                      try {
+                        const res = await fetch(`/api/projects/${projectId}/flight-plans/${flightPlanId}/flights/${flightId}/annotations?id=${encodeURIComponent(id)}`, {
+                          method: 'DELETE',
+                        })
+                        if (!res.ok) {
+                          // Roll back — re-insert the removed annotation
+                          if (removed) setAnnotations((p) => [...p, removed])
+                          console.error('Failed to delete annotation: server returned', res.status)
+                        }
+                      } catch (err) {
+                        if (removed) setAnnotations((p) => [...p, removed])
+                        console.error('Failed to delete annotation:', err)
+                      }
+                    })()
+                    return prev.filter((a) => a.id !== id)
+                  })
                 }}
               />
             </div>
