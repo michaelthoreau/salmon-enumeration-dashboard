@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { cn } from '@/lib/utils'
-import { MapPin, Map, Check, X, RotateCcw, Trash2, Edit, ChevronDown, Image as ImageIcon, Layers, Ruler, Loader2 } from 'lucide-react'
+import { MapPin, Map, Check, X, RotateCcw, Trash2, Edit, ChevronDown, Image as ImageIcon, Layers, Ruler, Loader2, Plus, Minus } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import 'maplibre-gl/dist/maplibre-gl.css'
 
@@ -18,6 +18,10 @@ interface OrthoMapProps {
   flightPlanId?: string
   initialLocation?: string | null
   onSaveLocation?: (locationJson: string | null) => Promise<void>
+  annotations?: any[]
+  onAddAnnotation?: (anno: { shape: 'point' | 'polygon' | 'linestring'; geometry: string; fishCount: number; confidence: number }) => Promise<void>
+  onUpdateAnnotation?: (id: string, updates: { fishCount?: number; confidence?: number; geometry?: string }) => Promise<void>
+  onDeleteAnnotation?: (id: string) => Promise<void>
 }
 
 function haversineDistance(coords1: [number, number], coords2: [number, number]): number {
@@ -161,6 +165,10 @@ export default function OrthoMap({
   editable = false,
   initialLocation = null,
   onSaveLocation,
+  annotations = [],
+  onAddAnnotation,
+  onUpdateAnnotation,
+  onDeleteAnnotation,
 }: OrthoMapProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -179,6 +187,9 @@ export default function OrthoMap({
   const [isSaving, setIsSaving] = useState(false)
   const [showPhotos, setShowPhotos] = useState(true)
   const [basemap, setBasemap] = useState<'street' | 'satellite'>('satellite')
+
+  // ── Annotation states ──────────────────────────────────────────────────────
+  const [isAnnotating, setIsAnnotating] = useState(false)
 
   // ── Measurement states ──────────────────────────────────────────────────────
   const [isMeasuring, setIsMeasuring] = useState(false)
@@ -380,6 +391,38 @@ export default function OrthoMap({
             filter: ['==', 'key', ''],
           })
 
+          // Add annotations source and layers
+          map.addSource('annotations-source', {
+            type: 'geojson',
+            data: { type: 'FeatureCollection', features: [] },
+          })
+
+          map.addLayer({
+            id: 'annotations-layer',
+            type: 'circle',
+            source: 'annotations-source',
+            paint: {
+              'circle-color': '#ef4444',
+              'circle-radius': 7,
+              'circle-stroke-color': '#ffffff',
+              'circle-stroke-width': 2,
+            },
+          })
+
+          map.addLayer({
+            id: 'annotations-hover-layer',
+            type: 'circle',
+            source: 'annotations-source',
+            paint: {
+              'circle-color': '#dc2626',
+              'circle-radius': 10,
+              'circle-stroke-color': '#ffffff',
+              'circle-stroke-width': 2.5,
+              'circle-opacity': 0.9,
+            },
+            filter: ['==', 'id', ''],
+          })
+
           // Add measure source and layers
           map.addSource('measure-source', {
             type: 'geojson',
@@ -425,6 +468,7 @@ export default function OrthoMap({
 
           // Hover handlers for photos
           map.on('mouseenter', 'photo-layer', (e: any) => {
+            if (isAnnotating) return
             map.getCanvas().style.cursor = 'pointer'
             const features = map.queryRenderedFeatures(e.point, { layers: ['photo-layer'] })
             if (features.length > 0) {
@@ -434,8 +478,119 @@ export default function OrthoMap({
           })
 
           map.on('mouseleave', 'photo-layer', () => {
+            if (isAnnotating) return
             map.getCanvas().style.cursor = ''
             map.setFilter('photo-hover-layer', ['==', 'key', ''])
+          })
+
+          // Hover handlers for annotations
+          map.on('mouseenter', 'annotations-layer', (e: any) => {
+            map.getCanvas().style.cursor = 'pointer'
+            const features = map.queryRenderedFeatures(e.point, { layers: ['annotations-layer'] })
+            if (features.length > 0) {
+              const hoveredId = features[0].properties?.id
+              map.setFilter('annotations-hover-layer', ['==', 'id', hoveredId || ''])
+            }
+          })
+
+          map.on('mouseleave', 'annotations-layer', () => {
+            map.getCanvas().style.cursor = isAnnotating ? 'crosshair' : ''
+            map.setFilter('annotations-hover-layer', ['==', 'id', ''])
+          })
+
+          // Click handler for annotations showing a popup with edit/delete controls
+          map.on('click', 'annotations-layer', (e: any) => {
+            const features = map.queryRenderedFeatures(e.point, { layers: ['annotations-layer'] })
+            if (features.length > 0) {
+              const feature = features[0]
+              const coordinates = (feature.geometry as any).coordinates.slice()
+              const { id, label, fishCount, confidence } = feature.properties
+
+              while (Math.abs(e.lngLat.lng - coordinates[0]) > 180) {
+                coordinates[0] += e.lngLat.lng > coordinates[0] ? 360 : -360
+              }
+
+              const container = document.createElement('div')
+              container.className = 'p-3 font-sans select-none flex flex-col gap-2.5 min-w-[180px]'
+
+              const titleEl = document.createElement('div')
+              titleEl.className = 'text-xs font-bold text-gray-800 border-b border-gray-100 pb-1.5 flex items-center justify-between'
+              titleEl.innerHTML = `<span>🐟 Fish Annotation</span>`
+              container.appendChild(titleEl)
+
+              // Fish Count Input Row
+              const countRow = document.createElement('div')
+              countRow.className = 'flex items-center justify-between gap-2 text-xs'
+              countRow.innerHTML = `<span className="text-gray-500 font-medium">Count:</span>`
+              
+              const countControls = document.createElement('div')
+              countControls.className = 'flex items-center gap-1.5 bg-gray-50 border border-gray-200 rounded-lg p-0.5'
+              
+              const decBtn = document.createElement('button')
+              decBtn.className = 'p-1 hover:bg-gray-200 rounded text-gray-600 cursor-pointer'
+              decBtn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"></line></svg>`
+              
+              const countVal = document.createElement('span')
+              countVal.className = 'font-bold text-gray-800 px-1 min-w-[16px] text-center'
+              countVal.textContent = String(fishCount)
+
+              const incBtn = document.createElement('button')
+              incBtn.className = 'p-1 hover:bg-gray-200 rounded text-gray-600 cursor-pointer'
+              incBtn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>`
+
+              countControls.appendChild(decBtn)
+              countControls.appendChild(countVal)
+              countControls.appendChild(incBtn)
+              countRow.appendChild(countControls)
+              container.appendChild(countRow)
+
+              // Delete Button
+              const deleteBtn = document.createElement('button')
+              deleteBtn.className = 'w-full bg-red-50 hover:bg-red-100 text-red-600 font-semibold py-1.5 px-2 rounded-lg text-[10px] text-center border border-red-100 transition-colors cursor-pointer flex items-center justify-center gap-1 mt-1'
+              deleteBtn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg> Delete Annotation`
+
+              container.appendChild(deleteBtn)
+
+              const popup = new maplibre.Popup({ closeButton: true, closeOnClick: true, className: 'custom-annotation-popup' })
+                .setLngLat(coordinates)
+
+              decBtn.onclick = async (event) => {
+                event.preventDefault()
+                event.stopPropagation()
+                const current = parseInt(countVal.textContent || '1', 10)
+                if (current > 1) {
+                  const next = current - 1
+                  countVal.textContent = String(next)
+                  if (onUpdateAnnotation) {
+                    await onUpdateAnnotation(id, { fishCount: next })
+                  }
+                }
+              }
+
+              incBtn.onclick = async (event) => {
+                event.preventDefault()
+                event.stopPropagation()
+                const current = parseInt(countVal.textContent || '1', 10)
+                const next = current + 1
+                countVal.textContent = String(next)
+                if (onUpdateAnnotation) {
+                  await onUpdateAnnotation(id, { fishCount: next })
+                }
+              }
+
+              deleteBtn.onclick = async (event) => {
+                event.preventDefault()
+                event.stopPropagation()
+                if (confirm('Delete this annotation?')) {
+                  if (onDeleteAnnotation) {
+                    await onDeleteAnnotation(id)
+                  }
+                  popup.remove()
+                }
+              }
+
+              popup.setDOMContent(container).addTo(map)
+            }
           })
 
           // Click handler for photos showing a thumbnail popup with an navigation link
@@ -734,7 +889,7 @@ export default function OrthoMap({
     }
   }, [status, outputKey, initialLocation, photos])
 
-  // ── Handle Map Clicks for drawing and measuring ──────────────────────────
+  // ── Handle Map Clicks for drawing, measuring, and annotating ──────────────────────────
   useEffect(() => {
     if (!mapRef.current) return
     const map = mapRef.current
@@ -743,6 +898,17 @@ export default function OrthoMap({
       if (isMeasuring) {
         const lngLat: [number, number] = [e.lngLat.lng, e.lngLat.lat]
         setMeasurePoints((prev) => [...prev, lngLat])
+        return
+      }
+
+      if (isAnnotating && onAddAnnotation) {
+        const lngLat: [number, number] = [e.lngLat.lng, e.lngLat.lat]
+        onAddAnnotation({
+          shape: 'point',
+          geometry: JSON.stringify({ type: 'Point', coordinates: lngLat }),
+          fishCount: 1,
+          confidence: 1.0,
+        })
         return
       }
 
@@ -762,7 +928,7 @@ export default function OrthoMap({
     return () => {
       map.off('click', handleClick)
     }
-  }, [isEditing, isMeasuring])
+  }, [isEditing, isMeasuring, isAnnotating, onAddAnnotation])
 
   // ── Handle Map Mouse Move for live measurement preview ──────────────────────
   useEffect(() => {
@@ -801,16 +967,16 @@ export default function OrthoMap({
     }
   }, [isMeasuring])
 
-  // Toggle crosshair cursor during edit or measure mode
+  // Toggle crosshair cursor during edit, measure, or annotate mode
   useEffect(() => {
     if (!mapRef.current) return
     const canvas = mapRef.current.getCanvas()
-    if (isEditing || isMeasuring) {
+    if (isEditing || isMeasuring || isAnnotating) {
       canvas.style.cursor = 'crosshair'
     } else {
       canvas.style.cursor = ''
     }
-  }, [isEditing, isMeasuring])
+  }, [isEditing, isMeasuring, isAnnotating])
 
   // Update GeoJSON source representation when drawing/loading state changes
   useEffect(() => {
@@ -905,6 +1071,39 @@ export default function OrthoMap({
       })
     }
   }, [photos, status])
+
+  // Update annotations GeoJSON source
+  useEffect(() => {
+    if (!mapRef.current || !mapReadyRef.current || !annotations) return
+    const source = mapRef.current.getSource('annotations-source')
+    if (source) {
+      const features = annotations
+        .map((anno) => {
+          try {
+            const geom = JSON.parse(anno.geometry)
+            return {
+              type: 'Feature' as const,
+              geometry: geom,
+              properties: {
+                id: anno.id,
+                label: anno.label,
+                fishCount: anno.fishCount,
+                confidence: anno.confidence,
+              },
+            }
+          } catch (e) {
+            console.error('Failed to parse annotation geometry:', e)
+            return null
+          }
+        })
+        .filter(Boolean) as any[]
+
+      source.setData({
+        type: 'FeatureCollection',
+        features,
+      })
+    }
+  }, [annotations, status])
 
   // ── Save/Cancel handlers ───────────────────────────────────────────────────
   async function handleSave() {
@@ -1022,6 +1221,30 @@ export default function OrthoMap({
                   </label>
                 </div>
               )}
+              
+              {/* Annotate Toggle Button */}
+              {editable && (
+                <Button
+                  size="sm"
+                  variant={isAnnotating ? "default" : "outline"}
+                  className={cn(
+                    "h-9 rounded-xl shadow-md text-xs font-semibold gap-2 transition-all",
+                    isAnnotating 
+                      ? "bg-red-600 hover:bg-red-700 text-white border-red-600" 
+                      : "bg-white/95 border border-gray-200/80 hover:bg-gray-50"
+                  )}
+                  onClick={() => {
+                    setIsAnnotating(!isAnnotating)
+                    setIsMeasuring(false)
+                    setMeasurePoints([])
+                    setCursorCoords(null)
+                  }}
+                >
+                  <span className="text-sm">🐟</span>
+                  <span>{isAnnotating ? "Annotating (Click Map)" : "Annotate Fish"}</span>
+                </Button>
+              )}
+
               <Button
                 size="sm"
                 variant="outline"
@@ -1032,6 +1255,7 @@ export default function OrthoMap({
                   setCursorCoords(null)
                   setIsEditing(null)
                   setPanelOpen(false)
+                  setIsAnnotating(false)
                 }}
               >
                 <Ruler className="w-4 h-4 text-amber-500" />

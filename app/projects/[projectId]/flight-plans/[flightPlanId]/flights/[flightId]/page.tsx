@@ -5,6 +5,7 @@ import { eq, desc } from 'drizzle-orm'
 import { getSession } from '@/lib/session'
 import { listFlightObjects, createPresignedGetUrl } from '@/lib/s3'
 import { fetchHistoricalWeather, fetchTidePredictions } from '@/lib/weather-tides'
+import { getAnnotations } from '@/app/actions/annotations'
 
 import FlightSplitView from './flight-split-view'
 
@@ -161,16 +162,19 @@ export default async function FlightDetailPage({ params, searchParams }: PagePro
   // 2. Fetch weather and tides in parallel using constant location coordinates
   let weatherData = null
   let tideData = null
+  let annotationsList: any[] = []
 
   try {
-    const [weather, tides] = await Promise.all([
+    const [weather, tides, annos] = await Promise.all([
       fetchHistoricalWeather(59.1828446, -158.5463867, flight.timestamp),
       fetchTidePredictions(59.1828446, -158.5463867, flight.timestamp),
+      getAnnotations(flightId),
     ])
     weatherData = weather
     tideData = tides
+    annotationsList = annos as any[]
   } catch (err) {
-    console.error('Failed to fetch weather/tide data:', err)
+    console.error('Failed to fetch weather/tide/annotations data:', err)
   }
 
   return (
@@ -181,6 +185,7 @@ export default async function FlightDetailPage({ params, searchParams }: PagePro
       flight={flight}
       flightPlan={flightPlan}
       project={project}
+      initialAnnotations={annotationsList}
       displayObjects={displayObjects.map((o) => ({
         key: o.key,
         size: o.size ?? 0,
