@@ -2,13 +2,14 @@
 
 import { db } from '@/lib/db'
 import { flights, flightPlans } from '@/lib/schema'
-import { eq, and, isNull } from 'drizzle-orm'
+import { eq, and, isNull, like } from 'drizzle-orm'
 import { getSession } from '@/lib/session'
 import {
   getDjiSession,
   listDjiProjects as djiListProjects,
   fetchAllDjiMedia,
   buildFlightTree,
+  isChinookPath,
   parsePlanName,
   parseTimestamp,
   slugify,
@@ -80,10 +81,22 @@ export async function getDjiSyncDiff(
         .where(and(eq(flightPlans.projectId, projectId), eq(flightPlans.name, slug), isNull(flightPlans.deletedAt)))
 
       if (plan) {
+        // Match by exact notes, or by Chinook flight name suffix to catch
+        // the same flight stored with/without the drone ID prefix.
+        const chinookSegment = isChinookPath(flight.fh2FilePath)
+          ? (flight.fh2FilePath.includes('/') ? flight.fh2FilePath.split('/').slice(1).join('/') : flight.fh2FilePath)
+          : null
+
         const [existing] = await db
           .select({ id: flights.id })
           .from(flights)
-          .where(and(eq(flights.flightPlanId, plan.id), eq(flights.notes, flight.fh2FilePath), isNull(flights.deletedAt)))
+          .where(and(
+            eq(flights.flightPlanId, plan.id),
+            chinookSegment
+              ? like(flights.notes, `%${chinookSegment}`)
+              : eq(flights.notes, flight.fh2FilePath),
+            isNull(flights.deletedAt),
+          ))
 
         if (existing) continue // already synced
       }
