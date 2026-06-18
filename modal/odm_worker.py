@@ -72,6 +72,14 @@ class ProcessRequest(BaseModel):
     bucket: str  # S3 bucket name — passed from the Next.js app so both sides agree
 
 
+class CollectRequest(BaseModel):
+    odm_uuid: str
+    flight_id: str
+    project_id: str
+    flight_plan_id: str
+    bucket: str
+
+
 # ── Persistent upload progress using modal.Dict ────────────────────────────────
 # Keyed by odm_uuid. Shared across all worker containers.
 _progress = modal.Dict.from_name("salmon-odm-progress", create_if_missing=True)
@@ -253,6 +261,90 @@ def web() -> FastAPI:
             "total": entry["total"],
             "committed": entry["committed"],
             "error": entry["error"],
+        }
+
+    # ── POST /collect ──────────────────────────────────────────────────────
+    @web_app.post("/collect")
+    async def collect(
+        req: CollectRequest,
+        _: None = Depends(_require_auth),
+    ) -> dict:
+        import zipfile
+        import boto3
+        import httpx
+
+        odm_url = _make_odm_url()
+        s3 = boto3.client(
+            "s3",
+            region_name=os.environ["AWS_REGION"],
+            aws_access_key_id=os.environ["AWS_ACCESS_KEY_ID"],
+            aws_secret_access_key=os.environ["AWS_SECRET_ACCESS_KEY"],
+        )
+
+        prefix = f"projects/{req.project_id}/flight-plans/{req.flight_plan_id}/flights/{req.flight_id}/"
+        
+        # 1. Download all.zip from NodeODM
+        print(f"[COLLECT] Downloading all.zip for task {req.odm_uuid}")
+        try:
+            async with httpx.AsyncClient(timeout=600) as client:
+                r = await client.get(odm_url(f"/task/{req.odm_uuid}/download/all.zip"))
+                if r.status_code != 200:
+                    raise HTTPException(
+                        status_code=502,
+                        detail=f"Failed to download all.zip from ODM ({r.status_code}): {r.text[:500]}",
+                    )
+                zip_data = r.content
+        except Exception as exc:
+            print(f"[COLLECT] Error downloading all.zip: {exc}")
+            raise HTTPException(status_code=502, detail=f"Error downloading all.zip: {exc}")
+
+        # 2. Extract and upload to S3
+        print(f"[COLLECT] Extracting and uploading outputs to S3 prefix: {prefix}")
+        output_key = f"{prefix}outputs/orthophoto.tif"
+        report_key = None
+
+        try:
+            with zipfile.ZipFile(io.BytesIO(zip_data)) as z:
+                # Find GeoTIFF
+                tif_entry = next(
+                    (name for name in z.namelist() if "odm_orthophoto" in name and (name.endswith(".tif") or name.endswith(".tiff"))),
+                    None
+                )
+                if not tif_entry:
+                    raise HTTPException(status_code=502, detail="odm_orthophoto.tif not found in all.zip")
+
+                # Upload GeoTIFF
+                print(f"[COLLECT] Uploading GeoTIFF to S3: {output_key}")
+                with z.open(tif_entry) as f:
+                    s3.put_object(
+                        Bucket=req.bucket,
+                        Key=output_key,
+                        Body=f.read(),
+                        ContentType="image/tiff",
+                    )
+
+                # Find and upload Report PDF (optional)
+                report_entry = next(
+                    (name for name in z.namelist() if "report" in name and name.endswith(".pdf")),
+                    None
+                )
+                if report_entry:
+                    report_key = f"{prefix}odm/{req.flight_id}_report.pdf"
+                    print(f"[COLLECT] Uploading Report PDF to S3: {report_key}")
+                    with z.open(report_entry) as f:
+                        s3.put_object(
+                            Bucket=req.bucket,
+                            Key=report_key,
+                            Body=f.read(),
+                            ContentType="application/pdf",
+                        )
+        except Exception as exc:
+            print(f"[COLLECT] Error extracting/uploading outputs: {exc}")
+            raise HTTPException(status_code=502, detail=f"Error extracting/uploading outputs: {exc}")
+
+        return {
+            "outputKey": output_key,
+            "reportKey": report_key,
         }
 
     return web_app
