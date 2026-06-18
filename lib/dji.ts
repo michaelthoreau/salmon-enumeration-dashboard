@@ -166,13 +166,17 @@ export function buildFlightTree(allItems: DjiMediaItem[]): DjiFlight[] {
 
 // ─── Path-parsing helpers — keep in sync with webhook_handler.py ─────────────
 
+const CHINOOK_RE = /^DJI_\d{12}_\d{3}_/
+
 export function isChinookPath(fh2FilePath: string): boolean {
-  return fh2FilePath.includes('/')
+  if (fh2FilePath.includes('/')) return true
+  return CHINOOK_RE.test(fh2FilePath)
 }
 
 export function parsePlanName(fh2FilePath: string): string {
   if (isChinookPath(fh2FilePath)) {
-    const right = fh2FilePath.split('/').slice(1).join('/')
+    // Use the rightmost Chinook-named segment (after '/' if present, else the whole string)
+    const right = fh2FilePath.includes('/') ? fh2FilePath.split('/').slice(1).join('/') : fh2FilePath
     const parts = right.split('_')
     if (parts.length >= 4) return parts.slice(3).join('_')
     return ''
@@ -183,7 +187,7 @@ export function parsePlanName(fh2FilePath: string): string {
 
 export function parseTimestamp(fh2FilePath: string): string | null {
   if (isChinookPath(fh2FilePath)) {
-    const right = fh2FilePath.split('/').slice(1).join('/')
+    const right = fh2FilePath.includes('/') ? fh2FilePath.split('/').slice(1).join('/') : fh2FilePath
     const m = right.match(/DJI_(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})/)
     if (m) {
       const [, y, mo, d, h, mi] = m
