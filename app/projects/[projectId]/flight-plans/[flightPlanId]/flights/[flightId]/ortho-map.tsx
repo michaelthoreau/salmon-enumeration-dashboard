@@ -177,7 +177,7 @@ export default function OrthoMap({
   const [pin, setPin] = useState<[number, number] | null>(null)
   const [points, setPoints] = useState<[number, number][]>([])
   const [isSaving, setIsSaving] = useState(false)
-  const [showPhotos, setShowPhotos] = useState(!outputKey)
+  const [showPhotos, setShowPhotos] = useState(true)
   const [basemap, setBasemap] = useState<'street' | 'satellite'>('satellite')
 
   // ── Measurement states ──────────────────────────────────────────────────────
@@ -189,7 +189,7 @@ export default function OrthoMap({
 
   // Sync showPhotos state if outputKey transitions from null to loaded
   useEffect(() => {
-    setShowPhotos(!outputKey)
+    setShowPhotos(true)
   }, [outputKey])
 
   // Load initial location
@@ -996,7 +996,7 @@ export default function OrthoMap({
 
       {/* ─── Floating Photos Toggle Checkbox ─── */}
       {status === 'ready' && photos && photos.length > 0 && (
-        <div className="absolute top-28 right-4 z-40 bg-white/95 backdrop-blur-sm px-3.5 py-2.5 rounded-2xl shadow-xl border border-gray-200/80 flex flex-col gap-1.5 select-none pointer-events-auto min-w-[170px]">
+        <div className="absolute top-4 right-4 z-40 bg-white/95 backdrop-blur-sm px-3.5 py-2.5 rounded-2xl shadow-xl border border-gray-200/80 flex flex-col gap-1.5 select-none pointer-events-auto min-w-[170px]">
           <div className="flex items-center gap-2.5">
             <input
               type="checkbox"

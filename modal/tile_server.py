@@ -62,6 +62,7 @@ def _require_auth(
         modal.Secret.from_name("salmon"),
     ],
     memory=1024,
+    keep_warm=1,
 )
 @modal.asgi_app()
 def web() -> FastAPI:

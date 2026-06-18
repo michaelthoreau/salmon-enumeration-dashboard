@@ -68,27 +68,60 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
   const { url, token } = getTileServer()
   const bucket = process.env.S3_BUCKET_NAME || ''
-  let res: Response
-  try {
-    console.log(`[Tiles Info] Fetching tile info for key: ${key} (bucket: ${bucket})`);
-    const targetUrl = `${url}/info?key=${encodeURIComponent(key)}` + (bucket ? `&bucket=${encodeURIComponent(bucket)}` : '')
-    console.log(`[Tiles Info] Target URL: ${targetUrl}`);
-    const startTime = Date.now();
-    res = await fetch(targetUrl, {
-      headers: { Authorization: `Bearer ${token}` },
-      signal: AbortSignal.timeout(30_000),
-    })
-    const duration = Date.now() - startTime;
-    console.log(`[Tiles Info] Tile server response status: ${res.status} (took ${duration}ms)`);
-  } catch (err) {
-    console.error(`[Tiles Info] Error reaching tile server:`, err);
-    return NextResponse.json({ error: `Tile server unreachable: ${String(err)}` }, { status: 502 })
+  let res: Response | null = null
+  let lastError: any = null
+
+  // Try fetching with retries to handle cold starts or transient network issues
+  const maxRetries = 3
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      console.log(`[Tiles Info] Fetching tile info for key: ${key} (bucket: ${bucket}) - Attempt ${attempt}/${maxRetries}`);
+      const targetUrl = `${url}/info?key=${encodeURIComponent(key)}` + (bucket ? `&bucket=${encodeURIComponent(bucket)}` : '')
+      const startTime = Date.now();
+      
+      // Increase timeout on subsequent attempts to allow cold starts to finish
+      const timeoutMs = attempt === 1 ? 30_000 : attempt === 2 ? 45_000 : 60_000;
+      
+      const response = await fetch(targetUrl, {
+        headers: { Authorization: `Bearer ${token}` },
+        signal: AbortSignal.timeout(timeoutMs),
+      })
+      
+      const duration = Date.now() - startTime;
+      console.log(`[Tiles Info] Tile server response status: ${response.status} (took ${duration}ms)`);
+      
+      if (response.ok) {
+        res = response
+        break
+      } else {
+        const text = await response.text()
+        console.warn(`[Tiles Info] Attempt ${attempt} failed with status ${response.status}: ${text}`);
+        lastError = new Error(`Tile server error: ${response.status} - ${text}`)
+        
+        // If it's a 4xx client error, don't retry
+        if (response.status >= 400 && response.status < 500) {
+          res = response
+          break
+        }
+      }
+    } catch (err) {
+      console.error(`[Tiles Info] Attempt ${attempt} failed with error:`, err);
+      lastError = err
+    }
+
+    // Wait briefly before retrying (exponential backoff: 1s, 2s)
+    if (attempt < maxRetries) {
+      const delay = attempt * 1000
+      await new Promise((resolve) => setTimeout(resolve, delay))
+    }
+  }
+
+  if (!res) {
+    return NextResponse.json({ error: `Tile server unreachable: ${String(lastError)}` }, { status: 502 })
   }
 
   if (!res.ok) {
-    const text = await res.text()
-    console.error(`[Tiles Info] Tile server returned non-ok status: ${res.status}. Body: ${text}`);
-    return NextResponse.json({ error: `Tile server error: ${res.status}`, detail: text }, { status: 502 })
+    return NextResponse.json({ error: `Tile server error: ${res.status}`, detail: String(lastError) }, { status: 502 })
   }
 
   const data = (await res.json()) as any
