@@ -205,15 +205,23 @@ def _get_ditb_plan_name(dji_project_id: str, created_at: int, fh2_file_path: str
 
 
 #Functions for extracting plan name and timestamp
+_CHINOOK_RE = re.compile(r'^DJI_\d{12}_\d{3}_')
+
 def _is_chinook_path(fh2_file_path: str) -> bool:
-    """Chinook-1 paths are folder-style: 'DroneID/DJI_YYYYMMDDHHMM_NNN_RouteName'"""
-    return "/" in fh2_file_path
+    """Chinook paths: 'DroneID/DJI_YYYYMMDDHHMM_NNN_RouteName' or root-level 'DJI_YYYYMMDDHHMM_NNN_RouteName'"""
+    if "/" in fh2_file_path:
+        return True
+    return bool(_CHINOOK_RE.match(fh2_file_path))
+
+
+def _chinook_segment(fh2_file_path: str) -> str:
+    """Return the Chinook flight segment (after '/' if present, else the whole string)."""
+    return fh2_file_path.split("/", 1)[1] if "/" in fh2_file_path else fh2_file_path
 
 
 def _parse_plan_name(fh2_file_path: str) -> str:
     if _is_chinook_path(fh2_file_path):
-        # Right side: 'DJI_202606081426_001_TrainingArea-LinearRouteForTesting'
-        right = fh2_file_path.split("/", 1)[1]
+        right = _chinook_segment(fh2_file_path)
         parts = right.split("_")
         # Route name is everything after the first 3 underscore-delimited segments
         if len(parts) >= 4:
@@ -228,8 +236,7 @@ def _parse_plan_name(fh2_file_path: str) -> str:
 
 def _parse_timestamp(fh2_file_path: str) -> str:
     if _is_chinook_path(fh2_file_path):
-        # Right side: 'DJI_202606081426_001_...' → '2026-06-08T14:26:00'
-        right = fh2_file_path.split("/", 1)[1]
+        right = _chinook_segment(fh2_file_path)
         match = re.match(r'DJI_(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})', right)
         if match:
             y, mo, d, h, mi = match.groups()
