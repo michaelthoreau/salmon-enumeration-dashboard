@@ -46,7 +46,7 @@ function decodeJwt(token: string): Record<string, unknown> {
 }
 
 export function getDjiSession(): DjiSession {
-  const token = process.env.DJI_OPENAPI_KEY
+  const token = process.env.DJI_OPENAPI_KEY?.trim()
   if (!token) throw new Error('DJI_OPENAPI_KEY environment variable is not set')
   const payload = decodeJwt(token)
   const orgUuid = (payload.organization_uuid as string) ?? ''
@@ -73,14 +73,15 @@ async function djiGet(
     signal: AbortSignal.timeout(15_000),
   })
   if (!res.ok) throw new Error(`DJI API ${path} returned ${res.status}`)
-  return res.json()
+  const json = await res.json() as Record<string, unknown>
+  if (json.code !== 0) throw new Error(`DJI API ${path} error ${json.code}: ${json.message}`)
+  return json
 }
 
 export async function listDjiProjects(
   session: DjiSession,
 ): Promise<{ uuid: string; name: string }[]> {
   const data = await djiGet(session, '/openapi/v0.1/project', { page: 1, page_size: 50 }) as Record<string, unknown>
-  console.log('[DJI] listDjiProjects raw:', JSON.stringify(data).slice(0, 1000))
   const list = ((data?.data as Record<string, unknown>)?.list ?? []) as Record<string, unknown>[]
   return list.map((p) => ({ uuid: p.uuid as string, name: (p.name as string) ?? 'unnamed' }))
 }
