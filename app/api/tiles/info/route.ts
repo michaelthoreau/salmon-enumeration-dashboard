@@ -12,17 +12,21 @@ function getTileServer(): { url: string; token: string } {
 }
 
 export async function GET(request: NextRequest): Promise<NextResponse> {
+  const routeStart = Date.now()
   const session = await getSession()
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const key = request.nextUrl.searchParams.get('key')
   if (!key) return NextResponse.json({ error: 'Missing key' }, { status: 400 })
 
+  console.log(`[Tiles Info] [${routeStart}] GET request received for key: ${key}`)
+
   // 1. Check if bounds are already cached in the database (resolving to most recent completed task)
   let cachedInfo: string | null = null
   let matchingTaskType: 'odm' | 'georef' | null = null
   let matchingTaskId: string | null = null
 
+  const dbLookupStart = Date.now()
   try {
     const [odmMatch] = await db
       .select({ id: odmTasks.id, bounds: odmTasks.bounds, completedAt: odmTasks.completedAt })
@@ -57,12 +61,13 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       matchingTaskType = 'georef'
       matchingTaskId = georefMatch.id
     }
+    console.log(`[Tiles Info] [${routeStart}] DB lookup completed in ${Date.now() - dbLookupStart}ms. Found cached bounds: ${!!cachedInfo}`)
   } catch (err) {
-    console.error('[Tiles Info] DB lookup failed:', err)
+    console.error(`[Tiles Info] [${routeStart}] DB lookup failed in ${Date.now() - dbLookupStart}ms:`, err)
   }
 
   if (cachedInfo) {
-    console.log(`[Tiles Info] Returning cached bounds from DB for key: ${key}`)
+    console.log(`[Tiles Info] [${routeStart}] Returning cached bounds from DB for key: ${key} (total route time: ${Date.now() - routeStart}ms)`)
     return NextResponse.json(JSON.parse(cachedInfo))
   }
 
@@ -75,7 +80,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   const maxRetries = 3
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
-      console.log(`[Tiles Info] Fetching tile info for key: ${key} (bucket: ${bucket}) - Attempt ${attempt}/${maxRetries}`);
+      console.log(`[Tiles Info] [${routeStart}] Fetching tile info for key: ${key} (bucket: ${bucket}) - Attempt ${attempt}/${maxRetries}`);
       const targetUrl = `${url}/info?key=${encodeURIComponent(key)}` + (bucket ? `&bucket=${encodeURIComponent(bucket)}` : '')
       const startTime = Date.now();
       
@@ -88,14 +93,14 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       })
       
       const duration = Date.now() - startTime;
-      console.log(`[Tiles Info] Tile server response status: ${response.status} (took ${duration}ms)`);
+      console.log(`[Tiles Info] [${routeStart}] Tile server response status: ${response.status} (took ${duration}ms)`);
       
       if (response.ok) {
         res = response
         break
       } else {
         const text = await response.text()
-        console.warn(`[Tiles Info] Attempt ${attempt} failed with status ${response.status}: ${text}`);
+        console.warn(`[Tiles Info] [${routeStart}] Attempt ${attempt} failed with status ${response.status}: ${text}`);
         lastError = new Error(`Tile server error: ${response.status} - ${text}`)
         
         // If it's a 4xx client error, don't retry
@@ -105,30 +110,34 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
         }
       }
     } catch (err) {
-      console.error(`[Tiles Info] Attempt ${attempt} failed with error:`, err);
+      console.error(`[Tiles Info] [${routeStart}] Attempt ${attempt} failed with error:`, err);
       lastError = err
     }
 
     // Wait briefly before retrying (exponential backoff: 1s, 2s)
     if (attempt < maxRetries) {
       const delay = attempt * 1000
+      console.log(`[Tiles Info] [${routeStart}] Waiting ${delay}ms before retry attempt ${attempt + 1}...`)
       await new Promise((resolve) => setTimeout(resolve, delay))
     }
   }
 
   if (!res) {
+    console.error(`[Tiles Info] [${routeStart}] Tile server unreachable after ${maxRetries} attempts (total route time: ${Date.now() - routeStart}ms)`)
     return NextResponse.json({ error: `Tile server unreachable: ${String(lastError)}` }, { status: 502 })
   }
 
   if (!res.ok) {
+    console.error(`[Tiles Info] [${routeStart}] Tile server returned non-ok status: ${res.status} (total route time: ${Date.now() - routeStart}ms)`)
     return NextResponse.json({ error: `Tile server error: ${res.status}`, detail: String(lastError) }, { status: 502 })
   }
 
   const data = (await res.json()) as any
-  console.log(`[Tiles Info] Successfully loaded tile info.`);
+  console.log(`[Tiles Info] [${routeStart}] Successfully loaded tile info from server (total route time: ${Date.now() - routeStart}ms)`);
 
   // 2. Cache it in the database asynchronously if we found a matching task
   if (matchingTaskId && data) {
+    const cacheStart = Date.now()
     try {
       const boundsStr = JSON.stringify(data)
       if (matchingTaskType === 'odm') {
@@ -136,9 +145,9 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       } else if (matchingTaskType === 'georef') {
         await db.update(georefTasks).set({ bounds: boundsStr }).where(eq(georefTasks.id, matchingTaskId))
       }
-      console.log(`[Tiles Info] Cached bounds in DB for ${matchingTaskType} task: ${matchingTaskId}`)
+      console.log(`[Tiles Info] [${routeStart}] Cached bounds in DB for ${matchingTaskType} task: ${matchingTaskId} (took ${Date.now() - cacheStart}ms)`)
     } catch (err) {
-      console.error('[Tiles Info] Failed to save bounds cache to DB:', err)
+      console.error(`[Tiles Info] [${routeStart}] Failed to save bounds cache to DB (took ${Date.now() - cacheStart}ms):`, err)
     }
   }
 

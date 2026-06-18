@@ -420,9 +420,19 @@ export default function FlightSplitView({
   // Image list filtering
   const images = displayObjects.filter((o) => isImage(o.key) || isVideo(o.key))
   const [activeImage, setActiveImage] = useState<FileEntry | null>(images[0] ?? null)
+  const [activeImageLoading, setActiveImageLoading] = useState(false)
   const [lightboxImage, setLightboxImage] = useState<FileEntry | null>(null)
   const [lightboxFullResUrl, setLightboxFullResUrl] = useState<string | null>(null)
   const [isFullResLoading, setIsFullResLoading] = useState(false)
+
+  // Trigger loading state when activeImage changes
+  useEffect(() => {
+    if (activeImage && !isVideo(activeImage.key)) {
+      setActiveImageLoading(true)
+    } else {
+      setActiveImageLoading(false)
+    }
+  }, [activeImage])
 
   // Zoom and pan state for lightbox image
   const [zoomScale, setZoomScale] = useState(1)
@@ -1122,7 +1132,7 @@ export default function FlightSplitView({
                       </div>
 
                       {/* Interactive Viewport (Takes up full area) */}
-                      <div className="flex-1 min-h-0 flex items-center justify-center relative">
+                      <div className="flex-1 min-h-0 flex items-center justify-center relative bg-gray-950">
                         {isVideo(activeImage.key) ? (
                           <div className="w-full h-full">
                             <VideoPlayer
@@ -1131,13 +1141,24 @@ export default function FlightSplitView({
                             />
                           </div>
                         ) : (
-                          /* eslint-disable-next-line @next/next/no-img-element */
-                          <img
-                            key={activeImage.key}
-                            src={thumbnailUrl(activeImage.key, activeImage.etag, 1200)}
-                            alt={activeImage.key.split('/').pop()}
-                            className="max-w-full max-h-full object-contain shadow-2xl rounded"
-                          />
+                          <>
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                            <img
+                              key={activeImage.key}
+                              src={thumbnailUrl(activeImage.key, activeImage.etag, 1200)}
+                              alt={activeImage.key.split('/').pop()}
+                              onLoad={() => setActiveImageLoading(false)}
+                              className={cn(
+                                "max-w-full max-h-full object-contain shadow-2xl rounded transition-opacity duration-200",
+                                activeImageLoading ? "opacity-0" : "opacity-100"
+                              )}
+                            />
+                            {activeImageLoading && (
+                              <div className="absolute inset-0 flex items-center justify-center bg-gray-950/50 backdrop-blur-xs">
+                                <RefreshCw className="w-8 h-8 text-blue-500 animate-spin" />
+                              </div>
+                            )}
+                          </>
                         )}
                       </div>
                     </div>
@@ -1149,12 +1170,16 @@ export default function FlightSplitView({
                       {images.map((img) => {
                         const isSelected = activeImage?.key === img.key
                         const filename = img.key.split('/').pop() ?? img.key
+                        
+                        // Only load thumbnails in production environment to keep dev fast
+                        const isProd = process.env.NODE_ENV === 'production'
+
                         return (
                           <button
                             key={img.key}
                             onClick={() => setActiveImage(img)}
                             className={cn(
-                              'w-36 flex-shrink-0 text-left rounded-lg overflow-hidden border p-1 transition-all flex flex-col justify-between',
+                              'w-36 flex-shrink-0 text-left rounded-lg overflow-hidden border p-1 transition-all flex flex-col justify-between h-full',
                               isSelected
                                 ? 'border-blue-500 bg-blue-50/20 ring-1 ring-blue-500'
                                 : 'border-gray-200 hover:border-gray-300'
@@ -1166,7 +1191,7 @@ export default function FlightSplitView({
                                   <span className="text-2xl mb-1">🎥</span>
                                   <span className="text-[9px] font-semibold uppercase tracking-wider text-slate-500">Video</span>
                                 </div>
-                              ) : (
+                              ) : isProd ? (
                                 /* eslint-disable-next-line @next/next/no-img-element */
                                 <img
                                   src={thumbnailUrl(img.key, img.etag, 320)}
@@ -1174,9 +1199,14 @@ export default function FlightSplitView({
                                   className="w-full h-full object-cover"
                                   loading="lazy"
                                 />
+                              ) : (
+                                <div className="w-full h-full bg-blue-50 flex flex-col items-center justify-center text-blue-500 text-xs">
+                                  <span className="text-xl mb-1">📸</span>
+                                  <span className="text-[9px] font-semibold uppercase tracking-wider text-blue-400">Image</span>
+                                </div>
                               )}
                             </div>
-                            <span className="text-[9px] font-mono text-gray-600 block truncate px-0.5 select-none">
+                            <span className="text-[9px] font-mono text-gray-500 truncate w-full block text-center select-none">
                               {filename}
                             </span>
                           </button>

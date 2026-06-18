@@ -244,12 +244,9 @@ export default function FileLightbox({ files: initialFiles, timezone, canWrite =
               >
                 <div className="flex items-center gap-2">
                   {img ? (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img
-                      src={thumbnailUrl(file.key, file.etag, 64)}
-                      alt=""
-                      className="w-8 h-8 rounded object-cover bg-gray-100 shrink-0"
-                    />
+                    <div className="w-8 h-8 rounded bg-blue-50 border border-blue-100 flex items-center justify-center text-blue-500 shrink-0">
+                      📸
+                    </div>
                   ) : isVideo(file.key) ? (
                     <div className="w-8 h-8 rounded bg-slate-100 flex items-center justify-center text-slate-500 shrink-0">
                       🎥

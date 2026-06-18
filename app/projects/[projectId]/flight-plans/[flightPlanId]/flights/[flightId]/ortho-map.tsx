@@ -287,10 +287,33 @@ export default function OrthoMap({
           })
         })
 
-        map.on('load', () => {
-          if (cancelled) return
+        // Also listen to style.load as a fallback in case load event already fired
+        map.on('style.load', () => {
+          if (cancelled || mapReadyRef.current) return
+          console.log('[OrthoMap] Map style.load event fired')
           mapReadyRef.current = true
           map.resize()
+          setupMapLayers(map)
+        })
+
+        map.on('load', () => {
+          if (cancelled || mapReadyRef.current) return
+          console.log('[OrthoMap] Map load event fired')
+          mapReadyRef.current = true
+          map.resize()
+          setupMapLayers(map)
+        })
+
+        // Fallback: if map style is already loaded, set mapReadyRef.current to true immediately
+        if (map.isStyleLoaded()) {
+          console.log('[OrthoMap] Map style is already loaded on init')
+          mapReadyRef.current = true
+          setupMapLayers(map)
+        }
+
+        function setupMapLayers(map: any) {
+          // Guard check: if layers already exist, don't re-add them
+          if (map.getSource('esri-satellite')) return
 
           // Add Esri satellite source
           map.addSource('esri-satellite', {
@@ -640,7 +663,7 @@ export default function OrthoMap({
               popup.setDOMContent(container).addTo(map)
             }
           })
-        })
+        }
       } catch (err) {
         if (!cancelled) {
           const msg = err instanceof Error ? err.message : String(err)
@@ -669,18 +692,24 @@ export default function OrthoMap({
     let cancelled = false
 
     async function applyLayer() {
+      const startTime = Date.now()
+      console.log(`[OrthoMap] Starting applyLayer for outputKey: ${outputKey}`)
       setStatus('loading')
       setIsTilesLoading(true)
       
       // Wait for the map to be ready (style loaded)
+      console.log('[OrthoMap] Waiting for mapReadyRef.current to be true...')
+      const waitStart = Date.now()
       await new Promise<void>((resolve) => {
         if (mapReadyRef.current && mapRef.current) return resolve()
         const check = setInterval(() => {
           if (cancelled || !mapRef.current) {
+            console.log('[OrthoMap] applyLayer cancelled or mapRef null during wait')
             clearInterval(check)
             return
           }
           if (mapReadyRef.current) {
+            console.log(`[OrthoMap] mapReadyRef became true after ${Date.now() - waitStart}ms`)
             clearInterval(check)
             resolve()
           }
@@ -691,10 +720,12 @@ export default function OrthoMap({
       const map = mapRef.current
 
       // Remove existing ortho layer/source if present
+      console.log('[OrthoMap] Cleaning up existing ortho layers/sources if present')
       if (map.getLayer('ortho-layer')) map.removeLayer('ortho-layer')
       if (map.getSource('ortho')) map.removeSource('ortho')
 
       if (!outputKey) {
+        console.log('[OrthoMap] No outputKey provided, setting status to ready')
         boundsRef.current = null
         setStatus('ready')
         return
@@ -702,7 +733,11 @@ export default function OrthoMap({
 
       try {
         const cacheBusterParam = cacheBuster ? `&t=${encodeURIComponent(cacheBuster)}` : ''
+        const infoFetchStart = Date.now()
+        console.log(`[OrthoMap] Fetching tile info from /api/tiles/info for key: ${outputKey}`)
         const infoRes = await fetch(`/api/tiles/info?key=${encodeURIComponent(outputKey)}${cacheBusterParam}`)
+        console.log(`[OrthoMap] Tile info fetch completed in ${Date.now() - infoFetchStart}ms with status: ${infoRes.status}`)
+        
         if (!infoRes.ok) throw new Error(`Failed to load tile info (${infoRes.status})`)
         const { bounds, minzoom, maxzoom } = (await infoRes.json()) as {
           bounds: [number, number, number, number]
@@ -710,10 +745,16 @@ export default function OrthoMap({
           maxzoom: number
         }
 
-        if (cancelled) return
+        console.log(`[OrthoMap] Parsed tile info: bounds=${JSON.stringify(bounds)}, minzoom=${minzoom}, maxzoom=${maxzoom}`)
+
+        if (cancelled) {
+          console.log('[OrthoMap] applyLayer cancelled after fetching tile info')
+          return
+        }
 
         const tileUrl = `/api/tiles/{z}/{x}/{y}?key=${encodeURIComponent(outputKey)}${cacheBusterParam}`
 
+        console.log('[OrthoMap] Adding ortho source and layer to map')
         map.addSource('ortho', {
           type: 'raster',
           tiles: [tileUrl],
@@ -724,6 +765,7 @@ export default function OrthoMap({
         map.addLayer({ id: 'ortho-layer', type: 'raster', source: 'ortho' })
 
         // Move photo layers to the top above the orthophoto layer
+        console.log('[OrthoMap] Re-ordering layers to keep photos/locations/measurements on top')
         if (map.getLayer('photo-hover-layer')) {
           map.moveLayer('photo-hover-layer')
         }
@@ -747,6 +789,7 @@ export default function OrthoMap({
 
         boundsRef.current = bounds
         if (!initialFitDoneRef.current) {
+          console.log('[OrthoMap] Performing initial fitBounds to orthophoto bounds')
           map.resize()
           setTimeout(() => {
             if (!cancelled && mapRef.current) {
@@ -754,11 +797,13 @@ export default function OrthoMap({
                 padding: 20,
                 animate: false,
               })
+              console.log('[OrthoMap] fitBounds completed')
             }
           }, 100)
           initialFitDoneRef.current = true
         }
 
+        console.log(`[OrthoMap] applyLayer completed successfully in ${Date.now() - startTime}ms`)
         setStatus('ready')
       } catch (err) {
         if (!cancelled) {
