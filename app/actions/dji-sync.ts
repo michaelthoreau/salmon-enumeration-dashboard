@@ -64,15 +64,12 @@ export async function getDjiSyncDiff(
   try {
     const dji     = getDjiSession()
     const items   = await fetchAllDjiMedia(dji, djiProjectUuid)
-    console.log('[DJI-SYNC] Total media items from DJI:', items.length)
     const tree    = buildFlightTree(items)
-    console.log('[DJI-SYNC] Flight tree:', tree.map(f => ({ path: f.fh2FilePath, fileCount: f.files.length })))
 
     const missing: MissingFlight[] = []
 
     for (const flight of tree) {
       const planName = parsePlanName(flight.fh2FilePath)
-      console.log('[DJI-SYNC] Flight:', flight.fh2FilePath, '→ planName:', planName)
       if (!planName) continue // mirrors Lambda's skip
 
       const slug = slugify(planName)
