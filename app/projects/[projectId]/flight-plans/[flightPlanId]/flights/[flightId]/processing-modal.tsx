@@ -559,12 +559,12 @@ export default function ProcessingModal({
                     </span>
                     <span className="text-[10px] uppercase font-bold tracking-wide px-2 py-0.5 rounded bg-emerald-600/10 text-emerald-600">Fast</span>
                   </span>
-                  <span className="text-xs text-slate-550 dark:text-slate-400 leading-snug">
+                  <span className="text-xs text-slate-555 dark:text-slate-400 leading-snug">
                     Fast flat-earth camera projection. Processes in 1-2 minutes. Ideal for quick checks in the field.
                   </span>
                 </label>
 
-                {/* ODM Option */}
+                {/* ODM Option (Temporarily Disabled)
                 <label className={`flex flex-col p-4 rounded-xl border-2 text-left cursor-pointer transition-all ${
                   method === 'odm'
                     ? 'border-blue-600 bg-blue-50/20 dark:bg-blue-950/10'
@@ -585,10 +585,11 @@ export default function ProcessingModal({
                     </span>
                     <span className="text-[10px] uppercase font-bold tracking-wide px-2 py-0.5 rounded bg-blue-600/10 text-blue-500">Premium</span>
                   </span>
-                  <span className="text-xs text-slate-550 dark:text-slate-400 leading-snug">
+                  <span className="text-xs text-slate-555 dark:text-slate-400 leading-snug">
                     Structure-from-motion photogrammetry pipeline. Processes in 10-30 minutes. High details.
                   </span>
                 </label>
+                */}
 
                 {/* Upload GeoTIFF Option (Temporarily Hidden)
                 <label className={`flex flex-col p-4 rounded-xl border-2 text-left cursor-pointer transition-all ${

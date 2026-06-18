@@ -235,6 +235,8 @@ export async function DELETE(req: NextRequest, { params }: RouteParams): Promise
 /**
  * Delegates the slow and memory-intensive output collection phase to the Modal worker
  * to prevent Vercel serverless functions from running out of memory (OOM).
+ * Retries up to 3 times with short delays because NodeODM can take a moment
+ * to finish writing all.zip after marking itself as complete (status 40).
  */
 async function collectOdmOutputs(
   odmUuid: string,
@@ -259,28 +261,63 @@ async function collectOdmOutputs(
     throw new Error('MODAL_ODM_WORKER_URL or MODAL_ODM_WORKER_TOKEN not configured')
   }
 
-  console.log(`[ODM Tasks API] Delegating output collection to Modal worker for uuid: ${odmUuid}`);
-  const res = await fetch(`${workerUrl}/collect`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${workerToken}`,
-    },
-    body: JSON.stringify({
-      odm_uuid: odmUuid,
-      flight_id: flightId,
-      project_id: flightPlan.projectId,
-      flight_plan_id: flight.flightPlanId,
-      bucket: process.env.S3_BUCKET_NAME,
-    }),
-  })
-
-  if (!res.ok) {
-    const text = await res.text()
-    throw new Error(`Modal worker collection failed (${res.status}): ${text}`)
+  // Pass the NodeODM URL that Next.js itself uses (including any token query param)
+  // so the Modal worker can download all.zip directly — nothing routes through Vercel.
+  const odmNodeUrl = process.env.ODM_NODE_URL
+  if (!odmNodeUrl) {
+    throw new Error('ODM_NODE_URL not configured')
   }
 
-  const data = (await res.json()) as { outputKey: string; reportKey?: string }
-  console.log(`[ODM Tasks API] Successfully collected outputs via Modal worker:`, data);
-  return data
+  const body = JSON.stringify({
+    odm_uuid: odmUuid,
+    flight_id: flightId,
+    project_id: flightPlan.projectId,
+    flight_plan_id: flight.flightPlanId,
+    bucket: process.env.S3_BUCKET_NAME,
+    odm_node_url: odmNodeUrl,
+  })
+
+  const MAX_ATTEMPTS = 3
+  const RETRY_DELAYS_MS = [3_000, 10_000] // wait before attempt 2, then attempt 3
+
+  let lastError: Error | null = null
+
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    if (attempt > 1) {
+      const delay = RETRY_DELAYS_MS[attempt - 2]
+      console.log(`[ODM Tasks API] Retrying output collection (attempt ${attempt}/${MAX_ATTEMPTS}) after ${delay}ms for uuid: ${odmUuid}`)
+      await new Promise((r) => setTimeout(r, delay))
+    }
+
+    console.log(`[ODM Tasks API] Delegating output collection to Modal worker for uuid: ${odmUuid} (attempt ${attempt})`)
+
+    let res: Response
+    try {
+      res = await fetch(`${workerUrl}/collect`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${workerToken}`,
+        },
+        body,
+        signal: AbortSignal.timeout(90_000),
+      })
+    } catch (err) {
+      lastError = err instanceof Error ? err : new Error(String(err))
+      console.warn(`[ODM Tasks API] Fetch error on attempt ${attempt} for uuid ${odmUuid}:`, lastError.message)
+      continue
+    }
+
+    if (res.ok) {
+      const data = (await res.json()) as { outputKey: string; reportKey?: string }
+      console.log(`[ODM Tasks API] Successfully collected outputs via Modal worker (attempt ${attempt}):`, data)
+      return data
+    }
+
+    const text = await res.text()
+    lastError = new Error(`Modal worker collection failed (${res.status}): ${text}`)
+    console.warn(`[ODM Tasks API] Collection attempt ${attempt} failed for uuid ${odmUuid}: ${lastError.message}`)
+  }
+
+  throw lastError ?? new Error('Output collection failed after all attempts')
 }
