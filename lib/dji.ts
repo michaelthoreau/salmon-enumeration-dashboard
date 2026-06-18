@@ -80,6 +80,7 @@ export async function listDjiProjects(
   session: DjiSession,
 ): Promise<{ uuid: string; name: string }[]> {
   const data = await djiGet(session, '/openapi/v0.1/project', { page: 1, page_size: 50 }) as Record<string, unknown>
+  console.log('[DJI] listDjiProjects raw:', JSON.stringify(data).slice(0, 1000))
   const list = ((data?.data as Record<string, unknown>)?.list ?? []) as Record<string, unknown>[]
   return list.map((p) => ({ uuid: p.uuid as string, name: (p.name as string) ?? 'unnamed' }))
 }
