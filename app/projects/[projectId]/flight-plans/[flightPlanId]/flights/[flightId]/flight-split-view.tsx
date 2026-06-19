@@ -240,15 +240,15 @@ export default function FlightSplitView({
   const activeGeoref = latestGeoref && !['completed', 'failed', 'canceled'].includes(latestGeoref.status) ? latestGeoref : null
 
   const activeTask = activeOdm || activeGeoref
-  const latestTask = activeTask || 
-    ((latestOdm && latestGeoref) 
+  const latestTask = activeTask ||
+    ((latestOdm && latestGeoref)
       ? (new Date(latestOdm.createdAt) > new Date(latestGeoref.createdAt) ? latestOdm : latestGeoref)
       : (latestOdm || latestGeoref || null))
 
   const completedTask = (latestOdmTask && latestGeorefTask)
     ? (new Date(latestOdmTask.createdAt) > new Date(latestGeorefTask.createdAt) ? latestOdmTask : latestGeorefTask)
     : (latestOdmTask || latestGeorefTask || null)
-  
+
   const cacheBuster = completedTask?.completedAt
     ? new Date(completedTask.completedAt).getTime().toString()
     : null
@@ -287,7 +287,7 @@ export default function FlightSplitView({
       const endpoint = activeTask.type === 'odm'
         ? `/api/odm/tasks/${activeTask.id}?outputLine=999999`
         : `/api/georef/tasks/${activeTask.id}?outputLine=999999`
-      
+
       try {
         const res = await fetch(endpoint, { cache: 'no-store' })
         if (!res.ok) return
@@ -582,7 +582,7 @@ export default function FlightSplitView({
                   {flight.timestamp.toISOString()}
                 </p>
                 {flight.notes && <p className="text-sm text-gray-500 mt-2">{flight.notes}</p>}
-                
+
               </div>
             </div>
             <div className="flex items-center gap-2">
@@ -669,9 +669,9 @@ export default function FlightSplitView({
                   <span className={cn(
                     "text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded",
                     taskStatus === 'completed' ? 'bg-green-100 text-green-800 dark:bg-green-950/20 dark:text-green-400' :
-                    taskStatus === 'failed' ? 'bg-red-100 text-red-800 dark:bg-red-950/20 dark:text-red-400' :
-                    taskStatus === 'canceled' ? 'bg-gray-100 text-gray-800 dark:bg-gray-850 dark:text-gray-400' :
-                    'bg-blue-100 text-blue-800 dark:bg-blue-950/20 dark:text-blue-400 animate-pulse'
+                      taskStatus === 'failed' ? 'bg-red-100 text-red-800 dark:bg-red-950/20 dark:text-red-400' :
+                        taskStatus === 'canceled' ? 'bg-gray-100 text-gray-800 dark:bg-gray-850 dark:text-gray-400' :
+                          'bg-blue-100 text-blue-800 dark:bg-blue-950/20 dark:text-blue-400 animate-pulse'
                   )}>
                     {taskStatus}
                   </span>
@@ -681,8 +681,8 @@ export default function FlightSplitView({
                   <div className="space-y-1.5 pt-1">
                     <div className="flex items-center justify-between text-[10px]">
                       <span className="text-gray-500 dark:text-gray-400">
-                        {taskStatus === 'uploading' 
-                          ? `Uploading images (${processed}/${total})` 
+                        {taskStatus === 'uploading'
+                          ? `Uploading images (${processed}/${total})`
                           : `Processing (${processed}/${total})`}
                       </span>
                       <span className="font-semibold text-gray-700 dark:text-slate-200">
@@ -835,11 +835,10 @@ export default function FlightSplitView({
                       </span>
                     </div>
                     <span
-                      className={`inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider ${
-                        tideSvg.isRising
+                      className={`inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider ${tideSvg.isRising
                           ? 'bg-blue-50 text-blue-700 border border-blue-100'
                           : 'bg-indigo-50 text-indigo-700 border border-indigo-100'
-                      }`}
+                        }`}
                     >
                       {tideSvg.isRising ? 'Rising (Flood)' : 'Falling (Ebb)'}
                     </span>
@@ -1087,21 +1086,21 @@ export default function FlightSplitView({
                   // Optimistically remove immediately
                   setAnnotations((prev) => {
                     const removed = prev.find((a) => a.id === id)
-                    ;(async () => {
-                      try {
-                        const res = await fetch(`/api/projects/${projectId}/flight-plans/${flightPlanId}/flights/${flightId}/annotations?id=${encodeURIComponent(id)}`, {
-                          method: 'DELETE',
-                        })
-                        if (!res.ok) {
-                          // Roll back — re-insert the removed annotation
+                      ; (async () => {
+                        try {
+                          const res = await fetch(`/api/projects/${projectId}/flight-plans/${flightPlanId}/flights/${flightId}/annotations?id=${encodeURIComponent(id)}`, {
+                            method: 'DELETE',
+                          })
+                          if (!res.ok) {
+                            // Roll back — re-insert the removed annotation
+                            if (removed) setAnnotations((p) => [...p, removed])
+                            console.error('Failed to delete annotation: server returned', res.status)
+                          }
+                        } catch (err) {
                           if (removed) setAnnotations((p) => [...p, removed])
-                          console.error('Failed to delete annotation: server returned', res.status)
+                          console.error('Failed to delete annotation:', err)
                         }
-                      } catch (err) {
-                        if (removed) setAnnotations((p) => [...p, removed])
-                        console.error('Failed to delete annotation:', err)
-                      }
-                    })()
+                      })()
                     return prev.filter((a) => a.id !== id)
                   })
                 }}
@@ -1215,7 +1214,7 @@ export default function FlightSplitView({
                       {images.map((img) => {
                         const isSelected = activeImage?.key === img.key
                         const filename = img.key.split('/').pop() ?? img.key
-                        
+
                         // Only load thumbnails in production environment to keep dev fast
                         const isProd = process.env.NODE_ENV === 'production'
 
@@ -1282,7 +1281,7 @@ export default function FlightSplitView({
           })
 
           const tideHeightInFt = closestPrediction.value
-          const rawOffset = (26.4 - tideHeightInFt) / 3.28
+          const rawOffset = (36 - tideHeightInFt) / 3.28
           defaultAltitudeOffset = Math.round(rawOffset * 2) / 2
         }
 
@@ -1297,19 +1296,19 @@ export default function FlightSplitView({
             initialActiveTask={
               activeTask
                 ? {
-                    taskId: activeTask.id,
-                    type: activeTask.type,
-                    status: activeTask.status,
-                    odmUuid: activeTask.type === 'odm' ? (activeTask as any).odmUuid : null,
-                    outputKey: activeTask.outputKey,
-                    reportKey: activeTask.type === 'odm' ? (activeTask as any).reportKey : null,
-                    error: (activeTask as any).error ?? null,
-                    totalImages: activeTask.totalImages,
-                    processed: activeTask.processed,
-                    progress: activeTask.progress,
-                  }
+                  taskId: activeTask.id,
+                  type: activeTask.type,
+                  status: activeTask.status,
+                  odmUuid: activeTask.type === 'odm' ? (activeTask as any).odmUuid : null,
+                  outputKey: activeTask.outputKey,
+                  reportKey: activeTask.type === 'odm' ? (activeTask as any).reportKey : null,
+                  error: (activeTask as any).error ?? null,
+                  totalImages: activeTask.totalImages,
+                  processed: activeTask.processed,
+                  progress: activeTask.progress,
+                }
                 : latestTask
-                ? {
+                  ? {
                     taskId: latestTask.id,
                     type: latestTask.type,
                     status: latestTask.status,
@@ -1321,7 +1320,7 @@ export default function FlightSplitView({
                     processed: latestTask.processed,
                     progress: latestTask.progress,
                   }
-                : null
+                  : null
             }
           />
         )
@@ -1436,7 +1435,7 @@ export default function FlightSplitView({
               </div>
             </div>
             {/* Viewport */}
-            <div 
+            <div
               className={cn(
                 "flex-1 min-h-0 flex items-center justify-center p-6 bg-gray-950 relative select-none overflow-hidden",
                 zoomScale > 1 ? "cursor-grab active:cursor-grabbing" : ""
@@ -1452,7 +1451,7 @@ export default function FlightSplitView({
                 e.preventDefault()
                 const newX = e.clientX - dragStartRef.current.x
                 const newY = e.clientY - dragStartRef.current.y
-                
+
                 // Bound panning to prevent dragging completely out of view
                 const maxPanX = (zoomScale - 1) * 400
                 const maxPanY = (zoomScale - 1) * 300
