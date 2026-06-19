@@ -89,6 +89,7 @@ export default function FileLightbox({ files: initialFiles, timezone, canWrite =
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [dlLoading, setDlLoading] = useState(false)
   const [bulkWorking, setBulkWorking] = useState(false)
+  const [zipProgress, setZipProgress] = useState<{ loaded: number; total: number } | null>(null)
   const [deleteConfirm, setDeleteConfirm] = useState<{ keys: string[]; label: string } | null>(null)
 
   useEffect(() => { setFiles(sortFiles(initialFiles, sortField, sortDir)) }, [initialFiles, sortField, sortDir])
@@ -167,6 +168,8 @@ export default function FileLightbox({ files: initialFiles, timezone, canWrite =
     }
 
     setBulkWorking(true)
+    const totalBytes = selectedFiles.reduce((s, f) => s + f.size, 0)
+    setZipProgress({ loaded: 0, total: totalBytes })
     try {
       const res = await fetch('/api/files/zip', {
         method: 'POST',
@@ -176,8 +179,24 @@ export default function FileLightbox({ files: initialFiles, timezone, canWrite =
           zipName: 'flight-files',
         }),
       })
-      if (!res.ok) return
-      const blob = await res.blob()
+      if (!res.ok || !res.body) {
+        setZipProgress(null)
+        return
+      }
+
+      const reader = res.body.getReader()
+      const chunks: Uint8Array[] = []
+      let loaded = 0
+
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        chunks.push(value)
+        loaded += value.length
+        setZipProgress({ loaded, total: totalBytes })
+      }
+
+      const blob = new Blob(chunks, { type: 'application/zip' })
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
@@ -186,6 +205,7 @@ export default function FileLightbox({ files: initialFiles, timezone, canWrite =
       URL.revokeObjectURL(url)
     } finally {
       setBulkWorking(false)
+      setZipProgress(null)
     }
   }
 
@@ -247,6 +267,17 @@ export default function FileLightbox({ files: initialFiles, timezone, canWrite =
           </div>
         )}
       </div>
+      {zipProgress && (
+        <div className="flex items-center gap-2 text-xs text-gray-500">
+          <div className="w-32 h-1.5 rounded-full bg-gray-200 overflow-hidden">
+            <div
+              className="h-full bg-blue-500 transition-all duration-300"
+              style={{ width: `${Math.min(100, Math.round((zipProgress.loaded / zipProgress.total) * 100))}%` }}
+            />
+          </div>
+          <span>{formatBytes(zipProgress.loaded)} / {formatBytes(zipProgress.total)}</span>
+        </div>
+      )}
     </div>
   )
 

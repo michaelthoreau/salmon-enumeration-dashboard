@@ -33,26 +33,43 @@ export async function POST(request: NextRequest) {
   const passthrough = new PassThrough()
 
   const archive = new ZipArchive({ store: true })
+
+  archive.on('error', (err: Error) => {
+    console.error('[zip] Archive error:', err)
+    passthrough.destroy(err)
+  })
+
   archive.pipe(passthrough)
 
   ;(async () => {
-    for (const key of keys) {
-      try {
-        const stream = await getObjectStream(key)
-        const filename = key.split('/').pop() ?? key
-        archive.append(stream, { name: filename })
-      } catch (err) {
-        console.error(`Failed to add ${key} to zip:`, err)
+    try {
+      for (let i = 0; i < keys.length; i++) {
+        const key = keys[i]
+        try {
+          const stream = await getObjectStream(key)
+          const filename = key.split('/').pop() ?? key
+          archive.append(stream, { name: filename })
+          console.log(`[zip] ${i + 1}/${keys.length}: ${filename}`)
+        } catch (err) {
+          console.error(`[zip] Failed ${key}:`, err)
+        }
       }
+      await archive.finalize()
+      console.log(`[zip] Done: ${keys.length} files`)
+    } catch (err) {
+      console.error('[zip] Fatal error:', err)
+      passthrough.destroy(err as Error)
     }
-    await archive.finalize()
   })()
 
   const webStream = new ReadableStream({
     start(controller) {
       passthrough.on('data', (chunk: Buffer) => controller.enqueue(chunk))
       passthrough.on('end', () => controller.close())
-      passthrough.on('error', (err) => controller.error(err))
+      passthrough.on('error', (err) => {
+        console.error('[zip] Stream error:', err)
+        controller.error(err)
+      })
     },
   })
 
