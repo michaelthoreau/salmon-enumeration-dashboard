@@ -171,11 +171,17 @@ export async function pullDjiFlight(
       },
     }
 
-    await lambdaClient.send(new InvokeCommand({
+    const invokeResp = await lambdaClient.send(new InvokeCommand({
       FunctionName:   LAMBDA_FUNCTION_NAME,
       InvocationType: 'Event',
       Payload:        Buffer.from(JSON.stringify(payload)),
     }))
+
+    if (invokeResp.StatusCode !== 202) {
+      const errMsg = invokeResp.FunctionError
+        ?? `Lambda invoke returned ${invokeResp.StatusCode}`
+      return { ok: false, error: errMsg }
+    }
 
     return {
       ok:          true,
