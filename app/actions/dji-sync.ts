@@ -18,7 +18,6 @@ import {
   FILE_TYPE_IMAGE,
   FILE_TYPE_VIDEO,
 } from '@/lib/dji'
-import { LambdaClient, InvokeCommand } from '@aws-sdk/client-lambda'
 import { files } from '@/lib/schema'
 import { sql } from 'drizzle-orm'
 
@@ -124,13 +123,11 @@ export async function getDjiSyncDiff(
   }
 }
 
-// ─── Pull a single DJI flight via async Lambda invoke ───────────────────────
+// ─── Pull a single DJI flight via webhook ───────────────────────────────────
 
-const LAMBDA_FUNCTION_NAME = process.env.DJI_LAMBDA_FUNCTION_NAME ?? 'dji-webhook-handler'
-
-const lambdaClient = new LambdaClient({
-  region: process.env.AWS_REGION ?? 'us-east-1',
-})
+const WEBHOOK_URL =
+  process.env.DJI_WEBHOOK_URL ??
+  'https://dohhl47k9d.execute-api.us-east-1.amazonaws.com/prod/dji/notify'
 
 export async function pullDjiFlight(
   projectId: string,
@@ -171,16 +168,24 @@ export async function pullDjiFlight(
       },
     }
 
-    const invokeResp = await lambdaClient.send(new InvokeCommand({
-      FunctionName:   LAMBDA_FUNCTION_NAME,
-      InvocationType: 'Event',
-      Payload:        Buffer.from(JSON.stringify(payload)),
-    }))
-
-    if (invokeResp.StatusCode !== 202) {
-      const errMsg = invokeResp.FunctionError
-        ?? `Lambda invoke returned ${invokeResp.StatusCode}`
-      return { ok: false, error: errMsg }
+    // API Gateway has a 29s timeout but the Lambda continues running behind it.
+    // A 504 (gateway timeout) is expected for large flights — the Lambda keeps
+    // downloading in the background and we poll for progress.
+    try {
+      const resp = await fetch(WEBHOOK_URL, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify(payload),
+        signal:  AbortSignal.timeout(30_000),
+      })
+      if (!resp.ok && resp.status !== 504) {
+        return { ok: false, error: `Webhook returned ${resp.status}` }
+      }
+    } catch (fetchErr) {
+      // Timeout is expected — Lambda is still running
+      if (!(fetchErr instanceof DOMException && fetchErr.name === 'TimeoutError')) {
+        throw fetchErr
+      }
     }
 
     return {
