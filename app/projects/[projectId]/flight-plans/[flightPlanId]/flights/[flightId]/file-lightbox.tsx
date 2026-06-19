@@ -89,7 +89,7 @@ export default function FileLightbox({ files: initialFiles, timezone, canWrite =
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [dlLoading, setDlLoading] = useState(false)
   const [bulkWorking, setBulkWorking] = useState(false)
-  const [zipProgress, setZipProgress] = useState<{ loaded: number; total: number } | null>(null)
+  const [zipProgress, setZipProgress] = useState<{ done: number; total: number } | null>(null)
   const [deleteConfirm, setDeleteConfirm] = useState<{ keys: string[]; label: string } | null>(null)
 
   useEffect(() => { setFiles(sortFiles(initialFiles, sortField, sortDir)) }, [initialFiles, sortField, sortDir])
@@ -157,7 +157,7 @@ export default function FileLightbox({ files: initialFiles, timezone, canWrite =
     }
   }, [])
 
-  // ---- Bulk download (zip) ----
+  // ---- Bulk download (client-side zip with parallel S3 downloads) ----
   const downloadSelected = async () => {
     const selectedFiles = files.filter(f => selected.has(f.key))
     if (selectedFiles.length === 0) return
@@ -168,35 +168,32 @@ export default function FileLightbox({ files: initialFiles, timezone, canWrite =
     }
 
     setBulkWorking(true)
-    const totalBytes = selectedFiles.reduce((s, f) => s + f.size, 0)
-    setZipProgress({ loaded: 0, total: totalBytes })
+    setZipProgress({ done: 0, total: selectedFiles.length })
+
     try {
-      const res = await fetch('/api/files/zip', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          keys: selectedFiles.map(f => f.key),
-          zipName: 'flight-files',
-        }),
-      })
-      if (!res.ok || !res.body) {
-        setZipProgress(null)
-        return
+      const { downloadZip } = await import('client-zip')
+
+      let done = 0
+      const CONCURRENCY = 6
+
+      async function fetchFile(file: FileEntry): Promise<{ name: string; input: Response }> {
+        const res = await fetch(`/api/files/presign?key=${encodeURIComponent(file.key)}`)
+        const { url } = await res.json() as { url: string }
+        const input = await fetch(url)
+        done++
+        setZipProgress({ done, total: selectedFiles.length })
+        return { name: file.key.split('/').pop() ?? file.key, input }
       }
 
-      const reader = res.body.getReader()
-      const chunks: Uint8Array[] = []
-      let loaded = 0
-
-      while (true) {
-        const { done, value } = await reader.read()
-        if (done) break
-        chunks.push(value)
-        loaded += value.length
-        setZipProgress({ loaded, total: totalBytes })
+      // Parallel download with bounded concurrency
+      const results: { name: string; input: Response }[] = []
+      for (let i = 0; i < selectedFiles.length; i += CONCURRENCY) {
+        const batch = selectedFiles.slice(i, i + CONCURRENCY)
+        const batchResults = await Promise.all(batch.map(fetchFile))
+        results.push(...batchResults)
       }
 
-      const blob = new Blob(chunks as BlobPart[], { type: 'application/zip' })
+      const blob = await downloadZip(results).blob()
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
@@ -272,10 +269,10 @@ export default function FileLightbox({ files: initialFiles, timezone, canWrite =
           <div className="w-32 h-1.5 rounded-full bg-gray-200 overflow-hidden">
             <div
               className="h-full bg-blue-500 transition-all duration-300"
-              style={{ width: `${Math.min(100, Math.round((zipProgress.loaded / zipProgress.total) * 100))}%` }}
+              style={{ width: `${Math.round((zipProgress.done / zipProgress.total) * 100)}%` }}
             />
           </div>
-          <span>{formatBytes(zipProgress.loaded)} / {formatBytes(zipProgress.total)}</span>
+          <span>{zipProgress.done} / {zipProgress.total} files</span>
         </div>
       )}
     </div>
