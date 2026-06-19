@@ -278,8 +278,11 @@ export default function FlightUploader({
             <input
               ref={folderInputRef}
               type="file"
+              accept="*/*"
               // @ts-expect-error webkitdirectory is non-standard but widely supported
               webkitdirectory=""
+              directory=""
+              mozdirectory=""
               className="hidden"
               onChange={onFileInputChange}
               disabled={isRunning}

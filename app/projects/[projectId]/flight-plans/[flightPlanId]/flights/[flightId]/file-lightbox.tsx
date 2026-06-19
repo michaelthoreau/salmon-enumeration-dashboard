@@ -61,16 +61,37 @@ interface Props {
   onImageClick?: (file: FileEntry) => void
 }
 
+type SortField = 'name' | 'size' | 'date'
+type SortDir = 'asc' | 'desc'
+
+function sortFiles(files: FileEntry[], field: SortField, dir: SortDir): FileEntry[] {
+  const cmp = dir === 'asc' ? 1 : -1
+  return [...files].sort((a, b) => {
+    switch (field) {
+      case 'name': {
+        const na = a.key.split('/').pop()?.toLowerCase() ?? ''
+        const nb = b.key.split('/').pop()?.toLowerCase() ?? ''
+        return na < nb ? -cmp : na > nb ? cmp : 0
+      }
+      case 'size':
+        return (a.size - b.size) * cmp
+      case 'date':
+        return (new Date(a.lastModifiedIso).getTime() - new Date(b.lastModifiedIso).getTime()) * cmp
+    }
+  })
+}
+
 export default function FileLightbox({ files: initialFiles, timezone, canWrite = false, onImageClick }: Props) {
   const router = useRouter()
-  const [files, setFiles] = useState(initialFiles)
+  const [sortField, setSortField] = useState<SortField>('name')
+  const [sortDir, setSortDir] = useState<SortDir>('asc')
+  const [files, setFiles] = useState(() => sortFiles(initialFiles, 'name', 'asc'))
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [dlLoading, setDlLoading] = useState(false)
   const [bulkWorking, setBulkWorking] = useState(false)
   const [deleteConfirm, setDeleteConfirm] = useState<{ keys: string[]; label: string } | null>(null)
 
-  // Keep files in sync if parent re-renders (after router.refresh)
-  useEffect(() => { setFiles(initialFiles) }, [initialFiles])
+  useEffect(() => { setFiles(sortFiles(initialFiles, sortField, sortDir)) }, [initialFiles, sortField, sortDir])
 
   // ---- Selection ----
   const toggleSelect = useCallback((key: string, e: React.MouseEvent) => {
@@ -153,6 +174,18 @@ export default function FileLightbox({ files: initialFiles, timezone, canWrite =
 
   const downloadSelected = () => downloadKeys(files.filter(f => selected.has(f.key)).map(f => f.key))
 
+  const handleSort = (field: SortField) => {
+    if (sortField === field) {
+      setSortDir(d => d === 'asc' ? 'desc' : 'asc')
+    } else {
+      setSortField(field)
+      setSortDir('asc')
+    }
+  }
+
+  const sortArrow = (field: SortField) =>
+    sortField === field ? (sortDir === 'asc' ? ' ↑' : ' ↓') : ''
+
   const fmt = new Intl.DateTimeFormat('en', {
     timeZone: timezone,
     year: 'numeric', month: 'short', day: 'numeric',
@@ -208,9 +241,9 @@ export default function FileLightbox({ files: initialFiles, timezone, canWrite =
       <thead className="bg-gray-50 border-b border-gray-200">
         <tr>
           <th className="w-10 px-4 py-3" />
-          <th className="text-left px-4 py-3 font-medium text-gray-600">Filename</th>
-          <th className="text-left px-4 py-3 font-medium text-gray-600">Size</th>
-          <th className="text-left px-4 py-3 font-medium text-gray-600">Last modified</th>
+          <th className="text-left px-4 py-3 font-medium text-gray-600 cursor-pointer select-none hover:text-gray-900" onClick={() => handleSort('name')}>Filename{sortArrow('name')}</th>
+          <th className="text-left px-4 py-3 font-medium text-gray-600 cursor-pointer select-none hover:text-gray-900" onClick={() => handleSort('size')}>Size{sortArrow('size')}</th>
+          <th className="text-left px-4 py-3 font-medium text-gray-600 cursor-pointer select-none hover:text-gray-900" onClick={() => handleSort('date')}>Last modified{sortArrow('date')}</th>
           {canWrite && <th className="w-10 px-4 py-3" />}
         </tr>
       </thead>
