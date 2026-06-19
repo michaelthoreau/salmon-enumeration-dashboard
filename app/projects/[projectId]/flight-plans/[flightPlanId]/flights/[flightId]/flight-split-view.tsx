@@ -9,6 +9,7 @@ import { MapIcon, ImageIcon, DownloadIcon, ArrowLeft, Maximize2, RefreshCw, X, W
 import FlightUploader from './flight-uploader'
 import FileLightbox from './file-lightbox'
 import EditFlightButton from './edit-flight-button'
+import ShareFlightButton from './share-flight-button'
 import OrthoMap from './ortho-map'
 import ProcessingModal from './processing-modal'
 import VideoPlayer from './video-player'
@@ -584,16 +585,19 @@ export default function FlightSplitView({
                 
               </div>
             </div>
-            {canWrite && (
-              <EditFlightButton
-                flightId={flightId}
-                projectId={projectId}
-                flightPlanId={flightPlanId}
-                timezone={project.timezone}
-                localTimestamp={localTimestamp}
-                currentNotes={flight.notes}
-              />
-            )}
+            <div className="flex items-center gap-2">
+              <ShareFlightButton />
+              {canWrite && (
+                <EditFlightButton
+                  flightId={flightId}
+                  projectId={projectId}
+                  flightPlanId={flightPlanId}
+                  timezone={project.timezone}
+                  localTimestamp={localTimestamp}
+                  currentNotes={flight.notes}
+                />
+              )}
+            </div>
           </div>
         </div>
 

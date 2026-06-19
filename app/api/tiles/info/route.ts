@@ -28,12 +28,14 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
   const dbLookupStart = Date.now()
   try {
+    console.log(`[Tiles Info] [${routeStart}] Starting DB query for key: ${key}`)
     const [odmMatch] = await db
       .select({ id: odmTasks.id, bounds: odmTasks.bounds, completedAt: odmTasks.completedAt })
       .from(odmTasks)
       .where(eq(odmTasks.outputKey, key))
       .orderBy(desc(odmTasks.completedAt))
       .limit(1)
+    console.log(`[Tiles Info] [${routeStart}] ODM task query finished. Found: ${!!odmMatch} (ID: ${odmMatch?.id || 'none'}, completedAt: ${odmMatch?.completedAt || 'none'})`)
 
     const [georefMatch] = await db
       .select({ id: georefTasks.id, bounds: georefTasks.bounds, completedAt: georefTasks.completedAt })
@@ -41,27 +43,34 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       .where(eq(georefTasks.outputKey, key))
       .orderBy(desc(georefTasks.completedAt))
       .limit(1)
+    console.log(`[Tiles Info] [${routeStart}] Georef task query finished. Found: ${!!georefMatch} (ID: ${georefMatch?.id || 'none'}, completedAt: ${georefMatch?.completedAt || 'none'})`)
 
     if (odmMatch && georefMatch) {
       if (odmMatch.completedAt && georefMatch.completedAt && odmMatch.completedAt > georefMatch.completedAt) {
         cachedInfo = odmMatch.bounds
         matchingTaskType = 'odm'
         matchingTaskId = odmMatch.id
+        console.log(`[Tiles Info] [${routeStart}] Both matched. Selecting newer ODM task: ${odmMatch.id}`)
       } else {
         cachedInfo = georefMatch.bounds
         matchingTaskType = 'georef'
         matchingTaskId = georefMatch.id
+        console.log(`[Tiles Info] [${routeStart}] Both matched. Selecting newer Georef task: ${georefMatch.id}`)
       }
     } else if (odmMatch) {
       cachedInfo = odmMatch.bounds
       matchingTaskType = 'odm'
       matchingTaskId = odmMatch.id
+      console.log(`[Tiles Info] [${routeStart}] Only ODM matched. Selecting ODM task: ${odmMatch.id}`)
     } else if (georefMatch) {
       cachedInfo = georefMatch.bounds
       matchingTaskType = 'georef'
       matchingTaskId = georefMatch.id
+      console.log(`[Tiles Info] [${routeStart}] Only Georef matched. Selecting Georef task: ${georefMatch.id}`)
+    } else {
+      console.log(`[Tiles Info] [${routeStart}] No matching database tasks found for key: ${key}`)
     }
-    console.log(`[Tiles Info] [${routeStart}] DB lookup completed in ${Date.now() - dbLookupStart}ms. Found cached bounds: ${!!cachedInfo}`)
+    console.log(`[Tiles Info] [${routeStart}] DB lookup completed in ${Date.now() - dbLookupStart}ms. Resolved cached bounds: ${!!cachedInfo}`)
   } catch (err) {
     console.error(`[Tiles Info] [${routeStart}] DB lookup failed in ${Date.now() - dbLookupStart}ms:`, err)
   }

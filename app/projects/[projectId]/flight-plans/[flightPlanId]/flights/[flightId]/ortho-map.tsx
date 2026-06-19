@@ -707,30 +707,47 @@ export default function OrthoMap({
 
     async function applyLayer() {
       const startTime = Date.now()
-      console.log(`[OrthoMap] Starting applyLayer for outputKey: ${outputKey}`)
-      setStatus('loading')
-      setIsTilesLoading(true)
+      console.log(`[OrthoMap] Starting applyLayer. outputKey: "${outputKey}", mapReadyRef: ${mapReadyRef.current}, mapRef: ${!!mapRef.current}`)
       
       // Wait for the map to be ready (style loaded)
       console.log('[OrthoMap] Waiting for mapReadyRef.current to be true...')
       const waitStart = Date.now()
       await new Promise<void>((resolve) => {
-        if (mapReadyRef.current && mapRef.current) return resolve()
+        if (mapReadyRef.current && mapRef.current) {
+          console.log('[OrthoMap] Map is already ready on applyLayer start')
+          return resolve()
+        }
+        let checkCount = 0
         const check = setInterval(() => {
-          if (cancelled || !mapRef.current) {
-            console.log('[OrthoMap] applyLayer cancelled or mapRef null during wait')
+          checkCount++
+          if (cancelled) {
+            console.log('[OrthoMap] applyLayer wait cancelled')
             clearInterval(check)
             return
           }
+          if (!mapRef.current) {
+            console.log(`[OrthoMap] [Check #${checkCount}] mapRef.current is still null/undefined`)
+            return
+          }
           if (mapReadyRef.current) {
-            console.log(`[OrthoMap] mapReadyRef became true after ${Date.now() - waitStart}ms`)
+            console.log(`[OrthoMap] mapReadyRef became true after ${Date.now() - waitStart}ms (${checkCount} checks)`)
             clearInterval(check)
             resolve()
+          } else if (checkCount % 10 === 0) {
+            console.log(`[OrthoMap] [Check #${checkCount}] Still waiting for mapReadyRef.current to be true... (mapRef.current: ${!!mapRef.current}, styleLoaded: ${mapRef.current?.isStyleLoaded()})`)
           }
         }, 100)
       })
 
-      if (cancelled || !mapRef.current) return
+      if (cancelled) {
+        console.log('[OrthoMap] applyLayer cancelled after waiting for map readiness')
+        return
+      }
+      if (!mapRef.current) {
+        console.error('[OrthoMap] mapRef.current is null after wait block!')
+        return
+      }
+
       const map = mapRef.current
 
       // Remove existing ortho layer/source if present
@@ -739,11 +756,16 @@ export default function OrthoMap({
       if (map.getSource('ortho')) map.removeSource('ortho')
 
       if (!outputKey) {
-        console.log('[OrthoMap] No outputKey provided, setting status to ready')
+        console.log('[OrthoMap] No outputKey provided, setting status to ready immediately')
         boundsRef.current = null
         setStatus('ready')
+        setIsTilesLoading(false)
         return
       }
+
+      console.log(`[OrthoMap] outputKey exists ("${outputKey}"). Setting status to loading...`)
+      setStatus('loading')
+      setIsTilesLoading(true)
 
       try {
         const cacheBusterParam = cacheBuster ? `&t=${encodeURIComponent(cacheBuster)}` : ''
