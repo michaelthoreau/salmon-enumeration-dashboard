@@ -296,14 +296,24 @@ export default function FlightSplitView({
 
         const p = data.uploadedImages ?? data.processed ?? 0
         const t = data.totalImages ?? data.total ?? 0
-        const progress = data.progress ?? (data.status === 'completed' ? 100 : (t > 0 ? (p / t) * 100 : 0))
+        let progress = data.progress ?? (data.status === 'completed' ? 100 : (t > 0 ? (p / t) * 100 : 0))
+        if (data.status !== 'completed' && progress >= 100) {
+          progress = 90
+        }
 
         setActiveTaskState((prev) => {
           const finalProcessed = Math.max(p, prev ? prev.processed : 0)
           const finalTotal = t > 0 ? t : (prev ? prev.total : 0)
-          const calculatedProgress = finalTotal > 0 ? (finalProcessed / finalTotal) * 100 : 0
+          let calculatedProgress = finalTotal > 0 ? (finalProcessed / finalTotal) * 100 : 0
+          if (data.status !== 'completed' && calculatedProgress >= 100) {
+            calculatedProgress = 90
+          }
+          let nextProgress = data.progress ?? (data.status === 'completed' ? 100 : calculatedProgress)
+          if (data.status !== 'completed' && nextProgress >= 100) {
+            nextProgress = 90
+          }
           const finalProgress = Math.max(
-            data.progress ?? (data.status === 'completed' ? 100 : calculatedProgress),
+            nextProgress,
             prev?.progress ?? 0
           )
 
@@ -449,17 +459,41 @@ export default function FlightSplitView({
   const [lightboxImage, setLightboxImage] = useState<FileEntry | null>(null)
   const [lightboxFullResUrl, setLightboxFullResUrl] = useState<string | null>(null)
   const [isFullResLoading, setIsFullResLoading] = useState(false)
+  const [isFullResImageLoading, setIsFullResImageLoading] = useState(false)
 
   // Zoom and pan state for lightbox image
   const [zoomScale, setZoomScale] = useState(1)
   const [panOffset, setPanOffset] = useState({ x: 0, y: 0 })
   const [isDragging, setIsDragging] = useState(false)
   const dragStartRef = useRef({ x: 0, y: 0 })
+  const handleWheel = useCallback((e: WheelEvent) => {
+    e.preventDefault()
+    const delta = e.deltaY < 0 ? 0.25 : -0.25
+    setZoomScale((prev) => {
+      const next = Math.max(1, Math.min(5, prev + delta))
+      if (next === 1) {
+        setPanOffset({ x: 0, y: 0 })
+      }
+      return next
+    })
+  }, [])
+
+  const viewportRefVal = useRef<HTMLDivElement | null>(null)
+  const viewportRef = useCallback((node: HTMLDivElement | null) => {
+    if (viewportRefVal.current) {
+      viewportRefVal.current.removeEventListener('wheel', handleWheel)
+    }
+    viewportRefVal.current = node
+    if (node) {
+      node.addEventListener('wheel', handleWheel, { passive: false })
+    }
+  }, [handleWheel])
 
   // Reset full res and zoom state when lightbox image changes
   useEffect(() => {
     setLightboxFullResUrl(null)
     setIsFullResLoading(false)
+    setIsFullResImageLoading(false)
     setZoomScale(1)
     setPanOffset({ x: 0, y: 0 })
     setIsDragging(false)
@@ -485,7 +519,10 @@ export default function FlightSplitView({
   const isTaskActive = !!(activeTask && !['completed', 'failed', 'canceled'].includes(taskStatus || ''))
   const total = activeTaskState?.total ?? latestTask?.totalImages ?? 0
   const processed = activeTaskState?.processed ?? (latestTask && 'processed' in latestTask ? latestTask.processed : null) ?? 0
-  const progress = activeTaskState?.progress ?? (latestTask && 'progress' in latestTask ? latestTask.progress : null) ?? (total > 0 ? (processed / total) * 100 : 0)
+  let progress = activeTaskState?.progress ?? (latestTask && 'progress' in latestTask ? latestTask.progress : null) ?? (total > 0 ? (processed / total) * 100 : 0)
+  if (taskStatus !== 'completed' && progress >= 100) {
+    progress = 90
+  }
   const currentOutputKey = activeTaskState?.outputKey || latestTask?.outputKey
   const currentReportKey = activeTaskState?.reportKey || (latestTask && 'reportKey' in latestTask ? latestTask.reportKey : null)
 
@@ -1383,6 +1420,7 @@ export default function FlightSplitView({
                         const res = await fetch(`/api/files/presign?key=${encodeURIComponent(lightboxImage.key)}`)
                         if (res.ok) {
                           const { url } = await res.json()
+                          setIsFullResImageLoading(true)
                           setLightboxFullResUrl(url)
                         }
                       } catch (err) {
@@ -1391,7 +1429,10 @@ export default function FlightSplitView({
                         setIsFullResLoading(false)
                       }
                     }}
-                    className="text-blue-400 hover:text-blue-300 border-blue-900/50 hover:border-blue-800 bg-blue-950/30 hover:bg-blue-950/50 flex items-center gap-1.5 font-semibold h-7 text-[11px] rounded-lg transition-colors cursor-pointer disabled:opacity-50"
+                    className={cn(
+                      "text-blue-400 hover:text-blue-300 border-blue-900/50 hover:border-blue-800 bg-blue-950/30 hover:bg-blue-950/50 flex items-center gap-1.5 font-semibold h-7 text-[11px] rounded-lg transition-colors cursor-pointer disabled:opacity-50",
+                      (zoomScale > 1 && !lightboxFullResUrl) ? "animate-pulse ring-2 ring-blue-500/50 border-blue-500 bg-blue-950/75" : ""
+                    )}
                   >
                     {isFullResLoading ? (
                       <>
@@ -1428,6 +1469,7 @@ export default function FlightSplitView({
             </div>
             {/* Viewport */}
             <div
+              ref={viewportRef}
               className={cn(
                 "flex-1 min-h-0 flex items-center justify-center p-6 bg-gray-950 relative select-none overflow-hidden",
                 zoomScale > 1 ? "cursor-grab active:cursor-grabbing" : ""
@@ -1458,17 +1500,6 @@ export default function FlightSplitView({
                 setZoomScale(1)
                 setPanOffset({ x: 0, y: 0 })
               }}
-              onWheel={(e) => {
-                e.preventDefault()
-                const delta = e.deltaY < 0 ? 0.25 : -0.25
-                setZoomScale(prev => {
-                  const next = Math.max(1, Math.min(5, prev + delta))
-                  if (next === 1) {
-                    setPanOffset({ x: 0, y: 0 })
-                  }
-                  return next
-                })
-              }}
             >
               <div
                 style={{
@@ -1480,11 +1511,15 @@ export default function FlightSplitView({
                 <img
                   src={lightboxFullResUrl || thumbnailUrl(lightboxImage.key, lightboxImage.etag, 1200)}
                   alt={lightboxImage.key.split('/').pop()}
-                  className="max-w-full max-h-[70vh] object-contain rounded pointer-events-none"
+                  onLoad={() => setIsFullResImageLoading(false)}
+                  className={cn(
+                    "max-w-full max-h-[70vh] object-contain rounded pointer-events-none transition-opacity duration-200",
+                    isFullResImageLoading ? "opacity-40" : "opacity-100"
+                  )}
                 />
               </div>
-              {isFullResLoading && (
-                <div className="absolute inset-0 flex items-center justify-center bg-black/40 backdrop-blur-xs pointer-events-none">
+              {isFullResImageLoading && (
+                <div className="absolute inset-0 flex items-center justify-center bg-black/45 backdrop-blur-xs pointer-events-none">
                   <RefreshCw className="w-8 h-8 text-blue-500 animate-spin" />
                 </div>
               )}

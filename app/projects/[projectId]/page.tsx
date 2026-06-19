@@ -6,6 +6,7 @@ import { eq, and, isNull, inArray, desc, sql } from 'drizzle-orm'
 import { getSession } from '@/lib/session'
 
 import TodayFlightsView from './today-view'
+import { syncActiveTasks } from '@/lib/tasks-sync'
 
 interface PageProps {
   params: Promise<{ projectId: string }>
@@ -91,7 +92,13 @@ export default async function ProjectTodayPage({ params }: PageProps) {
 
   const flightIds = allFlights.map((f) => f.id)
 
-
+  if (flightIds.length > 0) {
+    try {
+      await syncActiveTasks(flightIds)
+    } catch (err) {
+      console.error('Failed to sync active tasks on dashboard load:', err)
+    }
+  }
 
   // Fetch counts, ODM tasks, and Georef tasks for all flights
   const fileCounts = await db

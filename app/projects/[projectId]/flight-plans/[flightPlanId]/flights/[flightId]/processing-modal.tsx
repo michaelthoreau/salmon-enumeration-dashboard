@@ -350,7 +350,10 @@ export default function ProcessingModal({
         const finalTotal = nextTotal !== null ? nextTotal : prevTotal
 
         const calculatedProgress = (finalTotal && finalTotal > 0) ? (finalProcessed / finalTotal) * 100 : 0
-        const nextProgress = data.progress ?? (data.status === 'completed' ? 100 : calculatedProgress)
+        let nextProgress = data.progress ?? (data.status === 'completed' ? 100 : calculatedProgress)
+        if (data.status !== 'completed' && nextProgress >= 100) {
+          nextProgress = 90
+        }
         const prevProgress = isSameTask ? prev.progress : 0
         const finalProgress = Math.max(nextProgress, prevProgress)
 
