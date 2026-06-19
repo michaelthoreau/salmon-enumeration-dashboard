@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { cn } from '@/lib/utils'
 import { Button, buttonVariants } from '@/components/ui/button'
-import { MapIcon, ImageIcon, DownloadIcon, ArrowLeft, Maximize2, RefreshCw, X, Wind, Cloud, Droplet, Thermometer, Compass, Waves, AlertTriangle, ZoomIn, ZoomOut } from 'lucide-react'
+import { MapIcon, ImageIcon, DownloadIcon, ArrowLeft, Maximize2, Minimize2, RefreshCw, X, Wind, Cloud, Droplet, Thermometer, Compass, Waves, AlertTriangle, ZoomIn, ZoomOut, ChevronLeft, ChevronRight } from 'lucide-react'
 import FlightUploader from './flight-uploader'
 import FileLightbox from './file-lightbox'
 import EditFlightButton from './edit-flight-button'
@@ -456,10 +456,57 @@ export default function FlightSplitView({
   const [activeImage, setActiveImage] = useState<FileEntry | null>(images[0] ?? null)
   const [loadedKeys, setLoadedKeys] = useState<Record<string, boolean>>({})
   const activeImageLoading = !!(activeImage && !isVideo(activeImage.key) && !loadedKeys[activeImage.key])
+
+  const handleImageRef = useCallback((imgNode: HTMLImageElement | null) => {
+    if (imgNode && imgNode.complete && activeImage) {
+      const key = activeImage.key
+      setLoadedKeys((prev) => {
+        if (prev[key]) return prev
+        return { ...prev, [key]: true }
+      })
+    }
+  }, [activeImage])
   const [lightboxImage, setLightboxImage] = useState<FileEntry | null>(null)
   const [lightboxFullResUrl, setLightboxFullResUrl] = useState<string | null>(null)
   const [isFullResLoading, setIsFullResLoading] = useState(false)
   const [isFullResImageLoading, setIsFullResImageLoading] = useState(false)
+  const [isFullscreenPlayer, setIsFullscreenPlayer] = useState(false)
+
+  const handlePrevImage = useCallback(() => {
+    if (!activeImage || images.length <= 1) return
+    const currentIndex = images.findIndex((img) => img.key === activeImage.key)
+    if (currentIndex > 0) {
+      setActiveImage(images[currentIndex - 1])
+    } else {
+      setActiveImage(images[images.length - 1])
+    }
+  }, [activeImage, images])
+
+  const handleNextImage = useCallback(() => {
+    if (!activeImage || images.length <= 1) return
+    const currentIndex = images.findIndex((img) => img.key === activeImage.key)
+    if (currentIndex < images.length - 1) {
+      setActiveImage(images[currentIndex + 1])
+    } else {
+      setActiveImage(images[0])
+    }
+  }, [activeImage, images])
+
+  // Listen for keys to navigate and exit full viewport player
+  useEffect(() => {
+    if (!isFullscreenPlayer) return
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setIsFullscreenPlayer(false)
+      } else if (e.key === 'ArrowLeft') {
+        handlePrevImage()
+      } else if (e.key === 'ArrowRight') {
+        handleNextImage()
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [isFullscreenPlayer, handlePrevImage, handleNextImage])
 
   // Zoom and pan state for lightbox image
   const [zoomScale, setZoomScale] = useState(1)
@@ -1206,6 +1253,15 @@ export default function FlightSplitView({
 
                       {/* Interactive Viewport (Takes up full area) */}
                       <div className="flex-1 min-h-0 flex items-center justify-center relative bg-gray-950">
+                        <button
+                          onClick={() => setIsFullscreenPlayer(true)}
+                          className="absolute bottom-4 right-4 z-10 p-2 bg-black/60 hover:bg-black/80 backdrop-blur-xs border border-gray-800 hover:border-gray-700 text-gray-300 hover:text-white rounded-lg shadow-lg transition-all hover:scale-105 cursor-pointer flex items-center gap-1.5 text-xs font-semibold"
+                          title="Expand Viewport"
+                        >
+                          <Maximize2 className="w-3.5 h-3.5" />
+                          <span>Expand</span>
+                        </button>
+
                         {isVideo(activeImage.key) ? (
                           <div className="w-full h-full">
                             <VideoPlayer
@@ -1218,6 +1274,7 @@ export default function FlightSplitView({
                             {/* eslint-disable-next-line @next/next/no-img-element */}
                             <img
                               key={activeImage.key}
+                              ref={handleImageRef}
                               src={thumbnailUrl(activeImage.key, activeImage.etag, 1200)}
                               alt={activeImage.key.split('/').pop()}
                               onLoad={() => setLoadedKeys((prev) => ({ ...prev, [activeImage.key]: true }))}
@@ -1529,6 +1586,87 @@ export default function FlightSplitView({
                 </div>
               )}
             </div>
+          </div>
+        </div>
+      )}
+
+      {isFullscreenPlayer && activeImage && (
+        <div className="fixed inset-0 z-50 bg-gray-950 flex flex-col animate-fade-in select-none">
+          {/* Header */}
+          <div className="bg-gray-900 border-b border-gray-800 px-6 py-3 flex items-center justify-between text-gray-300 flex-shrink-0 z-10">
+            <div className="flex items-center gap-3">
+              <span className="text-sm font-mono font-medium text-white truncate max-w-[300px] sm:max-w-[400px]">
+                {activeImage.key.split('/').pop()}
+              </span>
+              <span className="text-xs text-gray-500 font-mono">{formatBytes(activeImage.size)}</span>
+            </div>
+            <div className="flex items-center gap-4">
+              {activeImageDownloadUrl && (
+                <a
+                  href={activeImageDownloadUrl}
+                  className="text-xs text-blue-400 hover:text-blue-300 flex items-center gap-1 font-medium transition-colors"
+                >
+                  <DownloadIcon className="w-3.5 h-3.5" /> Download
+                </a>
+              )}
+              <button
+                onClick={() => setIsFullscreenPlayer(false)}
+                className="text-gray-400 hover:text-white p-1 rounded-lg hover:bg-gray-800 transition-colors cursor-pointer flex items-center gap-1 text-xs font-semibold"
+              >
+                <Minimize2 className="w-4 h-4" /> Exit Full Viewport
+              </button>
+            </div>
+          </div>
+
+          {/* Viewport */}
+          <div className="flex-1 min-h-0 flex items-center justify-center relative bg-gray-950 p-6">
+            {images.length > 1 && (
+              <button
+                onClick={handlePrevImage}
+                className="absolute left-6 z-20 p-2.5 bg-black/60 hover:bg-black/80 backdrop-blur-xs border border-gray-800 hover:border-gray-700 text-gray-300 hover:text-white rounded-full shadow-lg transition-all hover:scale-105 cursor-pointer"
+                title="Previous File (Left Arrow)"
+              >
+                <ChevronLeft className="w-5 h-5" />
+              </button>
+            )}
+
+            {isVideo(activeImage.key) ? (
+              <div className="w-full h-full max-w-7xl max-h-[85vh] flex items-center justify-center">
+                <VideoPlayer
+                  videoUrl={activeImageDownloadUrl}
+                  filename={activeImage.key.split('/').pop() || ''}
+                />
+              </div>
+            ) : (
+              <>
+                <img
+                  key={activeImage.key}
+                  ref={handleImageRef}
+                  src={thumbnailUrl(activeImage.key, activeImage.etag, 1200)}
+                  alt={activeImage.key.split('/').pop()}
+                  onLoad={() => setLoadedKeys((prev) => ({ ...prev, [activeImage.key]: true }))}
+                  className={cn(
+                    "max-w-full max-h-full object-contain shadow-2xl rounded transition-opacity duration-200",
+                    activeImageLoading ? "opacity-0" : "opacity-100"
+                  )}
+                />
+                {activeImageLoading && (
+                  <div className="absolute inset-0 flex items-center justify-center bg-gray-950/50 backdrop-blur-xs">
+                    <RefreshCw className="w-8 h-8 text-blue-500 animate-spin" />
+                  </div>
+                )}
+              </>
+            )}
+
+            {images.length > 1 && (
+              <button
+                onClick={handleNextImage}
+                className="absolute right-6 z-20 p-2.5 bg-black/60 hover:bg-black/80 backdrop-blur-xs border border-gray-800 hover:border-gray-700 text-gray-300 hover:text-white rounded-full shadow-lg transition-all hover:scale-105 cursor-pointer"
+                title="Next File (Right Arrow)"
+              >
+                <ChevronRight className="w-5 h-5" />
+              </button>
+            )}
           </div>
         </div>
       )}

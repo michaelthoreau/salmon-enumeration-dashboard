@@ -272,6 +272,11 @@ export default function ProcessingModal({
   useEffect(() => {
     if (initialActiveTask && isOpen) {
       setTask((prev) => {
+        let initialProgress = initialActiveTask.progress ?? 0
+        if (initialActiveTask.status !== 'completed' && initialProgress >= 100) {
+          initialProgress = 90
+        }
+
         // If there's already a task with the same taskId, just update its status and metadata
         if (prev && prev.taskId === initialActiveTask.taskId) {
           return {
@@ -280,7 +285,7 @@ export default function ProcessingModal({
             outputKey: initialActiveTask.outputKey ?? prev.outputKey,
             reportKey: initialActiveTask.reportKey ?? prev.reportKey,
             error: initialActiveTask.error ?? prev.error,
-            progress: Math.max(prev.progress, initialActiveTask.progress ?? 0),
+            progress: Math.max(prev.progress, initialProgress),
             uploadedImages: Math.max(prev.uploadedImages, initialActiveTask.processed ?? 0),
           }
         }
@@ -290,7 +295,7 @@ export default function ProcessingModal({
           taskId: initialActiveTask.taskId,
           type: initialActiveTask.type,
           status: initialActiveTask.status,
-          progress: initialActiveTask.progress ?? 0,
+          progress: initialProgress,
           uploadedImages: initialActiveTask.processed ?? 0,
           totalImages: initialActiveTask.totalImages ?? null,
           processingTime: -1,
