@@ -444,19 +444,11 @@ export default function FlightSplitView({
   // Image list filtering
   const images = displayObjects.filter((o) => isImage(o.key) || isVideo(o.key))
   const [activeImage, setActiveImage] = useState<FileEntry | null>(images[0] ?? null)
-  const [activeImageLoading, setActiveImageLoading] = useState(false)
+  const [loadedKeys, setLoadedKeys] = useState<Record<string, boolean>>({})
+  const activeImageLoading = !!(activeImage && !isVideo(activeImage.key) && !loadedKeys[activeImage.key])
   const [lightboxImage, setLightboxImage] = useState<FileEntry | null>(null)
   const [lightboxFullResUrl, setLightboxFullResUrl] = useState<string | null>(null)
   const [isFullResLoading, setIsFullResLoading] = useState(false)
-
-  // Trigger loading state when activeImage changes
-  useEffect(() => {
-    if (activeImage && !isVideo(activeImage.key)) {
-      setActiveImageLoading(true)
-    } else {
-      setActiveImageLoading(false)
-    }
-  }, [activeImage])
 
   // Zoom and pan state for lightbox image
   const [zoomScale, setZoomScale] = useState(1)
@@ -1191,7 +1183,7 @@ export default function FlightSplitView({
                               key={activeImage.key}
                               src={thumbnailUrl(activeImage.key, activeImage.etag, 1200)}
                               alt={activeImage.key.split('/').pop()}
-                              onLoad={() => setActiveImageLoading(false)}
+                              onLoad={() => setLoadedKeys((prev) => ({ ...prev, [activeImage.key]: true }))}
                               className={cn(
                                 "max-w-full max-h-full object-contain shadow-2xl rounded transition-opacity duration-200",
                                 activeImageLoading ? "opacity-0" : "opacity-100"
