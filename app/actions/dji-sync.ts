@@ -18,7 +18,9 @@ import {
   FILE_TYPE_IMAGE,
   FILE_TYPE_VIDEO,
 } from '@/lib/dji'
-import { uploadStream } from '@/lib/s3'
+import { LambdaClient, InvokeCommand } from '@aws-sdk/client-lambda'
+import { files } from '@/lib/schema'
+import { sql } from 'drizzle-orm'
 
 function canWrite(role: string) {
   return role === 'read-write' || role === 'admin'
@@ -122,7 +124,13 @@ export async function getDjiSyncDiff(
   }
 }
 
-// ─── Pull a single DJI flight into the dashboard ─────────────────────────────
+// ─── Pull a single DJI flight via async Lambda invoke ───────────────────────
+
+const LAMBDA_FUNCTION_NAME = process.env.DJI_LAMBDA_FUNCTION_NAME ?? 'dji-webhook-handler'
+
+const lambdaClient = new LambdaClient({
+  region: process.env.AWS_REGION ?? 'us-east-1',
+})
 
 export async function pullDjiFlight(
   projectId: string,
@@ -132,8 +140,6 @@ export async function pullDjiFlight(
   ok: boolean
   flightLabel?: string
   total?: number
-  succeeded?: number
-  failed?: string[]
   error?: string
 }> {
   const session = await getSession()
@@ -149,67 +155,77 @@ export async function pullDjiFlight(
 
     const mediaFiles = flight.files.filter((f) => f.file_type !== FILE_TYPE_FOLDER)
 
-    const webhookUrl =
-      process.env.DJI_WEBHOOK_URL ??
-      'https://dohhl47k9d.execute-api.us-east-1.amazonaws.com/prod/dji/notify'
-
-    let succeeded = 0
-    const failed: string[] = []
-
-    for (const f of mediaFiles) {
-      const name        = resolveFilename(f)
-      const downloadUrl = f.original_url ?? f.download_url ?? f.url
-
-      if (!downloadUrl) {
-        failed.push(`${name}: no download URL`)
-        continue
-      }
-
-      const s3Key = `landing/fh_sync/${dji.orgUuid}/${djiProjectUuid}/media/${f.id}/${name}`
-
-      try {
-        // Stream DJI → S3 landing zone
-        const dlResp = await fetch(downloadUrl, { signal: AbortSignal.timeout(300_000) })
-        if (!dlResp.ok || !dlResp.body) throw new Error(`DJI download returned ${dlResp.status}`)
-        await uploadStream(s3Key, dlResp.body)
-
-        // Fire existing Lambda webhook synchronously — it creates/matches flight plan+flight,
-        // moves the object to its final S3 location, and registers it in the files table.
-        const webhookPayload = JSON.stringify({
-          type:       'sync_file_success',
-          org_id:     dji.orgUuid,
-          project_id: djiProjectUuid,
-          data: {
-            fh2_file_path:    fh2FilePath,
-            file_bytes_size:  f.size ?? 0,
-            file_external_key: s3Key,
-            file_id:          f.id,
-            file_type:        'media',
-          },
-        })
-
-        const hookResp = await fetch(webhookUrl, {
-          method:  'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body:    webhookPayload,
-          signal:  AbortSignal.timeout(30_000),
-        })
-
-        if (!hookResp.ok) throw new Error(`Webhook returned ${hookResp.status}`)
-        succeeded++
-      } catch (err) {
-        failed.push(`${name}: ${String(err)}`)
-      }
+    const payload = {
+      type:       'sync_flight',
+      org_id:     dji.orgUuid,
+      project_id: djiProjectUuid,
+      data: {
+        fh2_file_path: fh2FilePath,
+        files: mediaFiles.map((f) => ({
+          id:           f.id,
+          name:         resolveFilename(f),
+          suffix:       f.suffix ?? '',
+          size:         f.size ?? 0,
+          download_url: f.original_url ?? f.download_url ?? f.url ?? '',
+        })),
+      },
     }
 
+    await lambdaClient.send(new InvokeCommand({
+      FunctionName:   LAMBDA_FUNCTION_NAME,
+      InvocationType: 'Event',
+      Payload:        Buffer.from(JSON.stringify(payload)),
+    }))
+
     return {
-      ok:         true,
+      ok:          true,
       flightLabel: flight.displayName,
-      total:      mediaFiles.length,
-      succeeded,
-      failed,
+      total:       mediaFiles.length,
     }
   } catch (err) {
     return { ok: false, error: String(err) }
   }
+}
+
+// ─── Poll sync progress ─────────────────────────────────────────────────────
+
+export async function getSyncProgress(
+  projectId: string,
+  fh2FilePath: string,
+): Promise<{ fileCount: number }> {
+  const planName = parsePlanName(fh2FilePath)
+  if (!planName) return { fileCount: 0 }
+
+  const slug = slugify(planName)
+
+  const chinookSegment = isChinookPath(fh2FilePath)
+    ? (fh2FilePath.includes('/') ? fh2FilePath.split('/').slice(1).join('/') : fh2FilePath)
+    : null
+
+  const [plan] = await db
+    .select({ id: flightPlans.id })
+    .from(flightPlans)
+    .where(and(eq(flightPlans.projectId, projectId), eq(flightPlans.name, slug), isNull(flightPlans.deletedAt)))
+
+  if (!plan) return { fileCount: 0 }
+
+  const [flight] = await db
+    .select({ id: flights.id })
+    .from(flights)
+    .where(and(
+      eq(flights.flightPlanId, plan.id),
+      chinookSegment
+        ? like(flights.notes, `%${chinookSegment}`)
+        : eq(flights.notes, fh2FilePath),
+      isNull(flights.deletedAt),
+    ))
+
+  if (!flight) return { fileCount: 0 }
+
+  const [result] = await db
+    .select({ count: sql<number>`count(*)` })
+    .from(files)
+    .where(eq(files.flightId, flight.id))
+
+  return { fileCount: result?.count ?? 0 }
 }

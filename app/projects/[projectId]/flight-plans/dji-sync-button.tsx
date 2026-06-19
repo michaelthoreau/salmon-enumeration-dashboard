@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useTransition, useCallback } from 'react'
+import { useState, useTransition, useCallback, useRef, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/button'
 import {
@@ -19,15 +19,16 @@ import {
 } from '@/components/ui/select'
 import { Download, RefreshCw, CheckCircle, AlertCircle } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { listDjiProjects, getDjiSyncDiff, pullDjiFlight, type MissingFlight } from '@/app/actions/dji-sync'
+import { listDjiProjects, getDjiSyncDiff, pullDjiFlight, getSyncProgress, type MissingFlight } from '@/app/actions/dji-sync'
 
 type Stage = 'pickProject' | 'loadingDiff' | 'review' | 'pulling' | 'completed' | 'error'
 
-interface PullResult {
-  flightLabel: string
-  succeeded:   number
-  total:       number
-  failed:      string[]
+interface FlightProgress {
+  label:     string
+  fh2Path:   string
+  total:     number
+  fileCount: number
+  done:      boolean
 }
 
 export default function DjiSyncButton({ projectId }: { projectId: string }) {
@@ -47,11 +48,13 @@ export default function DjiSyncButton({ projectId }: { projectId: string }) {
   const [missingFlights, setMissingFlights] = useState<MissingFlight[]>([])
   const [checkedPaths,   setCheckedPaths]   = useState<Set<string>>(new Set())
 
-  // Step 3: pull progress
-  const [pullTotal,    setPullTotal]    = useState(0)
-  const [pullProgress, setPullProgress] = useState(0)
-  const [currentLabel, setCurrentLabel] = useState('')
-  const [results,      setResults]      = useState<PullResult[]>([])
+  // Step 3: pull progress (polling)
+  const [flightProgress, setFlightProgress] = useState<FlightProgress[]>([])
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
+
+  useEffect(() => {
+    return () => { if (pollRef.current) clearInterval(pollRef.current) }
+  }, [])
 
   const handleOpen = useCallback(() => {
     setOpen(true)
@@ -61,7 +64,7 @@ export default function DjiSyncButton({ projectId }: { projectId: string }) {
     setSelectedUuid('')
     setMissingFlights([])
     setCheckedPaths(new Set())
-    setResults([])
+    setFlightProgress([])
 
     setLoadingProjects(true)
     startTransition(async () => {
@@ -100,31 +103,51 @@ export default function DjiSyncButton({ projectId }: { projectId: string }) {
     if (selected.length === 0) return
 
     setStage('pulling')
-    setPullTotal(selected.length)
-    setPullProgress(0)
-    setResults([])
     setError(null)
 
+    const initial: FlightProgress[] = selected.map((f) => ({
+      label:     f.displayName,
+      fh2Path:   f.fh2FilePath,
+      total:     f.fileCount,
+      fileCount: 0,
+      done:      false,
+    }))
+    setFlightProgress(initial)
+
     startTransition(async () => {
-      const collected: PullResult[] = []
+      const errors: string[] = []
 
-      for (let i = 0; i < selected.length; i++) {
-        const flight = selected[i]
-        setCurrentLabel(flight.displayName)
-
+      for (const flight of selected) {
         const res = await pullDjiFlight(projectId, selectedUuid, flight.fh2FilePath)
-        collected.push({
-          flightLabel: res.flightLabel ?? flight.displayName,
-          succeeded:   res.succeeded ?? 0,
-          total:       res.total ?? 0,
-          failed:      res.failed ?? [],
-        })
-        setResults([...collected])
-        setPullProgress(i + 1)
+        if (!res.ok) errors.push(`${flight.displayName}: ${res.error}`)
       }
 
-      setStage('completed')
-      router.refresh()
+      if (errors.length > 0) {
+        setError(errors.join('\n'))
+      }
+
+      // Start polling for progress
+      const progressState = [...initial]
+      pollRef.current = setInterval(async () => {
+        let allDone = true
+        for (let i = 0; i < progressState.length; i++) {
+          if (progressState[i].done) continue
+          const res = await getSyncProgress(projectId, progressState[i].fh2Path)
+          progressState[i] = { ...progressState[i], fileCount: res.fileCount }
+          if (res.fileCount >= progressState[i].total) {
+            progressState[i] = { ...progressState[i], done: true }
+          } else {
+            allDone = false
+          }
+        }
+        setFlightProgress([...progressState])
+        if (allDone) {
+          if (pollRef.current) clearInterval(pollRef.current)
+          pollRef.current = null
+          setStage('completed')
+          router.refresh()
+        }
+      }, 4000)
     })
   }, [missingFlights, checkedPaths, projectId, selectedUuid, startTransition, router])
 
@@ -140,7 +163,9 @@ export default function DjiSyncButton({ projectId }: { projectId: string }) {
     })
   }
 
-  const progressPercent = pullTotal > 0 ? Math.round((pullProgress / pullTotal) * 100) : 0
+  const totalFiles = flightProgress.reduce((s, f) => s + f.total, 0)
+  const totalSynced = flightProgress.reduce((s, f) => s + f.fileCount, 0)
+  const progressPercent = totalFiles > 0 ? Math.round((totalSynced / totalFiles) * 100) : 0
   const canClose = stage !== 'pulling' && stage !== 'loadingDiff'
 
   return (
@@ -174,7 +199,7 @@ export default function DjiSyncButton({ projectId }: { projectId: string }) {
               {stage === 'pulling' && (
                 <>
                   <RefreshCw className="w-5 h-5 text-blue-500 animate-spin" />
-                  <span>Pulling flights…</span>
+                  <span>Syncing flights…</span>
                 </>
               )}
               {stage === 'completed' && (
@@ -275,11 +300,11 @@ export default function DjiSyncButton({ projectId }: { projectId: string }) {
             )}
 
             {/* Step 3: pulling progress */}
-            {stage === 'pulling' && (
-              <div className="space-y-2">
+            {(stage === 'pulling' || stage === 'completed') && flightProgress.length > 0 && (
+              <div className="space-y-3">
                 <div className="flex justify-between text-xs font-semibold text-gray-500">
-                  <span className="truncate max-w-[260px]">Current: {currentLabel}</span>
-                  <span>{pullProgress} / {pullTotal} flights</span>
+                  <span>{totalSynced} / {totalFiles} files</span>
+                  <span>{progressPercent}%</span>
                 </div>
                 <div className="w-full h-2.5 rounded-full bg-gray-100 overflow-hidden relative shadow-inner">
                   <div
@@ -287,24 +312,15 @@ export default function DjiSyncButton({ projectId }: { projectId: string }) {
                     style={{ width: `${progressPercent}%` }}
                   />
                 </div>
-                <p className="text-[10px] text-gray-400 font-mono text-right">{progressPercent}% complete</p>
-              </div>
-            )}
-
-            {/* Results list (shown during pull and after) */}
-            {results.length > 0 && (
-              <div className="space-y-2">
-                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider">
-                  {stage === 'pulling' ? 'Completed so far:' : `${results.length} flight(s) pulled:`}
-                </p>
-                <div className="max-h-48 overflow-y-auto border border-gray-200 rounded-lg p-3 space-y-2 bg-gray-50 font-mono text-xs">
-                  {results.map((r, i) => (
+                <div className="max-h-48 overflow-y-auto border border-gray-200 rounded-lg p-3 space-y-2 bg-gray-50 text-xs">
+                  {flightProgress.map((f, i) => (
                     <div key={i} className="flex justify-between border-b border-gray-200/50 pb-1.5 last:border-0 last:pb-0">
-                      <span className="truncate max-w-[240px] text-gray-700 font-medium">{r.flightLabel}</span>
-                      <span className="flex-shrink-0 text-right">
-                        <span className="text-green-600">+{r.succeeded}</span>
-                        {r.failed.length > 0 && (
-                          <span className="text-red-600 ml-1">({r.failed.length} err)</span>
+                      <span className="truncate max-w-[240px] text-gray-700 font-medium">{f.label}</span>
+                      <span className="flex-shrink-0 text-right font-mono">
+                        {f.done ? (
+                          <span className="text-green-600">{f.fileCount} files</span>
+                        ) : (
+                          <span className="text-blue-600">{f.fileCount} / {f.total}</span>
                         )}
                       </span>
                     </div>
@@ -313,14 +329,9 @@ export default function DjiSyncButton({ projectId }: { projectId: string }) {
               </div>
             )}
 
-            {/* Completed with no results */}
-            {stage === 'completed' && results.length === 0 && (
-              <p>No files were pulled.</p>
-            )}
-
             {/* Error */}
             {stage === 'error' && error && (
-              <p className="text-red-600 font-medium">{error}</p>
+              <p className="text-red-600 font-medium whitespace-pre-wrap">{error}</p>
             )}
           </div>
 
