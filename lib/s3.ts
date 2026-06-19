@@ -146,6 +146,14 @@ export async function objectExists(key: string): Promise<boolean> {
   }
 }
 
+/** Download an S3 object as a Node.js Readable stream */
+export async function getObjectStream(key: string): Promise<import('stream').Readable> {
+  const client = getClient()
+  const response = await client.send(new GetObjectCommand({ Bucket: getBucket(), Key: key }))
+  if (!response.Body) throw new Error(`S3 object body empty for key: ${key}`)
+  return response.Body as import('stream').Readable
+}
+
 /** Download an S3 object as a Buffer */
 export async function getObjectBuffer(key: string): Promise<Buffer> {
   const client = getClient()

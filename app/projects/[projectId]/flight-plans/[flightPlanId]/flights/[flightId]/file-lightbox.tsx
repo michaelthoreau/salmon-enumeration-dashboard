@@ -156,23 +156,38 @@ export default function FileLightbox({ files: initialFiles, timezone, canWrite =
     }
   }, [])
 
-  // ---- Bulk download ----
-  const downloadKeys = async (keys: string[]) => {
+  // ---- Bulk download (zip) ----
+  const downloadSelected = async () => {
+    const selectedFiles = files.filter(f => selected.has(f.key))
+    if (selectedFiles.length === 0) return
+
+    if (selectedFiles.length === 1) {
+      await downloadSingle(selectedFiles[0].key)
+      return
+    }
+
     setBulkWorking(true)
     try {
-      for (const key of keys) {
-        const res = await fetch(`/api/files/presign?key=${encodeURIComponent(key)}&download=1`)
-        if (!res.ok) continue
-        const { url } = await res.json() as { url: string }
-        window.location.href = url
-        await new Promise(r => setTimeout(r, 500))
-      }
+      const res = await fetch('/api/files/zip', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          keys: selectedFiles.map(f => f.key),
+          zipName: 'flight-files',
+        }),
+      })
+      if (!res.ok) return
+      const blob = await res.blob()
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = 'flight-files.zip'
+      a.click()
+      URL.revokeObjectURL(url)
     } finally {
       setBulkWorking(false)
     }
   }
-
-  const downloadSelected = () => downloadKeys(files.filter(f => selected.has(f.key)).map(f => f.key))
 
   const handleSort = (field: SortField) => {
     if (sortField === field) {

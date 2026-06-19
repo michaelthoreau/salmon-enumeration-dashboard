@@ -255,6 +255,15 @@ export default function FlightUploader({
                 <p className="text-xs text-gray-500 mt-1">
                   Images (JPEG, PNG, TIFF), video (MP4, MOV) — up to 5 GB each — up to 500 files
                 </p>
+                {!isRunning && (
+                  <button
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); folderInputRef.current?.click() }}
+                    className="mt-2 text-xs text-blue-600 hover:text-blue-800 hover:underline font-medium"
+                  >
+                    Or select a folder
+                  </button>
+                )}
               </div>
               <input
                 ref={inputRef}
@@ -265,28 +274,16 @@ export default function FlightUploader({
                 onChange={onFileInputChange}
                 disabled={isRunning}
               />
+              <input
+                ref={folderInputRef}
+                type="file"
+                // @ts-expect-error webkitdirectory is non-standard but widely supported
+                webkitdirectory=""
+                className="hidden"
+                onChange={onFileInputChange}
+                disabled={isRunning}
+              />
             </div>
-            {!isRunning && (
-              <button
-                type="button"
-                onClick={() => folderInputRef.current?.click()}
-                className="w-full text-center text-xs text-blue-600 hover:text-blue-800 hover:underline font-medium py-1"
-              >
-                Or select a folder
-              </button>
-            )}
-            <input
-              ref={folderInputRef}
-              type="file"
-              accept="*/*"
-              // @ts-expect-error webkitdirectory is non-standard but widely supported
-              webkitdirectory=""
-              directory=""
-              mozdirectory=""
-              className="hidden"
-              onChange={onFileInputChange}
-              disabled={isRunning}
-            />
 
             {/* Progress list */}
             {statuses.length > 0 && (

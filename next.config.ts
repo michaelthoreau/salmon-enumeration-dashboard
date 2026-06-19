@@ -13,7 +13,7 @@ const s3Host = process.env.S3_BUCKET_NAME && process.env.AWS_REGION
 
 const nextConfig: NextConfig = {
   // sharp must run in the Node.js runtime, not the Edge runtime
-  serverExternalPackages: ['sharp'],
+  serverExternalPackages: ['sharp', 'archiver'],
 
   async headers() {
     return [
