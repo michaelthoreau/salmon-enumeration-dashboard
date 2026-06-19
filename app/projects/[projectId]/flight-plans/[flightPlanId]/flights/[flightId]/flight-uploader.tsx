@@ -259,7 +259,7 @@ export default function FlightUploader({
                 ref={inputRef}
                 type="file"
                 multiple
-                accept="image/jpeg,image/png,image/tiff,image/webp,video/mp4,video/quicktime,application/octet-stream"
+                accept="image/*,video/*,.dng,.rtk,.nav,.obs,.mrk"
                 className="hidden"
                 onChange={onFileInputChange}
                 disabled={isRunning}

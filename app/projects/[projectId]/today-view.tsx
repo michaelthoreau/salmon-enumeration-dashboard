@@ -359,7 +359,7 @@ function FlightCard({
                 <button
                   onClick={() => handleHideFlight(flight.id, flight.flightPlanId)}
                   className="p-1 rounded text-gray-400 hover:text-red-600 hover:bg-gray-55 transition-colors cursor-pointer"
-                  title="Hide flight from recents permanently"
+                  title="Hide flight permanently"
                 >
                   <EyeOff className="w-3.5 h-3.5" />
                 </button>
@@ -558,8 +558,6 @@ function FlightCard({
   )
 }
 
-
-
 export default function TodayFlightsView({
   projectId,
   projectName,
@@ -572,14 +570,13 @@ export default function TodayFlightsView({
   isAdmin,
   highlightedFlightId,
 }: Props) {
-  const [selectedDate, setSelectedDate] = useState(initialDate)
   const [currentHighlightIds, setCurrentHighlightIds] = useState<string[]>(
     highlightedFlightId ? highlightedFlightId.split(',').filter(Boolean) : []
   )
   const router = useRouter()
 
   const handleHideFlight = async (flightId: string, flightPlanId: string) => {
-    if (!confirm('Are you sure you want to permanently hide this flight from the recents view?')) return
+    if (!confirm('Are you sure you want to permanently hide this flight?')) return
 
     const formData = new FormData()
     formData.append('id', flightId)
@@ -634,102 +631,38 @@ export default function TodayFlightsView({
     }
   }
 
-
-  const isToday = selectedDate === initialDate
-  const yesterdayDate = (() => {
-    const [y, m, d] = initialDate.split('-').map(Number)
-    const date = new Date(y, m - 1, d)
-    date.setDate(date.getDate() - 1)
-    const newY = date.getFullYear()
-    const newM = String(date.getMonth() + 1).padStart(2, '0')
-    const newD = String(date.getDate()).padStart(2, '0')
-    return `${newY}-${newM}-${newD}`
-  })()
-  const now = new Date()
-  const last24hMs = 24 * 60 * 60 * 1000
-
-  // Filter flights matching the selected local date (or last 24h if looking at today's default view)
-  const filteredFlights = flights.filter((f) => {
-    if (isToday) {
-      const diff = now.getTime() - new Date(f.timestamp).getTime()
-      return diff >= 0 && diff <= last24hMs
-    } else {
-      return getLocalDateStr(f.timestamp, timezone) === selectedDate
-    }
-  })
-
-  // Helper to adjust selected date by days
-  const adjustDate = (days: number) => {
-    const [y, m, d] = selectedDate.split('-').map(Number)
-    const date = new Date(y, m - 1, d)
-    date.setDate(date.getDate() + days)
-    const newY = date.getFullYear()
-    const newM = String(date.getMonth() + 1).padStart(2, '0')
-    const newD = String(date.getDate()).padStart(2, '0')
-    setSelectedDate(`${newY}-${newM}-${newD}`)
-  }
-
   const highlightedFlights = flights.filter((f) => currentHighlightIds.includes(f.id))
 
-  // ── Stats Calculations ─────────────────────────────────────────────────────
-  const totalFlights = filteredFlights.length
-  const totalImages = filteredFlights.reduce((acc, curr) => acc + curr.imageCount, 0)
-  const completedMaps = filteredFlights.filter((f) => f.taskStatus === 'completed').length
-  const pendingProcessing = filteredFlights.filter((f) =>
+  // Group flights by calendar day in project timezone
+  const flightsByDay: Record<string, typeof flights> = {}
+  flights.forEach((flight) => {
+    const dayStr = getLocalDateStr(flight.timestamp, timezone)
+    if (!flightsByDay[dayStr]) {
+      flightsByDay[dayStr] = []
+    }
+    flightsByDay[dayStr].push(flight)
+  })
+
+  // Get sorted list of days in descending order (newest first)
+  const sortedDays = Object.keys(flightsByDay).sort((a, b) => b.localeCompare(a))
+
+  // Stats Calculations on all flights
+  const totalFlights = flights.length
+  const totalImages = flights.reduce((acc, curr) => acc + curr.imageCount, 0)
+  const completedMaps = flights.filter((f) => f.taskStatus === 'completed').length
+  const pendingProcessing = flights.filter((f) =>
     ['queued', 'running', 'uploading'].includes(f.taskStatus || '')
   ).length
 
-
-
   return (
     <div className="space-y-6">
-      {/* Upper Calendar Navigation Header */}
+      {/* Flights Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 pb-4 border-b border-gray-200">
         <div>
-          <h1 className="text-xl font-bold text-gray-900 leading-tight">Recent Flights</h1>
-          <p className="text-xs text-gray-550 mt-1">
-            {selectedDate === initialDate
-              ? 'Logged flights and processing queues for Today (last 24 hours)'
-              : selectedDate === yesterdayDate
-              ? 'Logged flights and processing queues for Yesterday'
-              : `Logged flights and processing queues for ${formatLongDate(selectedDate)}`}
+          <h1 className="text-xl font-bold text-gray-900 leading-tight">Flights</h1>
+          <p className="text-xs text-gray-555 mt-1">
+            Complete history of logged flights and map processing queues
           </p>
-        </div>
-
-        {/* Date Selector Navigation Controls */}
-        <div className="flex items-center gap-1.5 self-start sm:self-auto bg-white border border-gray-200 rounded-xl p-1.5 shadow-sm">
-          <button
-            onClick={() => adjustDate(-1)}
-            className="p-1.5 rounded-lg hover:bg-gray-50 text-gray-500 transition-colors"
-            title="Previous Day"
-          >
-            <ChevronLeft className="w-4 h-4" />
-          </button>
-          
-          <div className="flex items-center gap-1.5 px-2.5 py-1 text-xs font-semibold text-gray-700 hover:bg-gray-50 rounded-lg cursor-pointer transition-colors relative">
-            <Calendar className="w-4 h-4 text-gray-400" />
-            <span className="font-mono">
-              {selectedDate === initialDate
-                ? 'Today'
-                : selectedDate === yesterdayDate
-                ? 'Yesterday'
-                : selectedDate}
-            </span>
-            <input
-              type="date"
-              value={selectedDate}
-              onChange={(e) => setSelectedDate(e.target.value)}
-              className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
-            />
-          </div>
-
-          <button
-            onClick={() => adjustDate(1)}
-            className="p-1.5 rounded-lg hover:bg-gray-50 text-gray-500 transition-colors"
-            title="Next Day"
-          >
-            <ChevronRight className="w-4 h-4" />
-          </button>
         </div>
       </div>
 
@@ -767,7 +700,7 @@ export default function TodayFlightsView({
                       {highlightedFlight.notes}
                     </p>
                   )}
-                  <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-gray-500">
+                  <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-gray-550">
                     <span className="font-semibold text-gray-700">
                       {formatLongDate(getLocalDateStr(highlightedFlight.timestamp, timezone))}
                     </span>
@@ -822,65 +755,42 @@ export default function TodayFlightsView({
 
       {/* Main Flights Section */}
       <section className="flex flex-col gap-4 max-w-5xl mx-auto min-h-[400px]">
-        <div className="flex items-center justify-between">
-          <h2 className="text-xs font-bold uppercase tracking-wider text-gray-400 select-none">
-            Logged Flights ({totalFlights})
-          </h2>
-        </div>
-
-        <div className="space-y-4">
-          {filteredFlights.length === 0 ? (
-            <div className="text-center py-16 text-gray-400 bg-white rounded-2xl border border-gray-200/60 p-6 shadow-sm border-dashed">
-              <span className="text-3xl block mb-2">✈️</span>
-              <p className="text-sm font-semibold text-gray-600">
-                {selectedDate === initialDate
-                  ? 'No flights logged in the last 24 hours.'
-                  : selectedDate === yesterdayDate
-                  ? 'No flights logged yesterday.'
-                  : 'No flights logged on this date.'}
-              </p>
-              <p className="text-xs text-gray-550 mt-1 max-w-xs mx-auto">
-                Use the navigation header above to browse other days or jump to a day containing data.
-              </p>
-
-              {datesWithFlights.length > 0 && (
-                <div className="mt-6 pt-6 border-t border-gray-100">
-                  <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 select-none mb-2.5">
-                    Jump directly to dates with flights:
-                  </p>
-                  <div className="flex flex-wrap gap-1.5 justify-center">
-                    {datesWithFlights.slice(0, 5).map((dt) => (
-                      <button
-                        key={dt}
-                        onClick={() => setSelectedDate(dt)}
-                        className="inline-flex items-center rounded-lg bg-gray-50 border border-gray-200/80 px-2.5 py-1 text-xs text-gray-600 hover:bg-gray-100 font-medium transition-colors"
-                      >
-                        {dt === initialDate
-                          ? 'Today'
-                          : dt === yesterdayDate
-                          ? 'Yesterday'
-                          : dt}
-                      </button>
-                    ))}
-                  </div>
+        {flights.length === 0 ? (
+          <div className="text-center py-16 text-gray-400 bg-white rounded-2xl border border-gray-200/60 p-6 shadow-sm border-dashed">
+            <span className="text-3xl block mb-2">✈️</span>
+            <p className="text-sm font-semibold text-gray-600">No flights logged in this project yet.</p>
+          </div>
+        ) : (
+          <div className="space-y-10">
+            {sortedDays.map((dayStr) => (
+              <div key={dayStr} className="space-y-4">
+                <div className="sticky top-0 z-20 py-2 bg-gray-50/90 backdrop-blur-xs border-b border-gray-200/50 flex items-center justify-between">
+                  <h2 className="text-sm font-bold text-gray-800 flex items-center gap-2">
+                    <Calendar className="w-4 h-4 text-gray-500" />
+                    <span>{formatLongDate(dayStr)}</span>
+                  </h2>
+                  <span className="text-xs text-gray-400 font-semibold uppercase tracking-wider">
+                    {flightsByDay[dayStr].length} {flightsByDay[dayStr].length === 1 ? 'Flight' : 'Flights'}
+                  </span>
                 </div>
-              )}
-            </div>
-          ) : (
-            filteredFlights.map((flight) => (
-              <FlightCard
-                key={flight.id}
-                flight={flight}
-                projectId={projectId}
-                isAdmin={isAdmin}
-                currentHighlightIds={currentHighlightIds}
-                timezone={timezone}
-                handleToggleHighlight={handleToggleHighlight}
-                handleHideFlight={handleHideFlight}
-              />
-            ))
-          )}
-        </div>
+                <div className="space-y-4">
+                  {flightsByDay[dayStr].map((flight) => (
+                    <FlightCard
+                      key={flight.id}
+                      flight={flight}
+                      projectId={projectId}
+                      isAdmin={isAdmin}
+                      currentHighlightIds={currentHighlightIds}
+                      timezone={timezone}
+                      handleToggleHighlight={handleToggleHighlight}
+                      handleHideFlight={handleHideFlight}
+                    />
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </section>
     </div>
   )
