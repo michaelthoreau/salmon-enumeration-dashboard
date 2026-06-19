@@ -157,7 +157,7 @@ export default function FileLightbox({ files: initialFiles, timezone, canWrite =
     }
   }, [])
 
-  // ---- Bulk download (client-side zip with parallel S3 downloads) ----
+  // ---- Bulk download (client-side streaming zip with parallel S3 downloads) ----
   const downloadSelected = async () => {
     const selectedFiles = files.filter(f => selected.has(f.key))
     if (selectedFiles.length === 0) return
@@ -175,25 +175,26 @@ export default function FileLightbox({ files: initialFiles, timezone, canWrite =
 
       let done = 0
       const CONCURRENCY = 6
+      const total = selectedFiles.length
 
-      async function fetchFile(file: FileEntry): Promise<{ name: string; input: Response }> {
-        const res = await fetch(`/api/files/presign?key=${encodeURIComponent(file.key)}`)
-        const { url } = await res.json() as { url: string }
-        const input = await fetch(url)
-        done++
-        setZipProgress({ done, total: selectedFiles.length })
-        return { name: file.key.split('/').pop() ?? file.key, input }
+      async function* streamFiles(): AsyncGenerator<{ name: string; input: Response }> {
+        for (let i = 0; i < total; i += CONCURRENCY) {
+          const batch = selectedFiles.slice(i, i + CONCURRENCY)
+          const results = await Promise.all(
+            batch.map(async (file): Promise<{ name: string; input: Response }> => {
+              const res = await fetch(`/api/files/presign?key=${encodeURIComponent(file.key)}`)
+              const { url } = await res.json() as { url: string }
+              const input = await fetch(url)
+              done++
+              setZipProgress({ done, total })
+              return { name: file.key.split('/').pop() ?? file.key, input }
+            })
+          )
+          for (const r of results) yield r
+        }
       }
 
-      // Parallel download with bounded concurrency
-      const results: { name: string; input: Response }[] = []
-      for (let i = 0; i < selectedFiles.length; i += CONCURRENCY) {
-        const batch = selectedFiles.slice(i, i + CONCURRENCY)
-        const batchResults = await Promise.all(batch.map(fetchFile))
-        results.push(...batchResults)
-      }
-
-      const blob = await downloadZip(results).blob()
+      const blob = await downloadZip(streamFiles()).blob()
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
