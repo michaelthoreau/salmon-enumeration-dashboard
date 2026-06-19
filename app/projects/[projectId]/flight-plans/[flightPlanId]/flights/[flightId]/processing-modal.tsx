@@ -45,6 +45,7 @@ interface ProcessingModalProps {
     processed?: number | null
     progress?: number | null
   } | null
+  defaultAltitudeOffset?: number
 }
 
 const POLL_INTERVAL_MS = 3000
@@ -78,6 +79,7 @@ function formatBytes(bytes: number): string {
   return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} GB`
 }
 
+
 export default function ProcessingModal({
   isOpen,
   onClose,
@@ -85,16 +87,17 @@ export default function ProcessingModal({
   projectId,
   flightPlanId,
   initialActiveTask,
+  defaultAltitudeOffset = 0,
 }: ProcessingModalProps) {
   const router = useRouter()
   const [method, setMethod] = useState<'odm' | 'georef' | 'upload'>('georef')
 
   // Georef config state
-  const [dewarp, setDewarp] = useState(true)
+  const dewarp = true
   const [altitudeMode, setAltitudeMode] = useState<'relative' | 'lrf' | 'specified'>('relative')
-  const [altitudeOffset, setAltitudeOffset] = useState<number>(0)
+  const [altitudeOffset, setAltitudeOffset] = useState<number>(defaultAltitudeOffset)
   const [specifiedAltitude, setSpecifiedAltitude] = useState<number>(50)
-  const [sampleFactor, setSampleFactor] = useState<number>(1)
+  const [sampleFactor, setSampleFactor] = useState<number>(2)
 
   // GeoTIFF Upload state
   const geotiffInputRef = useRef<HTMLInputElement>(null)
@@ -628,26 +631,7 @@ export default function ProcessingModal({
                 <div className="p-5 bg-slate-50 dark:bg-slate-800/40 rounded-xl border border-slate-100 dark:border-slate-800/60 space-y-4 animate-in fade-in duration-200">
                   <h4 className="text-sm font-semibold text-slate-900 dark:text-white">Georeference Settings</h4>
                   
-                  {/* Dewarp Checkbox */}
-                  <div className="flex items-start gap-3">
-                    <input
-                      type="checkbox"
-                      id="modal-dewarp"
-                      checked={dewarp}
-                      onChange={(e) => setDewarp(e.target.checked)}
-                      className="mt-0.5 w-4 h-4 text-emerald-600 border-slate-300 dark:border-slate-700 rounded focus:ring-emerald-500 cursor-pointer"
-                    />
-                    <div className="grid gap-0.5 select-none cursor-pointer" onClick={() => setDewarp(!dewarp)}>
-                      <label htmlFor="modal-dewarp" className="text-xs font-semibold text-slate-800 dark:text-slate-200 cursor-pointer">
-                        Apply Lens Dewarping (Recommended)
-                      </label>
-                      <span className="text-[10px] text-slate-500 dark:text-slate-400">
-                        Undistorts the wide-angle camera barrel profiles before projection to keep features straight.
-                      </span>
-                    </div>
-                  </div>
 
-                  <hr className="border-slate-200/60 dark:border-slate-800/60" />
 
                   {/* Altitude Mode Selection */}
                   <div className="space-y-3">
@@ -703,7 +687,7 @@ export default function ProcessingModal({
                             className="px-3 py-1.5 text-xs w-36 border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 rounded-lg text-slate-900 dark:text-white focus:outline-none focus:ring-1 focus:ring-emerald-500 focus:border-emerald-500"
                           />
                           <p className="text-[10px] text-slate-400">
-                            Offset added to takeoff AGL (positive moves projection up, expanding the footprint).
+                            Offset added to takeoff AGL (positive moves projection up, expanding the footprint). Default value automatically calculated based on tide stage.
                           </p>
                         </div>
                       )}

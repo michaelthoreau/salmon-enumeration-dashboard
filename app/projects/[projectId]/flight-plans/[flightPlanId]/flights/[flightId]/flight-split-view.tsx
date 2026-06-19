@@ -1265,44 +1265,67 @@ export default function FlightSplitView({
           )}
         </div>
       </main>
-      {isModalOpen && (
-        <ProcessingModal
-          isOpen={isModalOpen}
-          onClose={() => setIsModalOpen(false)}
-          flightId={flightId}
-          projectId={projectId}
-          flightPlanId={flightPlanId}
-          initialActiveTask={
-            activeTask
-              ? {
-                  taskId: activeTask.id,
-                  type: activeTask.type,
-                  status: activeTask.status,
-                  odmUuid: activeTask.type === 'odm' ? (activeTask as any).odmUuid : null,
-                  outputKey: activeTask.outputKey,
-                  reportKey: activeTask.type === 'odm' ? (activeTask as any).reportKey : null,
-                  error: (activeTask as any).error ?? null,
-                  totalImages: activeTask.totalImages,
-                  processed: activeTask.processed,
-                  progress: activeTask.progress,
-                }
-              : latestTask
-              ? {
-                  taskId: latestTask.id,
-                  type: latestTask.type,
-                  status: latestTask.status,
-                  odmUuid: latestTask.type === 'odm' ? (latestTask as any).odmUuid : null,
-                  outputKey: latestTask.outputKey,
-                  reportKey: latestTask.type === 'odm' ? (latestTask as any).reportKey : null,
-                  error: (latestTask as any).error ?? null,
-                  totalImages: latestTask.totalImages,
-                  processed: latestTask.processed,
-                  progress: latestTask.progress,
-                }
-              : null
-          }
-        />
-      )}
+      {isModalOpen && (() => {
+        let defaultAltitudeOffset = 0
+        if (tides && tides.predictions && tides.predictions.length > 0) {
+          const flightTime = new Date(flight.timestamp).getTime()
+          const targetTime = flightTime - 2 * 60 * 60 * 1000
+
+          let closestPrediction = tides.predictions[0]
+          let minDiff = Infinity
+          tides.predictions.forEach((p) => {
+            const diff = Math.abs(new Date(p.time).getTime() - targetTime)
+            if (diff < minDiff) {
+              minDiff = diff
+              closestPrediction = p
+            }
+          })
+
+          const tideHeightInFt = closestPrediction.value
+          const rawOffset = (26.4 - tideHeightInFt) / 3.28
+          defaultAltitudeOffset = Math.round(rawOffset * 2) / 2
+        }
+
+        return (
+          <ProcessingModal
+            isOpen={isModalOpen}
+            onClose={() => setIsModalOpen(false)}
+            flightId={flightId}
+            projectId={projectId}
+            flightPlanId={flightPlanId}
+            defaultAltitudeOffset={defaultAltitudeOffset}
+            initialActiveTask={
+              activeTask
+                ? {
+                    taskId: activeTask.id,
+                    type: activeTask.type,
+                    status: activeTask.status,
+                    odmUuid: activeTask.type === 'odm' ? (activeTask as any).odmUuid : null,
+                    outputKey: activeTask.outputKey,
+                    reportKey: activeTask.type === 'odm' ? (activeTask as any).reportKey : null,
+                    error: (activeTask as any).error ?? null,
+                    totalImages: activeTask.totalImages,
+                    processed: activeTask.processed,
+                    progress: activeTask.progress,
+                  }
+                : latestTask
+                ? {
+                    taskId: latestTask.id,
+                    type: latestTask.type,
+                    status: latestTask.status,
+                    odmUuid: latestTask.type === 'odm' ? (latestTask as any).odmUuid : null,
+                    outputKey: latestTask.outputKey,
+                    reportKey: latestTask.type === 'odm' ? (latestTask as any).reportKey : null,
+                    error: (latestTask as any).error ?? null,
+                    totalImages: latestTask.totalImages,
+                    processed: latestTask.processed,
+                    progress: latestTask.progress,
+                  }
+                : null
+            }
+          />
+        )
+      })()}
 
 
       {/* Lightbox modal for displaying a single flight image */}
