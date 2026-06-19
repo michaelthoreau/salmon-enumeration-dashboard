@@ -591,6 +591,7 @@ export default function TodayFlightsView({
   isAdmin,
   highlightedFlightId,
 }: Props) {
+  const router = useRouter()
   const [isLogModalOpen, setIsLogModalOpen] = useState(false)
   const [isNewRoute, setIsNewRoute] = useState(false)
   const [selectedRouteId, setSelectedRouteId] = useState(() => {
@@ -604,18 +605,17 @@ export default function TodayFlightsView({
   const [logState, logAction, logPending] = useActionState(logFlightWithRoute, null)
 
   useEffect(() => {
-    if (logState?.success) {
+    if (logState?.success && logState.flightId && logState.flightPlanId) {
       setIsLogModalOpen(false)
       setNewRouteName('')
       setLogNotes('')
-      router.refresh()
+      router.push(`/projects/${projectId}/flight-plans/${logState.flightPlanId}/flights/${logState.flightId}`)
     }
-  }, [logState])
+  }, [logState, projectId, router])
 
   const [currentHighlightIds, setCurrentHighlightIds] = useState<string[]>(
     highlightedFlightId ? highlightedFlightId.split(',').filter(Boolean) : []
   )
-  const router = useRouter()
 
   const handleHideFlight = async (flightId: string, flightPlanId: string) => {
     if (!confirm('Are you sure you want to permanently hide this flight?')) return

@@ -1,6 +1,7 @@
 'use client'
 
 import { useActionState, useEffect, useState } from 'react'
+import { useRouter } from 'next/navigation'
 import { createFlight } from '@/app/actions/flights'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -36,14 +37,18 @@ export default function CreateFlightForm({
   timezone: string
   className?: string
 }) {
+  const router = useRouter()
   const [open, setOpen] = useState(false)
   const [timestamp, setTimestamp] = useState(() => nowInTz(timezone))
   const [notes, setNotes] = useState('')
   const [state, action, pending] = useActionState(createFlight, null)
 
   useEffect(() => {
-    if (state?.success) setOpen(false)
-  }, [state])
+    if (state?.success && state.flightId && state.flightPlanId) {
+      setOpen(false)
+      router.push(`/projects/${projectId}/flight-plans/${state.flightPlanId}/flights/${state.flightId}`)
+    }
+  }, [state, projectId, router])
 
   function handleOpen() {
     setTimestamp(nowInTz(timezone))

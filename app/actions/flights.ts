@@ -7,7 +7,7 @@ import { getSession } from '@/lib/session'
 import { randomUUID } from 'crypto'
 import { revalidatePath } from 'next/cache'
 
-type State = { error?: string; success?: string } | null
+type State = { error?: string; success?: string; flightId?: string; flightPlanId?: string } | null
 
 /**
  * Interprets a "YYYY-MM-DDTHH:mm" datetime-local string as wall-clock time
@@ -58,8 +58,9 @@ export async function createFlight(_prev: State, formData: FormData): Promise<St
   const timestamp = parseInTimezone(timestampRaw, timezone)
   if (isNaN(timestamp.getTime())) return { error: 'Invalid timestamp.' }
 
+  const newFlightId = randomUUID()
   await db.insert(flights).values({
-    id: randomUUID(),
+    id: newFlightId,
     flightPlanId,
     timestamp,
     notes,
@@ -69,7 +70,7 @@ export async function createFlight(_prev: State, formData: FormData): Promise<St
   })
 
   revalidatePath(`/projects/${projectId}/flight-plans/${flightPlanId}/flights`)
-  return { success: 'Flight created.' }
+  return { success: 'Flight created.', flightId: newFlightId, flightPlanId }
 }
 
 export async function updateFlight(_prev: State, formData: FormData): Promise<State> {
@@ -200,8 +201,9 @@ export async function logFlightWithRoute(_prev: State, formData: FormData): Prom
   const timestamp = parseInTimezone(timestampRaw, timezone)
   if (isNaN(timestamp.getTime())) return { error: 'Invalid timestamp.' }
 
+  const newFlightId = randomUUID()
   await db.insert(flights).values({
-    id: randomUUID(),
+    id: newFlightId,
     flightPlanId,
     timestamp,
     notes,
@@ -212,5 +214,5 @@ export async function logFlightWithRoute(_prev: State, formData: FormData): Prom
 
   revalidatePath(`/projects/${projectId}`)
   revalidatePath(`/projects/${projectId}/flight-plans/${flightPlanId}/flights`)
-  return { success: 'Flight logged successfully.' }
+  return { success: 'Flight logged successfully.', flightId: newFlightId, flightPlanId }
 }
