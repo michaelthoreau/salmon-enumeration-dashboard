@@ -1,8 +1,8 @@
 'use server'
 
 import { db } from '@/lib/db'
-import { flights } from '@/lib/schema'
-import { eq } from 'drizzle-orm'
+import { flights, flightPlans } from '@/lib/schema'
+import { eq, and } from 'drizzle-orm'
 import { getSession } from '@/lib/session'
 import { randomUUID } from 'crypto'
 import { revalidatePath } from 'next/cache'
@@ -146,4 +146,71 @@ export async function setFlightPriority(_prev: State, formData: FormData): Promi
   revalidatePath(`/projects/${projectId}/flight-plans/${flightPlanId}/flights`)
   revalidatePath(`/projects/${projectId}`)
   return { success: 'Flight priority updated.' }
+}
+
+function slugify(name: string): string {
+  return name.trim().toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '')
+}
+
+export async function logFlightWithRoute(_prev: State, formData: FormData): Promise<State> {
+  const session = await getSession()
+  if (!session || !canWrite(session.role)) return { error: 'Unauthorized.' }
+
+  const projectId = (formData.get('projectId') as string | null)?.trim() ?? ''
+  let flightPlanId = (formData.get('flightPlanId') as string | null)?.trim() ?? ''
+  const isNewRoute = formData.get('isNewRoute') === 'true'
+  const newRouteName = (formData.get('newRouteName') as string | null)?.trim() ?? ''
+  const timestampRaw = formData.get('timestamp') as string | null
+  const timezone = (formData.get('timezone') as string | null)?.trim() || 'UTC'
+  const notes = (formData.get('notes') as string | null)?.trim() || null
+
+  if (!timestampRaw) return { error: 'Flight timestamp is required.' }
+
+  if (isNewRoute) {
+    if (!newRouteName) return { error: 'New route name is required.' }
+    const nameSlug = slugify(newRouteName)
+    if (!nameSlug) return { error: 'Invalid route name.' }
+
+    // Check if flight route already exists in this project
+    const [existing] = await db
+      .select()
+      .from(flightPlans)
+      .where(and(eq(flightPlans.projectId, projectId), eq(flightPlans.name, nameSlug)))
+
+    if (existing) {
+      return { error: `A flight route named "${newRouteName}" already exists in this project.` }
+    }
+
+    // Create the new route (flight plan)
+    const newPlanId = randomUUID()
+    await db.insert(flightPlans).values({
+      id: newPlanId,
+      projectId,
+      name: nameSlug,
+      displayName: newRouteName,
+      createdBy: session.userId,
+      createdAt: new Date(),
+      deletedAt: null,
+    })
+    flightPlanId = newPlanId
+  }
+
+  if (!flightPlanId) return { error: 'Flight route is required.' }
+
+  const timestamp = parseInTimezone(timestampRaw, timezone)
+  if (isNaN(timestamp.getTime())) return { error: 'Invalid timestamp.' }
+
+  await db.insert(flights).values({
+    id: randomUUID(),
+    flightPlanId,
+    timestamp,
+    notes,
+    createdBy: session.userId,
+    createdAt: new Date(),
+    deletedAt: null,
+  })
+
+  revalidatePath(`/projects/${projectId}`)
+  revalidatePath(`/projects/${projectId}/flight-plans/${flightPlanId}/flights`)
+  return { success: 'Flight logged successfully.' }
 }

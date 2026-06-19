@@ -600,9 +600,7 @@ export default function ProcessingModal({
                     Structure-from-motion photogrammetry pipeline. Processes in 10-30 minutes. High details.
                   </span>
                 </label>
-                */}
-
-                {/* Upload GeoTIFF Option (Temporarily Hidden)
+                */}                {/* Upload GeoTIFF Option */}
                 <label className={`flex flex-col p-4 rounded-xl border-2 text-left cursor-pointer transition-all ${
                   method === 'upload'
                     ? 'border-purple-600 bg-purple-50/20 dark:bg-purple-950/10'
@@ -626,11 +624,10 @@ export default function ProcessingModal({
                     </span>
                     <span className="text-[10px] uppercase font-bold tracking-wide px-2 py-0.5 rounded bg-purple-600/10 text-purple-600">Direct</span>
                   </span>
-                  <span className="text-xs text-slate-550 dark:text-slate-400 leading-snug">
+                  <span className="text-xs text-slate-555 dark:text-slate-400 leading-snug">
                     Directly upload a pre-processed orthophoto (GeoTIFF) file. Bypasses cloud processing.
                   </span>
                 </label>
-                */}
 
               </div>
 
@@ -771,6 +768,13 @@ export default function ProcessingModal({
               {method === 'upload' && (
                 <div className="p-5 bg-slate-50 dark:bg-slate-800/40 rounded-xl border border-slate-100 dark:border-slate-800/60 space-y-4 animate-in fade-in duration-200">
                   <h4 className="text-sm font-semibold text-slate-900 dark:text-white">Upload Processed GeoTIFF</h4>
+
+                  <div className="flex gap-2.5 p-3 rounded-lg bg-amber-50 dark:bg-amber-950/20 border border-amber-200/60 dark:border-amber-900/30 text-amber-800 dark:text-amber-400">
+                    <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+                    <p className="text-[11px] leading-relaxed font-medium">
+                      Performance may be degraded for orthophotos without tiling/overviews, orthophotos must be cloud optimized geotiffs.
+                    </p>
+                  </div>
                   
                   {/* File Upload Selector/Dropzone */}
                   {!selectedGeotiffFile ? (

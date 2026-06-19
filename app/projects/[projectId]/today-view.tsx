@@ -1,13 +1,22 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useActionState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { ChevronLeft, ChevronRight, Calendar, Layers, ArrowRight, CheckCircle2, AlertCircle, Sparkles, Pin, PinOff, EyeOff, Thermometer, Wind, Cloud, Waves } from 'lucide-react'
+import { ChevronLeft, ChevronRight, Calendar, Layers, ArrowRight, CheckCircle2, AlertCircle, Sparkles, Pin, PinOff, EyeOff, Thermometer, Wind, Cloud, Waves, Plus } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { buttonVariants } from '@/components/ui/button'
+import { Button, buttonVariants } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from '@/components/ui/dialog'
 import { highlightFlight } from '@/app/actions/projects'
-import { setFlightPriority } from '@/app/actions/flights'
+import { setFlightPriority, logFlightWithRoute } from '@/app/actions/flights'
 
 
 interface FlightRow {
@@ -558,6 +567,18 @@ function FlightCard({
   )
 }
 
+function nowInTz(tz: string): string {
+  const now = new Date()
+  const parts = new Intl.DateTimeFormat('en', {
+    timeZone: tz,
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit',
+    hour12: false,
+  }).formatToParts(now)
+  const get = (type: string) => parts.find((p) => p.type === type)?.value ?? '00'
+  return `${get('year')}-${get('month')}-${get('day')}T${get('hour')}:${get('minute')}`
+}
+
 export default function TodayFlightsView({
   projectId,
   projectName,
@@ -570,6 +591,27 @@ export default function TodayFlightsView({
   isAdmin,
   highlightedFlightId,
 }: Props) {
+  const [isLogModalOpen, setIsLogModalOpen] = useState(false)
+  const [isNewRoute, setIsNewRoute] = useState(false)
+  const [selectedRouteId, setSelectedRouteId] = useState(() => {
+    const activePlans = flightPlans.filter((fp) => !fp.deletedAt)
+    return activePlans[0]?.id ?? ''
+  })
+  const [newRouteName, setNewRouteName] = useState('')
+  const [logNotes, setLogNotes] = useState('')
+  const [logTimestamp, setLogTimestamp] = useState(() => nowInTz(timezone))
+
+  const [logState, logAction, logPending] = useActionState(logFlightWithRoute, null)
+
+  useEffect(() => {
+    if (logState?.success) {
+      setIsLogModalOpen(false)
+      setNewRouteName('')
+      setLogNotes('')
+      router.refresh()
+    }
+  }, [logState])
+
   const [currentHighlightIds, setCurrentHighlightIds] = useState<string[]>(
     highlightedFlightId ? highlightedFlightId.split(',').filter(Boolean) : []
   )
@@ -664,6 +706,23 @@ export default function TodayFlightsView({
             Complete history of logged flights and map processing queues
           </p>
         </div>
+        {canWrite && (
+          <Button
+            onClick={() => {
+              setLogTimestamp(nowInTz(timezone))
+              // Auto-select first route if none is selected
+              if (!selectedRouteId) {
+                const activePlans = flightPlans.filter((fp) => !fp.deletedAt)
+                if (activePlans[0]) setSelectedRouteId(activePlans[0].id)
+              }
+              setIsLogModalOpen(true)
+            }}
+            className="flex items-center gap-1.5 text-xs font-semibold bg-blue-600 hover:bg-blue-700 text-white rounded-xl shadow-sm h-9 px-4 cursor-pointer"
+          >
+            <Plus className="w-4 h-4" />
+            Log Flight
+          </Button>
+        )}
       </div>
 
       {highlightedFlights.length > 0 && (
@@ -792,6 +851,125 @@ export default function TodayFlightsView({
           </div>
         )}
       </section>
+
+      {/* Log Flight Dialog */}
+      <Dialog open={isLogModalOpen} onOpenChange={setIsLogModalOpen}>
+        <DialogContent className="sm:max-w-md bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
+          <DialogHeader>
+            <DialogTitle className="text-slate-900 dark:text-white">Log a new flight</DialogTitle>
+          </DialogHeader>
+          <form action={logAction} className="space-y-4 text-left">
+            <input type="hidden" name="projectId" value={projectId} />
+            <input type="hidden" name="timezone" value={timezone} />
+            
+            {/* Toggle between choosing existing route vs adding new route */}
+            <div className="space-y-2">
+              <Label className="text-slate-700 dark:text-slate-350 text-xs font-semibold">Route Option</Label>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => setIsNewRoute(false)}
+                  className={cn(
+                    "px-3 py-2 text-xs font-semibold border rounded-lg transition-colors cursor-pointer text-center",
+                    !isNewRoute
+                      ? "border-blue-600 bg-blue-500/10 text-blue-600 dark:text-blue-400"
+                      : "border-slate-250 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-350"
+                  )}
+                >
+                  Choose Existing Route
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setIsNewRoute(true)}
+                  className={cn(
+                    "px-3 py-2 text-xs font-semibold border rounded-lg transition-colors cursor-pointer text-center",
+                    isNewRoute
+                      ? "border-blue-600 bg-blue-500/10 text-blue-600 dark:text-blue-400"
+                      : "border-slate-250 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-350"
+                  )}
+                >
+                  Add New Route
+                </button>
+              </div>
+            </div>
+
+            <input type="hidden" name="isNewRoute" value={isNewRoute ? "true" : "false"} />
+
+            {!isNewRoute ? (
+              <div className="space-y-1.5 animate-in fade-in duration-150 flex flex-col">
+                <Label htmlFor="flightPlanId" className="text-slate-700 dark:text-slate-350 text-xs font-semibold">Select Route</Label>
+                {flightPlans.filter(fp => !fp.deletedAt).length === 0 ? (
+                  <p className="text-xs text-red-500 font-medium">No routes exist yet. Please create a new route.</p>
+                ) : (
+                  <select
+                    id="flightPlanId"
+                    name="flightPlanId"
+                    value={selectedRouteId}
+                    onChange={(e) => setSelectedRouteId(e.target.value)}
+                    className="w-full text-xs rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-3 py-2.5 font-medium focus:outline-none focus:ring-1 cursor-pointer transition-colors text-slate-900 dark:text-white"
+                  >
+                    {flightPlans
+                      .filter((fp) => !fp.deletedAt)
+                      .map((fp) => (
+                        <option key={fp.id} value={fp.id}>
+                          {fp.displayName || fp.name}
+                        </option>
+                      ))}
+                  </select>
+                )}
+              </div>
+            ) : (
+              <div className="space-y-1.5 animate-in fade-in duration-150">
+                <Label htmlFor="newRouteName" className="text-slate-700 dark:text-slate-350 text-xs font-semibold">New Route Name</Label>
+                <Input
+                  id="newRouteName"
+                  name="newRouteName"
+                  required
+                  placeholder="e.g. Lower River Section"
+                  value={newRouteName}
+                  onChange={(e) => setNewRouteName(e.target.value)}
+                  className="bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-900 dark:text-white"
+                />
+              </div>
+            )}
+
+            <div className="space-y-1.5">
+              <Label htmlFor="timestamp" className="text-slate-700 dark:text-slate-350 text-xs font-semibold">
+                Timestamp{' '}
+                <span className="font-normal text-muted-foreground">({timezone})</span>
+              </Label>
+              <Input
+                id="timestamp"
+                name="timestamp"
+                type="datetime-local"
+                required
+                value={logTimestamp}
+                onChange={(e) => setLogTimestamp(e.target.value)}
+                className="bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-900 dark:text-white"
+              />
+            </div>
+
+            <div className="space-y-1.5">
+              <Label htmlFor="notes" className="text-slate-700 dark:text-slate-350 text-xs font-semibold">Notes (optional)</Label>
+              <Input
+                id="notes"
+                name="notes"
+                placeholder="e.g. Overcast, 10kt wind"
+                value={logNotes}
+                onChange={(e) => setLogNotes(e.target.value)}
+                className="bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-900 dark:text-white"
+              />
+            </div>
+
+            {logState?.error && <p className="text-xs text-red-650 font-medium">{logState.error}</p>}
+            <DialogFooter>
+              <Button type="submit" disabled={logPending} className="bg-blue-600 hover:bg-blue-700 text-white rounded-xl shadow-sm text-xs font-semibold px-4 cursor-pointer">
+                {logPending ? 'Saving…' : 'Log flight'}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
