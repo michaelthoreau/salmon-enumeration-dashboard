@@ -196,7 +196,7 @@ export default function FileLightbox({ files: initialFiles, timezone, canWrite =
         setZipProgress({ loaded, total: totalBytes })
       }
 
-      const blob = new Blob(chunks, { type: 'application/zip' })
+      const blob = new Blob(chunks as BlobPart[], { type: 'application/zip' })
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
