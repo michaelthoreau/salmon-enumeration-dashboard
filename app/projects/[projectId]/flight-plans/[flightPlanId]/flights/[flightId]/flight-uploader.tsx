@@ -241,8 +241,8 @@ export default function FlightUploader({
                 dropRef.current?.classList.remove('border-blue-500', 'bg-blue-50')
               }}
               onDrop={onDrop}
-              onClick={(e) => { if (!isRunning && !(e.target instanceof HTMLButtonElement)) inputRef.current?.click() }}
-              className="flex flex-col items-center justify-center gap-3 rounded-xl border-2 border-dashed border-gray-300 bg-gray-50 px-8 py-12 text-center cursor-pointer hover:border-blue-400 hover:bg-blue-50 transition-colors"
+              onClick={() => !isRunning && inputRef.current?.click()}
+              className="flex flex-col items-center justify-center gap-3 rounded-xl border-2 border-dashed border-gray-300 bg-gray-50 px-8 py-10 text-center cursor-pointer hover:border-blue-400 hover:bg-blue-50 transition-colors"
             >
               <svg className="w-10 h-10 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
@@ -255,34 +255,35 @@ export default function FlightUploader({
                 <p className="text-xs text-gray-500 mt-1">
                   Images (JPEG, PNG, TIFF), video (MP4, MOV) — up to 5 GB each — up to 500 files
                 </p>
-                {!isRunning && (
-                  <button
-                    type="button"
-                    onClick={(e) => { e.stopPropagation(); folderInputRef.current?.click() }}
-                    className="mt-2 text-xs text-blue-600 hover:text-blue-800 hover:underline font-medium"
-                  >
-                    Or select a folder
-                  </button>
-                )}
               </div>
               <input
                 ref={inputRef}
                 type="file"
                 multiple
-                className="hidden"
-                onChange={onFileInputChange}
-                disabled={isRunning}
-              />
-              <input
-                ref={folderInputRef}
-                type="file"
-                // @ts-expect-error webkitdirectory is non-standard but widely supported
-                webkitdirectory=""
+                accept="image/*,video/*,.dng,.rtk,.nav,.obs,.mrk"
                 className="hidden"
                 onChange={onFileInputChange}
                 disabled={isRunning}
               />
             </div>
+            {!isRunning && (
+              <button
+                type="button"
+                onClick={() => folderInputRef.current?.click()}
+                className="w-full text-center text-xs text-blue-600 hover:text-blue-800 hover:underline font-medium py-1"
+              >
+                Or select a folder
+              </button>
+            )}
+            <input
+              ref={folderInputRef}
+              type="file"
+              // @ts-expect-error webkitdirectory is non-standard but widely supported
+              webkitdirectory=""
+              className="hidden"
+              onChange={onFileInputChange}
+              disabled={isRunning}
+            />
 
             {/* Progress list */}
             {statuses.length > 0 && (
