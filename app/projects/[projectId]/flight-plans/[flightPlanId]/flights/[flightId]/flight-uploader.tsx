@@ -241,7 +241,7 @@ export default function FlightUploader({
                 dropRef.current?.classList.remove('border-blue-500', 'bg-blue-50')
               }}
               onDrop={onDrop}
-              onClick={() => !isRunning && inputRef.current?.click()}
+              onClick={(e) => { if (!isRunning && !(e.target instanceof HTMLButtonElement)) inputRef.current?.click() }}
               className="flex flex-col items-center justify-center gap-3 rounded-xl border-2 border-dashed border-gray-300 bg-gray-50 px-8 py-12 text-center cursor-pointer hover:border-blue-400 hover:bg-blue-50 transition-colors"
             >
               <svg className="w-10 h-10 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
