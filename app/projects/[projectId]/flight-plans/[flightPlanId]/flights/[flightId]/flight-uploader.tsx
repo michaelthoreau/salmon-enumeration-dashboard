@@ -81,6 +81,7 @@ export default function FlightUploader({
   const [uploadSpeed, setUploadSpeed] = useState<number | null>(null)
   const router = useRouter()
   const inputRef = useRef<HTMLInputElement>(null)
+  const folderInputRef = useRef<HTMLInputElement>(null)
   const dropRef = useRef<HTMLDivElement>(null)
   // Tracks bytes loaded per file index for speed calculation
   const fileLoadedRef = useRef<number[]>([])
@@ -254,12 +255,29 @@ export default function FlightUploader({
                 <p className="text-xs text-gray-500 mt-1">
                   Images (JPEG, PNG, TIFF), video (MP4, MOV) — up to 5 GB each — up to 500 files
                 </p>
+                {!isRunning && (
+                  <button
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); folderInputRef.current?.click() }}
+                    className="mt-2 text-xs text-blue-600 hover:text-blue-800 hover:underline font-medium"
+                  >
+                    Or select a folder
+                  </button>
+                )}
               </div>
               <input
                 ref={inputRef}
                 type="file"
                 multiple
-                accept="image/*,video/*,.dng,.rtk,.nav,.obs,.mrk"
+                className="hidden"
+                onChange={onFileInputChange}
+                disabled={isRunning}
+              />
+              <input
+                ref={folderInputRef}
+                type="file"
+                // @ts-expect-error webkitdirectory is non-standard but widely supported
+                webkitdirectory=""
                 className="hidden"
                 onChange={onFileInputChange}
                 disabled={isRunning}

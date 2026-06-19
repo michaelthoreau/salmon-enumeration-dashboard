@@ -337,7 +337,7 @@ function FlightCard({
           {/* Header line: Title & Admin Pin */}
           <div className="flex items-center gap-1.5 flex-wrap">
             <Link
-              href={`/projects/${projectId}/flight-plans/${flight.flightPlanId}/flights`}
+              href={`/projects/${projectId}/flight-plans/${flight.flightPlanId}/flights/${flight.id}?returnTo=${encodeURIComponent(`/projects/${projectId}`)}`}
               className="text-base font-bold text-gray-900 hover:text-blue-600 transition-colors leading-tight"
             >
               {flight.flightPlanName}
