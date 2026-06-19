@@ -162,7 +162,7 @@ def _get_ditb_plan_name(dji_project_id: str, created_at: int, fh2_file_path: str
 
     # Strip timestamp from fh2_file_path to recover the DJI task name
     # e.g. "Ians-requested-flight 2 2026-06-02 12:02:45 (UTC-08)" → "Ians-requested-flight 2"
-    task_name = re.sub(r'\s+\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}.*$', '', fh2_file_path).strip()
+    task_name = re.sub(r'[-\s]\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}.*$', '', fh2_file_path).strip()
     if not task_name:
         return ""
 
@@ -234,8 +234,8 @@ def _parse_plan_name(fh2_file_path: str) -> str:
         if len(parts) >= 4:
             return "_".join(parts[3:])
         return ""
-    # Drone in the Box: 'MyPlan 2026-06-02 09:28:41 (UTC-08)' → 'MyPlan'
-    match = re.match(r'^(.+?)\s+\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}', fh2_file_path)
+    # Drone in the Box: 'MyPlan 2026-06-02 09:28:41 (UTC-08)' or 'spawner-FLY-TO-2026-06-18 ...'
+    match = re.match(r'^(.+?)[\s-]\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}', fh2_file_path)
     if match:
         return match.group(1).strip()
     return ""
@@ -249,27 +249,120 @@ def _parse_timestamp(fh2_file_path: str) -> str:
             y, mo, d, h, mi = match.groups()
             return f"{y}-{mo}-{d}T{h}:{mi}:00"
         return ""
-    # Drone in the Box: 'MyPlan 2026-06-02 09:28:41 (UTC-08)' → '2026-06-02T09:28:41'
-    match = re.match(r'^.+?\s+(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2}:\d{2})', fh2_file_path)
+    # Drone in the Box: 'MyPlan 2026-06-02 09:28:41 (UTC-08)' or 'spawner-FLY-TO-2026-06-18 ...'
+    match = re.match(r'^.+?[\s-](\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2}:\d{2})', fh2_file_path)
     if match:
         return f"{match.group(1)}T{match.group(2)}"
     return ""
 
-#Main Handler - Webhook Flow
-def handler(event, _context):
-    print(f"Raw event: {json.dumps(event)}")
+#Shared: resolve plan name, flight plan, and flight from fh2_file_path
+def _resolve_flight(fh2_file_path: str, dji_project_id: str = "", created_at: int = 0):
+    """Returns (plan_name, flight_plan_id, flight_id) or raises on failure."""
+    if _is_chinook_path(fh2_file_path):
+        plan_name = _parse_plan_name(fh2_file_path)
+    else:
+        plan_name = _get_ditb_plan_name(dji_project_id, created_at, fh2_file_path)
+        if not plan_name:
+            plan_name = _parse_plan_name(fh2_file_path)
+    timestamp = _parse_timestamp(fh2_file_path)
 
-    try:
-        body = json.loads(event.get("body") or "{}")
-    except Exception:
-        body = {}
+    if not plan_name:
+        raise ValueError(f"Could not parse plan name from: {fh2_file_path!r}")
 
-    print(f"Webhook payload: {json.dumps(body)}")
+    flight_plan_id = _find_or_create_flight_plan(plan_name)
+    if not flight_plan_id:
+        raise ValueError("Could not resolve flight plan ID")
 
-    if body.get("type") != "sync_file_success":
-        print(f"Ignoring type: {body.get('type')!r}")
-        return {"statusCode": 200, "body": json.dumps({"code": 0})}
+    flight_id = _find_or_create_flight(flight_plan_id, timestamp, fh2_file_path)
+    if not flight_id:
+        raise ValueError("Could not resolve flight ID")
 
+    print(f"Plan: {plan_name!r} | Timestamp: {timestamp!r} | Flight: {flight_id}")
+    return plan_name, flight_plan_id, flight_id
+
+
+def _upload_and_register(flight_id: str, filename: str, file_size: int, body_stream):
+    """Upload a file body to S3 (via presigned key) and register it."""
+    ext = os.path.splitext(filename)[1].lower()
+    upload_result = _frontend_post("/api/v1/upload", {
+        "flightId": flight_id,
+        "files": [{
+            "name": filename,
+            "type": CONTENT_TYPES.get(ext, "application/octet-stream"),
+            "size": file_size,
+        }]
+    })
+
+    uploads = upload_result.get("uploads", [])
+    if not uploads:
+        raise ValueError(f"No upload key returned for {filename}")
+
+    dest_key = uploads[0]["fields"]["key"]
+    content_type = CONTENT_TYPES.get(ext, "application/octet-stream")
+    s3.upload_fileobj(
+        body_stream,
+        BUCKET_NAME,
+        dest_key,
+        ExtraArgs={"ContentType": content_type},
+    )
+
+    _frontend_post("/api/v1/files/register", {"key": dest_key, "flightId": flight_id})
+    print(f"Registered: {dest_key}")
+    return dest_key
+
+
+#Handler: sync_flight — download files from DJI and register them
+def _handle_sync_flight(body: dict) -> dict:
+    data = body.get("data") or {}
+    fh2_file_path = data.get("fh2_file_path", "")
+    files = data.get("files") or []
+    dji_project_id = body.get("project_id", "")
+
+    if not fh2_file_path or not files:
+        print("sync_flight: missing fh2_file_path or files")
+        return {"statusCode": 200, "body": json.dumps({"code": 0, "error": "missing data"})}
+
+    plan_name, flight_plan_id, flight_id = _resolve_flight(fh2_file_path, dji_project_id)
+
+    succeeded = 0
+    failed = []
+
+    for f in files:
+        name = f.get("name", "")
+        suffix = f.get("suffix", "")
+        if suffix and not name.lower().endswith(f".{suffix.lower().lstrip('.')}"):
+            name = f"{name}.{suffix.lstrip('.')}"
+        download_url = f.get("download_url", "")
+        file_size = f.get("size", 0)
+
+        if not download_url:
+            failed.append(f"{name}: no download URL")
+            continue
+
+        try:
+            print(f"Downloading: {name} ({file_size} bytes)")
+            req = urllib.request.Request(download_url)
+            with urllib.request.urlopen(req, timeout=300) as resp:
+                _upload_and_register(flight_id, name, file_size, resp)
+            succeeded += 1
+        except Exception as e:
+            print(f"FAILED {name}: {e}")
+            failed.append(f"{name}: {e}")
+
+    print(f"sync_flight complete: {succeeded}/{len(files)} succeeded, {len(failed)} failed")
+    return {
+        "statusCode": 200,
+        "body": json.dumps({
+            "code": 0,
+            "succeeded": succeeded,
+            "failed": failed,
+            "total": len(files),
+        }),
+    }
+
+
+#Handler: sync_file_success — existing webhook flow (S3 landing → final)
+def _handle_sync_file_success(body: dict) -> dict:
     data = body.get("data") or {}
     fh2_file_path = data.get("fh2_file_path", "")
     source_key = data.get("file_external_key", "")
@@ -279,35 +372,18 @@ def handler(event, _context):
         print("No file_external_key in payload")
         return {"statusCode": 200, "body": json.dumps({"code": 0})}
 
-    folder_name = fh2_file_path
-    if _is_chinook_path(fh2_file_path):
-        plan_name = _parse_plan_name(fh2_file_path)
-    else:
-        dji_project_id = body.get("project_id", "")
-        created_at     = body.get("created_at", 0)
-        plan_name = _get_ditb_plan_name(dji_project_id, created_at, fh2_file_path)
-        if not plan_name:
-            # Fallback: use task name minus timestamp
-            plan_name = _parse_plan_name(fh2_file_path)
-    timestamp = _parse_timestamp(fh2_file_path)
+    dji_project_id = body.get("project_id", "")
+    created_at = body.get("created_at", 0)
+
+    try:
+        plan_name, flight_plan_id, flight_id = _resolve_flight(
+            fh2_file_path, dji_project_id, created_at
+        )
+    except ValueError as e:
+        print(f"ERROR: {e}")
+        return {"statusCode": 200, "body": json.dumps({"code": 0})}
+
     filename = source_key.split("/")[-1]
-
-    if not plan_name:
-        print(f"Could not parse plan name from: {folder_name!r} — skipping")
-        return {"statusCode": 200, "body": json.dumps({"code": 0})}
-
-    print(f"Plan: {plan_name!r} | Timestamp: {timestamp!r} | File: {filename}")
-
-    flight_plan_id = _find_or_create_flight_plan(plan_name)
-    if not flight_plan_id:
-        print("ERROR: could not resolve flight plan ID")
-        return {"statusCode": 200, "body": json.dumps({"code": 0})}
-
-    flight_id = _find_or_create_flight(flight_plan_id, timestamp, folder_name)
-    if not flight_id:
-        print("ERROR: could not resolve flight ID")
-        return {"statusCode": 200, "body": json.dumps({"code": 0})}
-
     ext = os.path.splitext(filename)[1].lower()
     upload_result = _frontend_post("/api/v1/upload", {
         "flightId": flight_id,
@@ -347,3 +423,30 @@ def handler(event, _context):
     print(f"Registered: {dest_key}")
 
     return {"statusCode": 200, "body": json.dumps({"code": 0})}
+
+
+#Main Handler - Webhook Flow
+def handler(event, _context):
+    print(f"Raw event: {json.dumps(event)}")
+
+    # Async Lambda invoke (InvocationType=Event) passes the payload directly,
+    # not wrapped in an API Gateway event with "body".
+    if isinstance(event, dict) and "type" in event:
+        body = event
+    else:
+        try:
+            body = json.loads(event.get("body") or "{}")
+        except Exception:
+            body = {}
+
+    print(f"Webhook payload: {json.dumps(body)}")
+
+    event_type = body.get("type", "")
+
+    if event_type == "sync_flight":
+        return _handle_sync_flight(body)
+    elif event_type == "sync_file_success":
+        return _handle_sync_file_success(body)
+    else:
+        print(f"Ignoring type: {event_type!r}")
+        return {"statusCode": 200, "body": json.dumps({"code": 0})}

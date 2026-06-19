@@ -64,7 +64,7 @@ class DjiAwsPipelineStack(Stack):
             runtime=lambda_.Runtime.PYTHON_3_12,
             handler="webhook_handler.handler",
             code=lambda_.Code.from_asset("../lambda"),
-            timeout=Duration.minutes(5),
+            timeout=Duration.minutes(15),
             memory_size=1024,
             environment={
                 "BUCKET_NAME": BUCKET_NAME,

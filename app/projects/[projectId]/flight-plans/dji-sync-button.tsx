@@ -256,7 +256,7 @@ export default function DjiSyncButton({ projectId }: { projectId: string }) {
                             onChange={() => toggleOne(f.fh2FilePath)}
                           />
                           <div className="min-w-0 flex-1">
-                            <p className="font-medium text-gray-800 truncate">{f.displayName}</p>
+                            <p className="font-medium text-gray-800 break-all">{f.displayName}</p>
                             <p className="text-xs text-gray-400 mt-0.5">
                               {f.timestamp ?? '—'}
                               {' · '}
