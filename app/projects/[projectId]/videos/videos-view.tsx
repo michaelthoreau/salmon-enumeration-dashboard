@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useMemo } from 'react'
-import { Video, Search, MapPin } from 'lucide-react'
+import { Video, Search } from 'lucide-react'
 import Link from 'next/link'
 
 interface VideoEntry {
@@ -156,11 +156,6 @@ export default function VideosView({ projectId, timezone, videos, canWrite }: Vi
                           </span>
                           <span className="text-xs text-gray-300">|</span>
                           <span className="text-xs text-gray-400">{formatBytes(v.size)}</span>
-                          <span className="text-xs text-gray-300">|</span>
-                          <span className="text-xs text-gray-400 flex items-center gap-1">
-                            <MapPin className="w-3 h-3" />
-                            {v.flightNotes || 'Unknown location'}
-                          </span>
                         </div>
                       </div>
                     </Link>
