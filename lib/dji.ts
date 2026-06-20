@@ -219,7 +219,10 @@ export function buildFlightTree(allItems: DjiMediaItem[]): DjiFlight[] {
 // ─── Path-parsing helpers — keep in sync with webhook_handler.py ─────────────
 
 export function isChinookPath(fh2FilePath: string): boolean {
-  if (fh2FilePath.includes('/')) return true
+  if (fh2FilePath.includes('/')) {
+    const right = fh2FilePath.split('/').slice(1).join('/')
+    return CHINOOK_RE.test(right)
+  }
   return CHINOOK_RE.test(fh2FilePath)
 }
 

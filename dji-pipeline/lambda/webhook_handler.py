@@ -145,40 +145,66 @@ def _dji_get(path: str, project_uuid: str = "", params: dict = None) -> dict:
         return json.loads(resp.read())
 
 
-def _get_ditb_plan_name(dji_project_id: str, created_at: int, fh2_file_path: str) -> str:
+_wayline_list_cache: dict = {}  # dji_project_id → {slugified_name: wayline_name}
+
+
+def _get_wayline_list(dji_project_id: str) -> dict:
+    """Fetch and cache all wayline names for a project. Returns {slug: name}."""
+    if dji_project_id not in _wayline_list_cache:
+        try:
+            wr = _dji_get("/openapi/v0.1/wayline", project_uuid=dji_project_id)
+            waylines = ((wr.get("data") or {}).get("list") or [])
+            _wayline_list_cache[dji_project_id] = {
+                _slugify(w.get("name", "")): w.get("name", "")
+                for w in waylines if w.get("name")
+            }
+        except Exception as e:
+            print(f"[WARN] Wayline list fetch failed: {e}")
+            _wayline_list_cache[dji_project_id] = {}
+    return _wayline_list_cache[dji_project_id]
+
+
+def _get_plan_name(dji_project_id: str, created_at: int, fh2_file_path: str) -> str:
     """
-    Resolve the route (wayline) name for a Drone in the Box flight via the DJI API.
+    Resolve the route (wayline) name via the DJI API.
 
-    DJI task names (e.g. "Ians-requested-flight 2") differ from the underlying
-    wayline/route name (e.g. "TrainingArea-LinearRouteForTesting"). This function
-    looks up the task by name + timestamp window, then follows the wayline_uuid to
-    get the actual route name so DITB and Chinook-1 flights map to the same plan.
+    Chinook: matches parsed name against wayline list.
+    DITB: task → wayline_uuid → wayline name.
 
-    Chain: project/device → flight-task/list (match by task name) → wayline/{uuid}
-    Returns empty string if the lookup fails or DJI_OPENAPI_KEY is not set.
+    Returns empty string if no wayline is found.
     """
     if not DJI_OPENAPI_KEY or not dji_project_id:
         return ""
 
-    # Strip timestamp from fh2_file_path to recover the DJI task name
-    # e.g. "Ians-requested-flight 2 2026-06-02 12:02:45 (UTC-08)" → "Ians-requested-flight 2"
+    parsed = _parse_plan_name(fh2_file_path)
+
+    if _is_chinook_path(fh2_file_path):
+        if not parsed:
+            return ""
+        waylines = _get_wayline_list(dji_project_id)
+        slug = _slugify(parsed)
+        match = waylines.get(slug)
+        if match:
+            print(f"Wayline matched: {fh2_file_path!r} → {match!r}")
+        return match or ""
+
+    # DITB: task → wayline lookup
+    if not created_at:
+        return ""
+
     task_name = re.sub(r'[-\s]\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}.*$', '', fh2_file_path).strip()
     if not task_name:
         return ""
 
     try:
-        # Step 1: Get dock devices for this project (cached per warm instance)
         if dji_project_id not in _dji_device_cache:
             resp = _dji_get("/openapi/v0.1/project/device", project_uuid=dji_project_id)
             _dji_device_cache[dji_project_id] = (resp.get("data") or {}).get("list") or []
-        devices = _dji_device_cache[dji_project_id]
 
-        # Step 2: Search tasks in a 24h-before to 1h-after window around the sync event
-        # created_at is in seconds; DJI task list API uses milliseconds
         begin_at = (created_at - 86400) * 1000
         end_at   = (created_at + 3600) * 1000
 
-        for device in devices:
+        for device in _dji_device_cache[dji_project_id]:
             sn = device.get("sn")
             if not sn:
                 continue
@@ -187,26 +213,22 @@ def _get_ditb_plan_name(dji_project_id: str, created_at: int, fh2_file_path: str
                 project_uuid=dji_project_id,
                 params={"sn": sn, "begin_at": begin_at, "end_at": end_at},
             )
-            tasks = (tasks_resp.get("data") or {}).get("list") or []
-
-            for task in tasks:
+            for task in ((tasks_resp.get("data") or {}).get("list") or []):
                 if task.get("name") != task_name:
                     continue
                 wayline_uuid = task.get("wayline_uuid")
                 if not wayline_uuid:
                     continue
-
-                # Step 3: Resolve wayline name (cached)
                 if wayline_uuid not in _dji_wayline_cache:
                     wr = _dji_get(f"/openapi/v0.1/wayline/{wayline_uuid}", project_uuid=dji_project_id)
                     _dji_wayline_cache[wayline_uuid] = (wr.get("data") or {}).get("name") or ""
                 name = _dji_wayline_cache.get(wayline_uuid, "")
                 if name:
-                    print(f"DITB route resolved: {task_name!r} → {name!r}")
+                    print(f"Task→wayline resolved: {fh2_file_path!r} → {name!r}")
                     return name
 
     except Exception as e:
-        print(f"[WARN] DITB wayline lookup failed: {e}")
+        print(f"[WARN] Task wayline lookup failed: {e}")
 
     return ""
 
@@ -217,7 +239,8 @@ _CHINOOK_RE = re.compile(r'^DJI_\d{12}_\d{3}_')
 def _is_chinook_path(fh2_file_path: str) -> bool:
     """Chinook paths: 'DroneID/DJI_YYYYMMDDHHMM_NNN_RouteName' or root-level 'DJI_YYYYMMDDHHMM_NNN_RouteName'"""
     if "/" in fh2_file_path:
-        return True
+        right = fh2_file_path.split("/", 1)[1]
+        return bool(_CHINOOK_RE.match(right))
     return bool(_CHINOOK_RE.match(fh2_file_path))
 
 
@@ -258,13 +281,13 @@ def _parse_timestamp(fh2_file_path: str) -> str:
 #Shared: resolve plan name, flight plan, and flight from fh2_file_path
 def _resolve_flight(fh2_file_path: str, dji_project_id: str = "", created_at: int = 0):
     """Returns (plan_name, flight_plan_id, flight_id) or raises on failure."""
-    if _is_chinook_path(fh2_file_path):
-        plan_name = _parse_plan_name(fh2_file_path)
-    else:
-        plan_name = _get_ditb_plan_name(dji_project_id, created_at, fh2_file_path)
-        if not plan_name:
-            plan_name = _parse_plan_name(fh2_file_path)
+    plan_name = _get_plan_name(dji_project_id, created_at, fh2_file_path)
     timestamp = _parse_timestamp(fh2_file_path)
+
+    if not plan_name and timestamp:
+        plan_name = f"{timestamp[:16].replace('T', '-').replace(':', '')}-no-route-flight"
+    elif not plan_name:
+        plan_name = _parse_plan_name(fh2_file_path)
 
     if not plan_name:
         raise ValueError(f"Could not parse plan name from: {fh2_file_path!r}")
