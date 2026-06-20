@@ -1,13 +1,15 @@
 import { notFound } from 'next/navigation'
 import { db } from '@/lib/db'
 import { projects, flightPlans, flights, files as filesTable } from '@/lib/schema'
-import { eq, and, isNull, like, inArray, desc } from 'drizzle-orm'
+import { eq, and, isNull, inArray, desc, sql } from 'drizzle-orm'
 import { getSession } from '@/lib/session'
 import VideosView from './videos-view'
 
 interface PageProps {
   params: Promise<{ projectId: string }>
 }
+
+const VIDEO_EXTS = ['mp4', 'mov', 'avi', 'mkv']
 
 export default async function VideosPage({ params }: PageProps) {
   const { projectId } = await params
@@ -18,16 +20,15 @@ export default async function VideosPage({ params }: PageProps) {
   const [project] = await db.select().from(projects).where(eq(projects.id, projectId))
   if (!project || project.deletedAt) notFound()
 
-  const videoPlans = await db
+  const allPlans = await db
     .select()
     .from(flightPlans)
     .where(and(
       eq(flightPlans.projectId, projectId),
-      like(flightPlans.name, '%-videos'),
       isNull(flightPlans.deletedAt),
     ))
 
-  if (videoPlans.length === 0) {
+  if (allPlans.length === 0) {
     return (
       <VideosView
         projectId={projectId}
@@ -38,9 +39,9 @@ export default async function VideosPage({ params }: PageProps) {
     )
   }
 
-  const planIds = videoPlans.map((p) => p.id)
+  const planIds = allPlans.map((p) => p.id)
 
-  const videoFlights = await db
+  const allFlights = await db
     .select()
     .from(flights)
     .where(and(
@@ -49,7 +50,7 @@ export default async function VideosPage({ params }: PageProps) {
     ))
     .orderBy(desc(flights.timestamp))
 
-  if (videoFlights.length === 0) {
+  if (allFlights.length === 0) {
     return (
       <VideosView
         projectId={projectId}
@@ -60,20 +61,20 @@ export default async function VideosPage({ params }: PageProps) {
     )
   }
 
-  const flightIds = videoFlights.map((f) => f.id)
+  const flightIds = allFlights.map((f) => f.id)
 
-  const videoFiles = await db
+  const allFiles = await db
     .select()
     .from(filesTable)
     .where(inArray(filesTable.flightId, flightIds))
 
-  const flightMap = new Map(videoFlights.map((f) => [f.id, f]))
-  const planMap = new Map(videoPlans.map((p) => [p.id, p]))
+  const flightMap = new Map(allFlights.map((f) => [f.id, f]))
+  const planMap = new Map(allPlans.map((p) => [p.id, p]))
 
-  const videos = videoFiles
+  const videos = allFiles
     .filter((f) => {
       const ext = f.key.split('.').pop()?.toLowerCase() ?? ''
-      return ['mp4', 'mov', 'avi', 'mkv'].includes(ext)
+      return VIDEO_EXTS.includes(ext)
     })
     .map((f) => {
       const flight = flightMap.get(f.flightId)!

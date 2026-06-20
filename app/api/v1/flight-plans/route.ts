@@ -11,12 +11,12 @@ export async function POST(request: NextRequest) {
   const key = await validateApiKey(request.headers.get('authorization'))
   if (!key) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
-  let body: { projectId: string; name: string; displayName?: string; description?: string; showOnDashboard?: boolean }
+  let body: { projectId: string; name: string; displayName?: string; description?: string }
   try { body = await request.json() } catch {
     return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 })
   }
 
-  const { projectId, name, displayName, description, showOnDashboard } = body
+  const { projectId, name, displayName, description } = body
   if (!projectId || !name) {
     return NextResponse.json({ error: 'projectId and name are required' }, { status: 400 })
   }
@@ -34,7 +34,6 @@ export async function POST(request: NextRequest) {
     name: slugged,
     displayName: displayName?.trim() || null,
     description: description?.trim() || null,
-    showOnDashboard: showOnDashboard !== false,
     createdBy: `api:${key.id}`,
     createdAt: new Date(),
   })
