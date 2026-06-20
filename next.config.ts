@@ -11,6 +11,10 @@ const s3Host = process.env.S3_BUCKET_NAME && process.env.AWS_REGION
   ? `https://${process.env.S3_BUCKET_NAME}.s3.${process.env.AWS_REGION}.amazonaws.com`
   : 'https://*.amazonaws.com'
 
+const s3AccelerateHost = process.env.S3_BUCKET_NAME
+  ? `https://${process.env.S3_BUCKET_NAME}.s3-accelerate.amazonaws.com`
+  : ''
+
 const nextConfig: NextConfig = {
   // sharp must run in the Node.js runtime, not the Edge runtime
   serverExternalPackages: ['sharp'],
@@ -33,7 +37,7 @@ const nextConfig: NextConfig = {
               `img-src 'self' data: blob: ${s3Host} https://server.arcgisonline.com`,
               `media-src 'self' blob: ${s3Host}`,
               "font-src 'self'",
-              `connect-src 'self' ${s3Host} https://tiles.openfreemap.org https://server.arcgisonline.com`,
+              `connect-src 'self' ${s3Host} ${s3AccelerateHost} https://tiles.openfreemap.org https://server.arcgisonline.com`,
               "worker-src blob: 'self'",
 
               "frame-ancestors 'none'",
