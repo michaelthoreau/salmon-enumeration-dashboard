@@ -93,20 +93,22 @@ export async function fetchAllDjiMedia(
   const path    = `/media/api/v1/organizations/${session.orgUuid}/data-hub/files`
   const allItems: DjiMediaItem[] = []
   const seenIds  = new Set<string>()
-  let page = 1
 
-  while (true) {
-    const resp = await djiGet(session, path, { proj_uuid: projUuid, page, page_size: 100 }) as Record<string, unknown>
-    const batch = (
-      ((resp?.data as Record<string, unknown>)?.list as DjiMediaItem[]) ??
-      (resp?.list as DjiMediaItem[]) ??
-      []
-    )
-    const newItems = batch.filter((i) => !seenIds.has(i.id))
-    if (newItems.length === 0) break
-    for (const item of newItems) seenIds.add(item.id)
-    allItems.push(...newItems)
-    page++
+  for (const category of ['auto', 'media']) {
+    let page = 1
+    while (true) {
+      const resp = await djiGet(session, path, { proj_uuid: projUuid, page, page_size: 100, category }) as Record<string, unknown>
+      const batch = (
+        ((resp?.data as Record<string, unknown>)?.list as DjiMediaItem[]) ??
+        (resp?.list as DjiMediaItem[]) ??
+        []
+      )
+      const newItems = batch.filter((i) => !seenIds.has(i.id))
+      if (newItems.length === 0) break
+      for (const item of newItems) seenIds.add(item.id)
+      allItems.push(...newItems)
+      page++
+    }
   }
 
   return allItems

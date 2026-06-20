@@ -82,10 +82,8 @@ export async function getDjiSyncDiff(
         .where(and(eq(flightPlans.projectId, projectId), eq(flightPlans.name, slug), isNull(flightPlans.deletedAt)))
 
       if (plan) {
-        // Match by exact notes, or by Chinook flight name suffix to catch
-        // the same flight stored with/without the drone ID prefix.
-        const chinookSegment = isChinookPath(flight.fh2FilePath)
-          ? (flight.fh2FilePath.includes('/') ? flight.fh2FilePath.split('/').slice(1).join('/') : flight.fh2FilePath)
+        const chinookSegment = flight.fh2FilePath.includes('/')
+          ? flight.fh2FilePath.split('/').slice(1).join('/')
           : null
 
         const [existing] = await db
@@ -209,8 +207,8 @@ export async function getSyncProgress(
 
   const slug = slugify(planName)
 
-  const chinookSegment = isChinookPath(fh2FilePath)
-    ? (fh2FilePath.includes('/') ? fh2FilePath.split('/').slice(1).join('/') : fh2FilePath)
+  const chinookSegment = fh2FilePath.includes('/')
+    ? fh2FilePath.split('/').slice(1).join('/')
     : null
 
   const [plan] = await db
