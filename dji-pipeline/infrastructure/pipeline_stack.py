@@ -8,6 +8,7 @@ from aws_cdk import (
     aws_apigateway as apigw,
     aws_iam as iam,
     aws_logs as logs,
+    aws_cloudwatch as cw,
 )
 from constructs import Construct
 
@@ -106,6 +107,71 @@ class DjiAwsPipelineStack(Stack):
                 handler,
                 proxy=True,
                 timeout=Duration.seconds(29),
+            ),
+        )
+
+        # CloudWatch Dashboard – Alaska time, ERROR highlight
+        log_group = handler.log_group
+
+        dashboard = cw.Dashboard(
+            self, "DjiPipelineDashboard",
+            dashboard_name="DJI-Pipeline-Monitor",
+            default_interval=Duration.hours(24),
+        )
+
+        error_metric_filter = logs.MetricFilter(
+            self, "ErrorMetricFilter",
+            log_group=log_group,
+            filter_pattern=logs.FilterPattern.literal("ERROR"),
+            metric_name="DjiWebhookErrors",
+            metric_namespace="DjiPipeline",
+        )
+
+        dashboard.add_widgets(
+            cw.LogQueryWidget(
+                title="Lambda Logs (All)",
+                log_group_names=[log_group.log_group_name],
+                query_string=(
+                    "fields datefloor(@timestamp, 1s) as ts, @message"
+                    " | sort @timestamp desc"
+                    " | limit 200"
+                ),
+                width=24,
+                height=8,
+            ),
+            cw.LogQueryWidget(
+                title="ERROR Logs Only",
+                log_group_names=[log_group.log_group_name],
+                query_string=(
+                    "fields datefloor(@timestamp, 1s) as ts, @message"
+                    " | filter @message like /ERROR/"
+                    " | sort @timestamp desc"
+                    " | limit 100"
+                ),
+                width=24,
+                height=6,
+            ),
+            cw.GraphWidget(
+                title="Error Count Over Time",
+                left=[
+                    error_metric_filter.metric(
+                        statistic="Sum",
+                        period=Duration.minutes(5),
+                    ),
+                ],
+                width=12,
+                height=6,
+            ),
+            cw.GraphWidget(
+                title="Invocations & Duration",
+                left=[
+                    handler.metric_invocations(period=Duration.minutes(5)),
+                ],
+                right=[
+                    handler.metric_duration(period=Duration.minutes(5)),
+                ],
+                width=12,
+                height=6,
             ),
         )
 
