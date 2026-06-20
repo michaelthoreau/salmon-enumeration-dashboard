@@ -31,6 +31,12 @@ CONTENT_TYPES = {
     ".mkv": "video/x-matroska",
 }
 
+VIDEO_EXTS = {".mp4", ".mov", ".avi", ".mkv"}
+
+
+def _is_video_file(filename: str) -> bool:
+    return os.path.splitext(filename)[1].lower() in VIDEO_EXTS
+
 s3 = boto3.client("s3")
 
 _project_id_cache = ""
@@ -83,7 +89,7 @@ def _slugify(name: str) -> str:
     return name
 
 
-def _find_or_create_flight_plan(plan_name: str) -> str:
+def _find_or_create_flight_plan(plan_name: str, show_on_dashboard: bool = True) -> str:
     project_id = _get_project_id()
     flight_plans = _frontend_get("/api/v1/flight-plans", {"projectId": project_id})
 
@@ -96,6 +102,7 @@ def _find_or_create_flight_plan(plan_name: str) -> str:
     result = _frontend_post("/api/v1/flight-plans", {
         "projectId": project_id,
         "name": plan_name,
+        "showOnDashboard": show_on_dashboard,
     })
     print(f"Created flight plan: {result['id']} ({result.get('name')})")
     return result["id"]
@@ -255,10 +262,20 @@ def _parse_timestamp(fh2_file_path: str) -> str:
         return f"{match.group(1)}T{match.group(2)}"
     return ""
 
+def _video_date_plan_name(fh2_file_path: str) -> str:
+    """Extract date from fh2_file_path and return a date-videos plan name."""
+    ts = _parse_timestamp(fh2_file_path)
+    if ts:
+        return ts[:10] + "-videos"
+    return "undated-videos"
+
+
 #Shared: resolve plan name, flight plan, and flight from fh2_file_path
-def _resolve_flight(fh2_file_path: str, dji_project_id: str = "", created_at: int = 0):
+def _resolve_flight(fh2_file_path: str, dji_project_id: str = "", created_at: int = 0, video_only: bool = False):
     """Returns (plan_name, flight_plan_id, flight_id) or raises on failure."""
-    if _is_chinook_path(fh2_file_path):
+    if video_only:
+        plan_name = _video_date_plan_name(fh2_file_path)
+    elif _is_chinook_path(fh2_file_path):
         plan_name = _parse_plan_name(fh2_file_path)
     else:
         plan_name = _get_ditb_plan_name(dji_project_id, created_at, fh2_file_path)
@@ -269,7 +286,7 @@ def _resolve_flight(fh2_file_path: str, dji_project_id: str = "", created_at: in
     if not plan_name:
         raise ValueError(f"Could not parse plan name from: {fh2_file_path!r}")
 
-    flight_plan_id = _find_or_create_flight_plan(plan_name)
+    flight_plan_id = _find_or_create_flight_plan(plan_name, show_on_dashboard=not video_only)
     if not flight_plan_id:
         raise ValueError("Could not resolve flight plan ID")
 
@@ -322,7 +339,11 @@ def _handle_sync_flight(body: dict) -> dict:
         print("sync_flight: missing fh2_file_path or files")
         return {"statusCode": 200, "body": json.dumps({"code": 0, "error": "missing data"})}
 
-    plan_name, flight_plan_id, flight_id = _resolve_flight(fh2_file_path, dji_project_id)
+    video_only = all(_is_video_file(f.get("name", "")) for f in files)
+    if video_only:
+        print(f"Video-only flight detected, routing to date-videos plan")
+
+    plan_name, flight_plan_id, flight_id = _resolve_flight(fh2_file_path, dji_project_id, video_only=video_only)
 
     succeeded = 0
     failed = []
@@ -375,15 +396,16 @@ def _handle_sync_file_success(body: dict) -> dict:
     dji_project_id = body.get("project_id", "")
     created_at = body.get("created_at", 0)
 
+    filename = source_key.split("/")[-1]
+    video_only = _is_video_file(filename)
+
     try:
         plan_name, flight_plan_id, flight_id = _resolve_flight(
-            fh2_file_path, dji_project_id, created_at
+            fh2_file_path, dji_project_id, created_at, video_only=video_only
         )
     except ValueError as e:
         print(f"ERROR: {e}")
         return {"statusCode": 200, "body": json.dumps({"code": 0})}
-
-    filename = source_key.split("/")[-1]
     ext = os.path.splitext(filename)[1].lower()
     upload_result = _frontend_post("/api/v1/upload", {
         "flightId": flight_id,
