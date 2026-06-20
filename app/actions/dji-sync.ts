@@ -70,6 +70,9 @@ export async function getDjiSyncDiff(
 
     const missing: MissingFlight[] = []
 
+    console.log(`[DJI Sync] Items: ${items.length}, Tree: ${tree.length}`)
+    tree.forEach((f) => console.log(`[DJI Sync] ${f.fh2FilePath} (${f.files.length} files)`))
+
     for (const flight of tree) {
       const planName = parsePlanName(flight.fh2FilePath)
       if (!planName) continue // mirrors Lambda's skip
