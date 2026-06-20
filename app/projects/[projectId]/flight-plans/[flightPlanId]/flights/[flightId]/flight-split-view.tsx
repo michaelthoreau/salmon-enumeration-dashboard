@@ -1116,7 +1116,7 @@ export default function FlightSplitView({
                 : "w-full h-full"
             )}>
               {isFullscreenMap && (
-                <div className="absolute top-4 right-4 z-[60] flex items-center gap-2">
+                <div className="absolute top-[10px] right-[52px] z-[60] flex items-center gap-2">
                   <button
                     onClick={() => setZoomTrigger((prev) => prev + 1)}
                     className="px-3 py-2 bg-black/60 hover:bg-black/80 backdrop-blur-sm border border-gray-700 hover:border-gray-600 text-gray-300 hover:text-white rounded-lg shadow-lg transition-all text-xs font-semibold flex items-center gap-1.5 cursor-pointer"
