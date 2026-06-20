@@ -111,7 +111,7 @@ def _find_or_create_flight(flight_plan_id: str, timestamp: str, folder_name: str
     chinook_seg = _chinook_segment(folder_name) if _is_chinook_path(folder_name) else None
     flights = _frontend_get("/api/v1/flights", {"flightPlanId": flight_plan_id})
     for f in (flights or []):
-        notes = f.get("notes", "")
+        notes = f.get("notes") or ""
         if notes == folder_name:
             print(f"Matched flight: {f['id']} ({f.get('timestamp')})")
             return f["id"]
