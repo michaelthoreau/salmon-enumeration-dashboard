@@ -471,6 +471,7 @@ export default function FlightSplitView({
   const [isFullResLoading, setIsFullResLoading] = useState(false)
   const [isFullResImageLoading, setIsFullResImageLoading] = useState(false)
   const [isFullscreenPlayer, setIsFullscreenPlayer] = useState(false)
+  const [isFullscreenMap, setIsFullscreenMap] = useState(false)
 
   const handlePrevImage = useCallback(() => {
     if (!activeImage || images.length <= 1) return
@@ -507,6 +508,21 @@ export default function FlightSplitView({
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [isFullscreenPlayer, handlePrevImage, handleNextImage])
+
+  useEffect(() => {
+    if (!isFullscreenMap) return
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setIsFullscreenMap(false)
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [isFullscreenMap])
+
+  // Notify maplibre to resize when fullscreen map toggles
+  useEffect(() => {
+    const timer = setTimeout(() => window.dispatchEvent(new Event('resize')), 50)
+    return () => clearTimeout(timer)
+  }, [isFullscreenMap])
 
   // Zoom and pan state for lightbox image
   const [zoomScale, setZoomScale] = useState(1)
@@ -1061,18 +1077,30 @@ export default function FlightSplitView({
             </span>
           </div>
 
-          <div className="flex items-center">
+          <div className="flex items-center gap-2">
             {activeTab === 'map' && (
-              <button
-                onClick={() => setZoomTrigger((prev) => prev + 1)}
-                className={cn(
-                  buttonVariants({ variant: 'outline', size: 'sm' }),
-                  "gap-1.5 text-xs h-8"
-                )}
-              >
-                <Maximize2 className="w-3.5 h-3.5" />
-                <span>Zoom to Flight</span>
-              </button>
+              <>
+                <button
+                  onClick={() => setZoomTrigger((prev) => prev + 1)}
+                  className={cn(
+                    buttonVariants({ variant: 'outline', size: 'sm' }),
+                    "gap-1.5 text-xs h-8"
+                  )}
+                >
+                  <Maximize2 className="w-3.5 h-3.5" />
+                  <span>Zoom to Flight</span>
+                </button>
+                <button
+                  onClick={() => setIsFullscreenMap(true)}
+                  className={cn(
+                    buttonVariants({ variant: 'outline', size: 'sm' }),
+                    "gap-1.5 text-xs h-8"
+                  )}
+                >
+                  <Maximize2 className="w-3.5 h-3.5" />
+                  <span>Full Screen</span>
+                </button>
+              </>
             )}
           </div>
         </div>
@@ -1081,7 +1109,31 @@ export default function FlightSplitView({
         <div className="flex-1 min-h-0 overflow-hidden relative">
           {/* Map Tab */}
           {activeTab === 'map' && (
-            <div className="w-full h-full relative">
+            <div className={cn(
+              "relative",
+              isFullscreenMap
+                ? "fixed inset-0 z-50 bg-gray-950"
+                : "w-full h-full"
+            )}>
+              {isFullscreenMap && (
+                <div className="absolute top-4 right-4 z-[60] flex items-center gap-2">
+                  <button
+                    onClick={() => setZoomTrigger((prev) => prev + 1)}
+                    className="px-3 py-2 bg-black/60 hover:bg-black/80 backdrop-blur-sm border border-gray-700 hover:border-gray-600 text-gray-300 hover:text-white rounded-lg shadow-lg transition-all text-xs font-semibold flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <Maximize2 className="w-3.5 h-3.5" />
+                    Zoom to Flight
+                  </button>
+                  <button
+                    onClick={() => setIsFullscreenMap(false)}
+                    className="px-3 py-2 bg-black/60 hover:bg-black/80 backdrop-blur-sm border border-gray-700 hover:border-gray-600 text-gray-300 hover:text-white rounded-lg shadow-lg transition-all text-xs font-semibold flex items-center gap-1.5 cursor-pointer"
+                    title="Exit Full Screen (Escape)"
+                  >
+                    <Minimize2 className="w-3.5 h-3.5" />
+                    Exit Full Screen
+                  </button>
+                </div>
+              )}
               <OrthoMap
                 outputKey={geotiffKey}
                 cacheBuster={cacheBuster}
