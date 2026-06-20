@@ -134,10 +134,22 @@ class DjiAwsPipelineStack(Stack):
                 query_string=(
                     "fields datefloor(@timestamp, 1s) as ts, @message"
                     " | sort @timestamp desc"
-                    " | limit 200"
+                    " | limit 1000"
                 ),
                 width=24,
                 height=8,
+            ),
+            cw.LogQueryWidget(
+                title="Search Logs",
+                log_group_names=[log_group.log_group_name],
+                query_string=(
+                    "fields datefloor(@timestamp, 1s) as ts, @message"
+                    " | filter @message like /SEARCH_TERM/"
+                    " | sort @timestamp desc"
+                    " | limit 500"
+                ),
+                width=24,
+                height=6,
             ),
             cw.LogQueryWidget(
                 title="ERROR Logs Only",
@@ -146,7 +158,7 @@ class DjiAwsPipelineStack(Stack):
                     "fields datefloor(@timestamp, 1s) as ts, @message"
                     " | filter @message like /ERROR/"
                     " | sort @timestamp desc"
-                    " | limit 100"
+                    " | limit 500"
                 ),
                 width=24,
                 height=6,
