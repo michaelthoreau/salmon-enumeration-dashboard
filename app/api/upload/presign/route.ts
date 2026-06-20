@@ -82,6 +82,8 @@ export async function POST(request: NextRequest) {
   }
 
   // Generate presigned POST policies in parallel (concurrency-safe — each key is unique)
+  const VIDEO_TYPES = new Set(['video/mp4', 'video/quicktime'])
+
   const presignedPosts = await Promise.all(
     files.map((file) =>
       createPresignedUploadPost(
@@ -91,6 +93,7 @@ export async function POST(request: NextRequest) {
         sanitizeFileName(file.name),
         file.type,
         file.size,
+        VIDEO_TYPES.has(file.type),
       ).then((post) => ({ name: file.name, ...post })),
     ),
   )

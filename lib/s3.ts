@@ -13,6 +13,20 @@ function getClient(): S3Client {
   return new S3Client({ region, credentials: { accessKeyId, secretAccessKey } })
 }
 
+function getAcceleratedClient(): S3Client {
+  const region = process.env.AWS_REGION
+  const accessKeyId = process.env.AWS_ACCESS_KEY_ID
+  const secretAccessKey = process.env.AWS_SECRET_ACCESS_KEY
+  if (!region || !accessKeyId || !secretAccessKey) {
+    throw new Error('Missing AWS credentials environment variables')
+  }
+  return new S3Client({
+    region,
+    credentials: { accessKeyId, secretAccessKey },
+    useAccelerateEndpoint: true,
+  })
+}
+
 export function getBucket(): string {
   const bucket = process.env.S3_BUCKET_NAME
   if (!bucket) throw new Error('S3_BUCKET_NAME environment variable is not set')
@@ -76,8 +90,9 @@ export async function createPresignedUploadPost(
   fileName: string,
   contentType: string,
   maxFileSizeBytes: number = 5 * 1024 * 1024 * 1024, // 5 GB
+  accelerate: boolean = false,
 ): Promise<{ url: string; fields: Record<string, string> }> {
-  const client = getClient()
+  const client = accelerate ? getAcceleratedClient() : getClient()
   const bucket = getBucket()
   const key = `${flightPrefix(projectId, flightPlanId, flightId)}${fileName}`
 
