@@ -86,28 +86,48 @@ export async function listDjiProjects(
   return list.map((p) => ({ uuid: p.uuid as string, name: (p.name as string) ?? 'unnamed' }))
 }
 
+async function fetchCategory(
+  session: DjiSession,
+  projUuid: string,
+  category: string,
+): Promise<DjiMediaItem[]> {
+  const path = `/media/api/v1/organizations/${session.orgUuid}/data-hub/files`
+  const items: DjiMediaItem[] = []
+  const seenIds = new Set<string>()
+  let page = 1
+
+  while (true) {
+    const resp = await djiGet(session, path, { proj_uuid: projUuid, page, page_size: 100, category }) as Record<string, unknown>
+    const batch = (
+      ((resp?.data as Record<string, unknown>)?.list as DjiMediaItem[]) ??
+      (resp?.list as DjiMediaItem[]) ??
+      []
+    )
+    const newItems = batch.filter((i) => !seenIds.has(i.id))
+    if (newItems.length === 0) break
+    for (const item of newItems) seenIds.add(item.id)
+    items.push(...newItems)
+    page++
+  }
+
+  return items
+}
+
 export async function fetchAllDjiMedia(
   session: DjiSession,
   projUuid: string,
 ): Promise<DjiMediaItem[]> {
-  const path    = `/media/api/v1/organizations/${session.orgUuid}/data-hub/files`
-  const allItems: DjiMediaItem[] = []
-  const seenIds  = new Set<string>()
+  const [autoItems, mediaItems] = await Promise.all([
+    fetchCategory(session, projUuid, 'auto'),
+    fetchCategory(session, projUuid, 'media'),
+  ])
 
-  for (const category of ['auto', 'media']) {
-    let page = 1
-    while (true) {
-      const resp = await djiGet(session, path, { proj_uuid: projUuid, page, page_size: 100, category }) as Record<string, unknown>
-      const batch = (
-        ((resp?.data as Record<string, unknown>)?.list as DjiMediaItem[]) ??
-        (resp?.list as DjiMediaItem[]) ??
-        []
-      )
-      const newItems = batch.filter((i) => !seenIds.has(i.id))
-      if (newItems.length === 0) break
-      for (const item of newItems) seenIds.add(item.id)
-      allItems.push(...newItems)
-      page++
+  const seenIds = new Set<string>()
+  const allItems: DjiMediaItem[] = []
+  for (const item of [...autoItems, ...mediaItems]) {
+    if (!seenIds.has(item.id)) {
+      seenIds.add(item.id)
+      allItems.push(item)
     }
   }
 
