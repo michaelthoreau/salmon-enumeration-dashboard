@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useRef, useState, useCallback } from 'react'
-import { Play, Pause, ChevronLeft, ChevronRight, Volume2, VolumeX, Loader2, Minus, Plus, Settings, NotebookPen, X, Trash2 } from 'lucide-react'
+import { Play, Pause, ChevronLeft, ChevronRight, Volume2, VolumeX, Loader2, Minus, Plus, Settings, NotebookPen, X, Trash2, Maximize2 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 interface VideoNote {
@@ -21,12 +21,13 @@ interface VideoPlayerProps {
   notes?: VideoNote[]
   onAddNote?: (note: { time: number; frame: number; text: string }) => void
   onDeleteNote?: (id: string) => void
+  onExpand?: () => void
 }
 
 export default function VideoPlayer({
   videoUrl, filename, fishCount = 0, canWrite = false,
   onIncrement, onDecrement,
-  notes = [], onAddNote, onDeleteNote,
+  notes = [], onAddNote, onDeleteNote, onExpand,
 }: VideoPlayerProps) {
   const videoRef = useRef<HTMLVideoElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
@@ -283,6 +284,18 @@ export default function VideoPlayer({
             </div>
           )}
         </div>
+
+        {/* Expand button — top right of video */}
+        {onExpand && (
+          <button
+            onClick={onExpand}
+            className="absolute top-4 right-4 z-10 p-2 bg-black/60 hover:bg-black/80 backdrop-blur-sm border border-white/10 hover:border-white/20 text-white/70 hover:text-white rounded-lg shadow-lg transition-all hover:scale-105 cursor-pointer flex items-center gap-1.5 text-xs font-semibold"
+            title="Expand Viewport"
+          >
+            <Maximize2 className="w-3.5 h-3.5" />
+            <span>Expand</span>
+          </button>
+        )}
 
         {/* Fish Counter HUD — top left, always visible */}
         <div className="absolute top-4 left-4 flex items-center gap-3 bg-black/60 backdrop-blur-sm rounded-xl px-4 py-2.5">

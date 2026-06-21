@@ -1429,17 +1429,6 @@ export default function FlightSplitView({
 
                       {/* Interactive Viewport (Takes up full area) */}
                       <div className="flex-1 min-h-0 flex items-center justify-center relative bg-gray-950">
-                        <button
-                          onClick={() => setIsFullscreenPlayer(true)}
-                          className={cn(
-                            "absolute right-4 top-4 z-10 p-2 bg-black/60 hover:bg-black/80 backdrop-blur-xs border border-gray-800 hover:border-gray-700 text-gray-300 hover:text-white rounded-lg shadow-lg transition-all hover:scale-105 cursor-pointer flex items-center gap-1.5 text-xs font-semibold"
-                          )}
-                          title="Expand Viewport"
-                        >
-                          <Maximize2 className="w-3.5 h-3.5" />
-                          <span>Expand</span>
-                        </button>
-
                         {isVideo(activeImage.key) ? (
                           <div className="w-full h-full">
                             <VideoPlayer
@@ -1452,10 +1441,19 @@ export default function FlightSplitView({
                               notes={getVideoNotes(activeImage.id)}
                               onAddNote={(note) => handleAddNote(activeImage.id, note)}
                               onDeleteNote={handleDeleteNote}
+                              onExpand={() => setIsFullscreenPlayer(true)}
                             />
                           </div>
                         ) : (
                           <>
+                            <button
+                              onClick={() => setIsFullscreenPlayer(true)}
+                              className="absolute right-4 bottom-4 z-10 p-2 bg-black/60 hover:bg-black/80 backdrop-blur-xs border border-gray-800 hover:border-gray-700 text-gray-300 hover:text-white rounded-lg shadow-lg transition-all hover:scale-105 cursor-pointer flex items-center gap-1.5 text-xs font-semibold"
+                              title="Expand Viewport"
+                            >
+                              <Maximize2 className="w-3.5 h-3.5" />
+                              <span>Expand</span>
+                            </button>
                             {/* eslint-disable-next-line @next/next/no-img-element */}
                             <img
                               key={activeImage.key}
