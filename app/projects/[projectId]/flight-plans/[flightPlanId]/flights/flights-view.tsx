@@ -22,7 +22,7 @@ export interface FlightRow {
   flight: Flight
   formattedTime: string
   localTimestamp: string
-  imageCount: number
+  fileCount: number
   taskStatus: OdmTaskStatus | GeorefTaskStatus | null
   outputKey: string | null
   taskCompletedAt?: Date | null
@@ -45,7 +45,7 @@ interface Props {
   isAdmin: boolean
 }
 
-function StatusBadge({ status, imageCount }: { status: OdmTaskStatus | GeorefTaskStatus | null; imageCount: number }) {
+function StatusBadge({ status, fileCount }: { status: OdmTaskStatus | GeorefTaskStatus | null; fileCount: number }) {
   if (status === 'completed') {
     return (
       <span className="inline-flex items-center gap-1 rounded-md bg-green-50 border border-green-200 px-2 py-0.5 text-xs text-green-700 font-medium">
@@ -85,7 +85,7 @@ function StatusBadge({ status, imageCount }: { status: OdmTaskStatus | GeorefTas
       </span>
     )
   }
-  if (imageCount > 0) {
+  if (fileCount > 0) {
     return null
   }
   return (
@@ -329,11 +329,11 @@ export default function FlightsView({
                         {/* Image count */}
                         <span className="inline-flex items-center gap-1 rounded-md bg-gray-50 border border-gray-200 px-2 py-0.5 text-xs text-gray-600 font-medium">
                           <Layers className="w-3.5 h-3.5 text-gray-400" />
-                          <span>{row.imageCount} images</span>
+                          <span>{row.fileCount} files</span>
                         </span>
 
                         {/* Status badge */}
-                        <StatusBadge status={row.taskStatus} imageCount={row.imageCount} />
+                        <StatusBadge status={row.taskStatus} fileCount={row.fileCount} />
                       </div>
 
                       {/* Open Details Link */}
@@ -435,7 +435,7 @@ export default function FlightsView({
                   <div className="space-y-2">
                     <h3 className="text-lg font-semibold text-gray-900">No Orthophoto Map</h3>
                     <p className="text-sm text-gray-500">
-                      {selected.imageCount === 0
+                      {selected.fileCount === 0
                         ? "This flight has no images uploaded yet. Upload images and process them with ODM to generate an orthophoto map."
                         : selected.taskStatus === 'running'
                         ? "ODM is currently processing the images for this flight. The map will be available once processing completes."
@@ -451,7 +451,7 @@ export default function FlightsView({
                       href={`/projects/${projectId}/flight-plans/${flightPlanId}/flights/${selected.flight.id}${from ? `?from=${from}` : ''}`}
                       className={cn(buttonVariants({ variant: 'default' }), "gap-1.5 w-full justify-center")}
                     >
-                      <span>Open Flight Details to {selected.imageCount === 0 ? "Upload" : "Process"}</span>
+                      <span>Open Flight Details to {selected.fileCount === 0 ? "Upload" : "Process"}</span>
                       <ExternalLink className="w-4 h-4" />
                     </Link>
                   </div>

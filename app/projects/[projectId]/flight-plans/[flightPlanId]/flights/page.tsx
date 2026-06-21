@@ -113,7 +113,7 @@ export default async function FlightsPage({ params, searchParams }: PageProps) {
       flight,
       formattedTime: formatInTz(flight.timestamp, project.timezone),
       localTimestamp: toLocalInputValue(flight.timestamp, project.timezone),
-      imageCount: fileCountMap.get(flight.id) ?? 0,
+      fileCount: fileCountMap.get(flight.id) ?? 0,
       taskStatus: (task?.status as any) ?? null,
       outputKey: task?.outputKey ?? null,
       taskCompletedAt: task?.completedAt ?? null,
