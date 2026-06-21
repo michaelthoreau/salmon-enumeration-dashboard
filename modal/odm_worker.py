@@ -451,9 +451,18 @@ async def _process_collect(
             ]
 
             def run_tiling_with_progress():
-                result = subprocess.run(cmd_tiling, capture_output=True, text=True)
-                if result.returncode != 0:
-                    raise RuntimeError(f"Tiling failed: {result.stderr}")
+                process = subprocess.Popen(
+                    cmd_tiling,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    bufsize=1,
+                )
+                for line in process.stdout:
+                    log_collect(odm_uuid, f"[gdal2tiles] {line.rstrip()}")
+                process.wait()
+                if process.returncode != 0:
+                    raise RuntimeError(f"Tiling failed (exit code {process.returncode})")
                 log_collect(odm_uuid, "[collect] gdal2tiles complete.")
 
             await loop.run_in_executor(None, run_tiling_with_progress)

@@ -930,10 +930,18 @@ def _tile_and_upload_geotiff(
         tiles_dir
     ]
 
-    result = subprocess.run(cmd_tiling, capture_output=True, text=True)
-    if result.returncode != 0:
-        log_task(task_id, f"[tiles] gdal2tiles failed: {result.stderr}")
-        raise RuntimeError(f"Tiling failed: {result.stderr}")
+    process = subprocess.Popen(
+        cmd_tiling,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        bufsize=1,
+    )
+    for line in process.stdout:
+        log_task(task_id, f"[gdal2tiles] {line.rstrip()}")
+    process.wait()
+    if process.returncode != 0:
+        raise RuntimeError(f"Tiling failed (exit code {process.returncode})")
     log_task(task_id, "[tiles] gdal2tiles complete.")
 
     tiles_key = f"{output_prefix.rstrip('/')}/tiles-{task_id}"
