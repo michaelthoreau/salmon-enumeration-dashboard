@@ -908,7 +908,7 @@ def _tile_and_upload_geotiff(
 ) -> str:
     """
     Tiling helper that runs gdal2tiles, converts PNGs to WebP, and uploads them to S3 in parallel.
-    Uses Pillow and boto3 client.
+    Uses Pillow and boto3 client. Uses 512px tiles to reduce the total tile count by 4x.
     """
     import subprocess
     import os
@@ -918,46 +918,23 @@ def _tile_and_upload_geotiff(
 
     tiles_dir = os.path.join(os.path.dirname(cog_path), "tiles")
     os.makedirs(tiles_dir, exist_ok=True)
-    log_task(task_id, "[tiles] Generating static map tiles with gdal2tiles...")
+
+    log_task(task_id, "[tiles] Generating static map tiles with gdal2tiles (512px tiles, 32 processes)...")
     cmd_tiling = [
         "gdal2tiles.py",
         "--xyz",
-        "--processes=8",
+        "--processes=32",
         "-w", "none",
+        "--tilesize=512",
         cog_path,
         tiles_dir
     ]
-    
-    import re
-    process = subprocess.Popen(
-        cmd_tiling,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        bufsize=1
-    )
 
-    buffer = ""
-    last_percent = -1
-    while True:
-        char = process.stdout.read(1)
-        if not char:
-            break
-        buffer += char
-        if buffer.endswith("..."):
-            matches = re.findall(r'(\d+)\.\.\.$', buffer)
-            if matches:
-                pct = int(matches[-1])
-                if pct != last_percent:
-                    log_task(task_id, f"[tiles] Tiling progress: {pct}%")
-                    last_percent = pct
-            if len(buffer) > 1000:
-                buffer = buffer[-100:]
-
-    stdout, stderr = process.communicate()
-    if process.returncode != 0:
-        log_task(task_id, f"[tiles] gdal2tiles failed: {stderr}")
-        raise RuntimeError(f"Tiling failed: {stderr}")
+    result = subprocess.run(cmd_tiling, capture_output=True, text=True)
+    if result.returncode != 0:
+        log_task(task_id, f"[tiles] gdal2tiles failed: {result.stderr}")
+        raise RuntimeError(f"Tiling failed: {result.stderr}")
+    log_task(task_id, "[tiles] gdal2tiles complete.")
 
     tiles_key = f"{output_prefix.rstrip('/')}/tiles-{task_id}"
     tile_tasks = []
@@ -1010,7 +987,7 @@ def _tile_and_upload_geotiff(
         if uploaded_tiles % 100 == 0 or uploaded_tiles == total_tiles:
             log_task(task_id, f"[tiles] Uploaded {uploaded_tiles}/{total_tiles} WebP tiles ({int(uploaded_tiles / total_tiles * 100)}%)")
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=16) as executor:
+    with concurrent.futures.ThreadPoolExecutor(max_workers=32) as executor:
         list(executor.map(lambda t: upload_one_tile(*t), tile_tasks))
 
     log_task(task_id, f"[tiles] Successfully uploaded all {total_tiles} static WebP tiles.")

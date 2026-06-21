@@ -788,13 +788,13 @@ export default function OrthoMap({
           return
         }
 
-        const tileUrl = `/api/tiles/{z}/{x}/{y}?key=${encodeURIComponent(outputKey)}${cacheBusterParam}`
+        const tileUrl = `/api/tiles/{z}/{x}/{y}?key=${encodeURIComponent(outputKey)}${cacheBusterParam}&tilesize=512`
 
         console.log('[OrthoMap] Adding ortho source and layer to map')
         map.addSource('ortho', {
           type: 'raster',
           tiles: [tileUrl],
-          tileSize: 256,
+          tileSize: 512,
           minzoom: 0,
           maxzoom,
         })

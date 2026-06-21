@@ -155,6 +155,7 @@ def web() -> FastAPI:
         y: int,
         key: str = Query(...),
         bucket: str | None = Query(None),
+        tilesize: int = Query(256),
         _: None = Depends(_require_auth),
     ) -> Response:
         import time
@@ -166,7 +167,7 @@ def web() -> FastAPI:
             with rasterio.Env(**_gdal_env):
                 with COGReader(_s3_url(key, bucket)) as cog:
                     read_start = time.time()
-                    img = cog.tile(x, y, z)
+                    img = cog.tile(x, y, z, tilesize=tilesize)
                     read_duration = (time.time() - read_start) * 1000
 
                     render_start = time.time()
@@ -200,6 +201,7 @@ def web() -> FastAPI:
         colormap: str = Query("red-green"),
         threshold: float = Query(15.0),
         max_diff: float = Query(120.0),
+        tilesize: int = Query(256),
         bucket: str | None = Query(None),
         _: None = Depends(_require_auth),
     ) -> Response:
@@ -217,7 +219,7 @@ def web() -> FastAPI:
         try:
             with rasterio.Env(**_gdal_env):
                 with COGReader(_s3_url(key1, bucket)) as cog1:
-                    img1 = cog1.tile(x, y, z)
+                    img1 = cog1.tile(x, y, z, tilesize=tilesize)
         except TileOutsideBounds:
             img1 = None
         except Exception as exc:
@@ -231,7 +233,7 @@ def web() -> FastAPI:
         try:
             with rasterio.Env(**_gdal_env):
                 with COGReader(_s3_url(key2, bucket)) as cog2:
-                    img2 = cog2.tile(x, y, z)
+                    img2 = cog2.tile(x, y, z, tilesize=tilesize)
         except TileOutsideBounds:
             img2 = None
         except Exception as exc:

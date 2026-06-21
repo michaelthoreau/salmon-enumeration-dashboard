@@ -29,6 +29,7 @@ export async function GET(
   const colormap = request.nextUrl.searchParams.get('colormap') || 'red-green'
   const threshold = request.nextUrl.searchParams.get('threshold') || '15'
   const maxDiff = request.nextUrl.searchParams.get('maxDiff') || '120'
+  const tilesize = request.nextUrl.searchParams.get('tilesize') || '256'
 
   const targetUrl = 
     `${url}/diff-tiles/${z}/${x}/${y}` +
@@ -37,6 +38,7 @@ export async function GET(
     `&colormap=${encodeURIComponent(colormap)}` +
     `&threshold=${encodeURIComponent(threshold)}` +
     `&max_diff=${encodeURIComponent(maxDiff)}` +
+    `&tilesize=${tilesize}` +
     (bucket ? `&bucket=${encodeURIComponent(bucket)}` : '')
 
   const startTime = Date.now()

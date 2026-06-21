@@ -87,7 +87,8 @@ export async function GET(
   // 2. Fall back to dynamic tile server (original behavior)
   const { url, token } = getTileServer()
   const bucket = process.env.S3_BUCKET_NAME || ''
-  const targetUrl = `${url}/tiles/${z}/${x}/${y}?key=${encodeURIComponent(key)}` + (bucket ? `&bucket=${encodeURIComponent(bucket)}` : '')
+  const tilesize = request.nextUrl.searchParams.get('tilesize') || '256'
+  const targetUrl = `${url}/tiles/${z}/${x}/${y}?key=${encodeURIComponent(key)}` + (bucket ? `&bucket=${encodeURIComponent(bucket)}` : '') + `&tilesize=${tilesize}`
 
   const startTime = Date.now()
   let fetchStartTime = Date.now()

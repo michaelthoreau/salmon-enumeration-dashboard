@@ -304,12 +304,12 @@ export default function CompareMap({
         }
 
         if (cancelled || !mapBeforeRef.current) return
-        const tileUrl = `/api/tiles/{z}/{x}/{y}?key=${encodeURIComponent(flightA.outputKey)}${cacheBusterParam}`
+        const tileUrl = `/api/tiles/{z}/{x}/{y}?key=${encodeURIComponent(flightA.outputKey)}${cacheBusterParam}&tilesize=512`
 
         map.addSource('ortho-before', {
           type: 'raster',
           tiles: [tileUrl],
-          tileSize: 256,
+          tileSize: 512,
           minzoom: 0,
           maxzoom,
         })
@@ -367,15 +367,15 @@ export default function CompareMap({
         
         let tileUrl: string
         if (showDiff && flightA) {
-          tileUrl = `/api/tiles/diff/{z}/{x}/{y}?key1=${encodeURIComponent(flightA.outputKey)}&key2=${encodeURIComponent(flightB.outputKey)}&colormap=${colormap}&threshold=${threshold}&maxDiff=${maxDiff}&t1=${encodeURIComponent(flightA.cacheBuster || '')}&t2=${encodeURIComponent(flightB.cacheBuster || '')}`
+          tileUrl = `/api/tiles/diff/{z}/{x}/{y}?key1=${encodeURIComponent(flightA.outputKey)}&key2=${encodeURIComponent(flightB.outputKey)}&colormap=${colormap}&threshold=${threshold}&maxDiff=${maxDiff}&t1=${encodeURIComponent(flightA.cacheBuster || '')}&t2=${encodeURIComponent(flightB.cacheBuster || '')}&tilesize=512`
         } else {
-          tileUrl = `/api/tiles/{z}/{x}/{y}?key=${encodeURIComponent(flightB.outputKey)}${cacheBusterParamB}`
+          tileUrl = `/api/tiles/{z}/{x}/{y}?key=${encodeURIComponent(flightB.outputKey)}${cacheBusterParamB}&tilesize=512`
         }
 
         map.addSource('ortho-after', {
           type: 'raster',
           tiles: [tileUrl],
-          tileSize: 256,
+          tileSize: 512,
           minzoom: 0,
           maxzoom,
         })

@@ -99,6 +99,7 @@ _progress = modal.Dict.from_name("salmon-odm-progress", create_if_missing=True)
 CONCURRENT_UPLOADS = 5  # simultaneous S3→ODM pipelines
 
 
+
 # ── ASGI app ───────────────────────────────────────────────────────────────────
 
 @app.function(
@@ -108,7 +109,7 @@ CONCURRENT_UPLOADS = 5  # simultaneous S3→ODM pipelines
     ],
     timeout=3600,   # 1 hour ceiling; large flights can take a while
     memory=8192,    # 8 GB
-    cpu=8,          # 8 CPUs
+    cpu=16,         # 16 CPUs
 )
 @modal.asgi_app()
 def web() -> FastAPI:
@@ -437,44 +438,23 @@ async def _process_collect(
 
             tiles_dir = os.path.join(tmpdir, "tiles")
             os.makedirs(tiles_dir, exist_ok=True)
-            log_collect(odm_uuid, "[collect] Generating static map tiles with gdal2tiles...")
+
+            log_collect(odm_uuid, "[collect] Generating static map tiles with gdal2tiles (512px tiles, 32 processes)...")
             cmd_tiling = [
                 "gdal2tiles.py",
                 "--xyz",
-                "--processes=8",
+                "--processes=32",
                 "-w", "none",
+                "--tilesize=512",
                 cog_path,
                 tiles_dir
             ]
 
             def run_tiling_with_progress():
-                import re
-                process = subprocess.Popen(
-                    cmd_tiling,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    text=True,
-                    bufsize=1
-                )
-                buffer = ""
-                last_percent = -1
-                while True:
-                    char = process.stdout.read(1)
-                    if not char:
-                        break
-                    buffer += char
-                    if buffer.endswith("..."):
-                        matches = re.findall(r'(\d+)\.\.\.$', buffer)
-                        if matches:
-                            pct = int(matches[-1])
-                            if pct != last_percent:
-                                log_collect(odm_uuid, f"[collect] Tiling progress: {pct}%")
-                                last_percent = pct
-                        if len(buffer) > 1000:
-                            buffer = buffer[-100:]
-                stdout, stderr = process.communicate()
-                if process.returncode != 0:
-                    raise RuntimeError(f"Tiling failed: {stderr}")
+                result = subprocess.run(cmd_tiling, capture_output=True, text=True)
+                if result.returncode != 0:
+                    raise RuntimeError(f"Tiling failed: {result.stderr}")
+                log_collect(odm_uuid, "[collect] gdal2tiles complete.")
 
             await loop.run_in_executor(None, run_tiling_with_progress)
 
@@ -527,7 +507,7 @@ async def _process_collect(
                     if uploaded_tiles % 100 == 0 or uploaded_tiles == total_tiles:
                         log_collect(odm_uuid, f"[collect] Uploaded {uploaded_tiles}/{total_tiles} WebP tiles ({int(uploaded_tiles / total_tiles * 100)}%)")
 
-                with concurrent.futures.ThreadPoolExecutor(max_workers=16) as executor:
+                with concurrent.futures.ThreadPoolExecutor(max_workers=32) as executor:
                     await loop.run_in_executor(
                         None,
                         lambda: list(executor.map(lambda t: upload_one_tile(*t), tile_tasks))
