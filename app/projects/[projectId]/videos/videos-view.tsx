@@ -1,7 +1,8 @@
 'use client'
 
 import { useState, useMemo } from 'react'
-import { Video, Search } from 'lucide-react'
+import { useRouter } from 'next/navigation'
+import { Video, Search, RefreshCw } from 'lucide-react'
 import Link from 'next/link'
 
 interface VideoEntry {
@@ -62,7 +63,15 @@ interface VideosViewProps {
 }
 
 export default function VideosView({ projectId, timezone, videos, canWrite }: VideosViewProps) {
+  const router = useRouter()
   const [search, setSearch] = useState('')
+  const [isRefreshing, setIsRefreshing] = useState(false)
+
+  const handleRefresh = () => {
+    setIsRefreshing(true)
+    router.refresh()
+    setTimeout(() => setIsRefreshing(false), 1000)
+  }
 
   const filtered = useMemo(() => {
     if (!search.trim()) return videos
@@ -96,6 +105,14 @@ export default function VideosView({ projectId, timezone, videos, canWrite }: Vi
           <Video className="w-6 h-6 text-blue-600" />
           <h1 className="text-xl font-bold text-gray-900">Videos</h1>
           <span className="text-sm text-gray-400 font-mono">{videos.length} total</span>
+          <button
+            onClick={handleRefresh}
+            disabled={isRefreshing}
+            className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-gray-600 transition-colors"
+            title="Refresh"
+          >
+            <RefreshCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin' : ''}`} />
+          </button>
         </div>
 
         <div className="relative w-72">
