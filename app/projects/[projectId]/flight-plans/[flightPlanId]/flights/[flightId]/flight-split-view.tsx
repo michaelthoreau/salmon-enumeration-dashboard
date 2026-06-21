@@ -496,6 +496,56 @@ export default function FlightSplitView({
     } catch { /* poll will correct */ }
   }, [annotations, annotationsUrl])
 
+  // Video notes helpers
+  const getVideoNotes = useCallback((fileId: string) => {
+    return annotations
+      .filter((a) => a.label === 'video-note' && a.fileId === fileId)
+      .map((a) => {
+        try {
+          const data = JSON.parse(a.geometry)
+          return { id: a.id, time: data.time ?? 0, frame: data.frame ?? 0, text: data.text ?? '' }
+        } catch {
+          return { id: a.id, time: 0, frame: 0, text: '' }
+        }
+      })
+  }, [annotations])
+
+  const handleAddNote = useCallback(async (fileId: string, note: { time: number; frame: number; text: string }) => {
+    const geometry = JSON.stringify({ time: note.time, frame: note.frame, text: note.text })
+    const tempId = `__optimistic__${Date.now()}`
+    const tempAnno = {
+      id: tempId, flightId, fileId, shape: 'point' as const,
+      geometry, fishCount: 0, confidence: 1.0, label: 'video-note',
+    }
+    setAnnotations((prev) => [...prev, tempAnno])
+    try {
+      const res = await fetch(annotationsUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ shape: 'point', geometry, fishCount: 0, confidence: 1.0, fileId, label: 'video-note' }),
+      })
+      if (res.ok) {
+        const newAnno = await res.json()
+        setAnnotations((prev) => prev.map((a) => a.id === tempId ? newAnno : a))
+      } else {
+        setAnnotations((prev) => prev.filter((a) => a.id !== tempId))
+      }
+    } catch {
+      setAnnotations((prev) => prev.filter((a) => a.id !== tempId))
+    }
+  }, [annotationsUrl, flightId])
+
+  const handleDeleteNote = useCallback(async (id: string) => {
+    const removed = annotations.find((a) => a.id === id)
+    setAnnotations((prev) => prev.filter((a) => a.id !== id))
+    try {
+      const res = await fetch(`${annotationsUrl}?id=${encodeURIComponent(id)}`, { method: 'DELETE' })
+      if (!res.ok && removed) setAnnotations((prev) => [...prev, removed])
+    } catch {
+      if (removed) setAnnotations((prev) => [...prev, removed])
+    }
+  }, [annotations, annotationsUrl])
+
   // Sync annotations if initialAnnotations changes (e.g. server-side refresh)
   useEffect(() => {
     setAnnotations(initialAnnotations)
@@ -1382,8 +1432,7 @@ export default function FlightSplitView({
                         <button
                           onClick={() => setIsFullscreenPlayer(true)}
                           className={cn(
-                            "absolute right-4 z-10 p-2 bg-black/60 hover:bg-black/80 backdrop-blur-xs border border-gray-800 hover:border-gray-700 text-gray-300 hover:text-white rounded-lg shadow-lg transition-all hover:scale-105 cursor-pointer flex items-center gap-1.5 text-xs font-semibold",
-                            isVideo(activeImage.key) ? "top-4" : "bottom-4"
+                            "absolute right-4 bottom-4 z-10 p-2 bg-black/60 hover:bg-black/80 backdrop-blur-xs border border-gray-800 hover:border-gray-700 text-gray-300 hover:text-white rounded-lg shadow-lg transition-all hover:scale-105 cursor-pointer flex items-center gap-1.5 text-xs font-semibold"
                           )}
                           title="Expand Viewport"
                         >
@@ -1400,6 +1449,9 @@ export default function FlightSplitView({
                               canWrite={canWrite}
                               onIncrement={() => handleVideoIncrement(activeImage.id)}
                               onDecrement={() => handleVideoDecrement(activeImage.id)}
+                              notes={getVideoNotes(activeImage.id)}
+                              onAddNote={(note) => handleAddNote(activeImage.id, note)}
+                              onDeleteNote={handleDeleteNote}
                             />
                           </div>
                         ) : (
