@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useRef, useState, useCallback } from 'react'
-import { Play, Pause, ChevronLeft, ChevronRight, Volume2, VolumeX, Loader2, Minus, Plus, Maximize, Minimize, Settings } from 'lucide-react'
+import { Play, Pause, ChevronLeft, ChevronRight, Volume2, VolumeX, Loader2, Minus, Plus, Settings } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 interface VideoPlayerProps {
@@ -254,43 +254,34 @@ export default function VideoPlayer({ videoUrl, filename, fishCount = 0, canWrit
         )}
       </div>
 
-      {/* Fish Counter HUD — top right overlay */}
-      <div className={cn(
-        "absolute top-3 right-3 flex items-center gap-2 bg-black/60 backdrop-blur-sm rounded-full px-3 py-1.5 transition-opacity duration-300",
-        showControls || !isPlaying ? "opacity-100" : "opacity-0"
-      )}>
+      {/* Fish Counter HUD — top right overlay, always visible */}
+      <div className="absolute top-4 right-4 flex items-center gap-3 bg-black/60 backdrop-blur-sm rounded-xl px-4 py-2.5">
         {canWrite && (
           <button
             onClick={onDecrement}
             disabled={fishCount <= 0}
-            className="w-6 h-6 flex items-center justify-center rounded-full text-white/70 hover:text-white hover:bg-white/10 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+            className="w-8 h-8 flex flex-col items-center justify-center rounded-lg text-white/70 hover:text-white hover:bg-white/10 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
             title="Decrement (D)"
           >
-            <Minus className="w-3.5 h-3.5" />
+            <Minus className="w-4 h-4" />
+            <span className="text-[9px] text-white/30 mt-0.5">D</span>
           </button>
         )}
-        <div className="flex items-center gap-1.5">
-          <span className="text-sm font-semibold text-white tabular-nums">{fishCount}</span>
-          <span className="text-[10px] text-white/50 uppercase tracking-wide">fish</span>
+        <div className="flex items-center gap-2">
+          <span className="text-2xl font-bold text-white tabular-nums">{fishCount}</span>
+          <span className="text-xs text-white/50 uppercase tracking-wider font-medium">fish</span>
         </div>
         {canWrite && (
           <button
             onClick={onIncrement}
-            className="w-6 h-6 flex items-center justify-center rounded-full text-white/70 hover:text-white hover:bg-white/10 transition-colors"
+            className="w-8 h-8 flex flex-col items-center justify-center rounded-lg text-white/70 hover:text-white hover:bg-white/10 transition-colors"
             title="Increment (F)"
           >
-            <Plus className="w-3.5 h-3.5" />
+            <Plus className="w-4 h-4" />
+            <span className="text-[9px] text-white/30 mt-0.5">F</span>
           </button>
         )}
       </div>
-
-      {/* Hotkey hints — bottom right, only when paused */}
-      {canWrite && !isPlaying && (
-        <div className="absolute bottom-20 right-3 flex flex-col gap-1 text-[10px] text-white/30">
-          <span><kbd className="font-mono bg-white/10 rounded px-1">F</kbd> add fish</span>
-          <span><kbd className="font-mono bg-white/10 rounded px-1">D</kbd> remove fish</span>
-        </div>
-      )}
 
       {/* Bottom controls — YouTube-style gradient overlay */}
       <div className={cn(
@@ -319,13 +310,13 @@ export default function VideoPlayer({ videoUrl, filename, fishCount = 0, canWrit
 
             {/* Progress */}
             <div
-              className="absolute top-0 bottom-0 left-0 bg-red-500 rounded-full"
+              className="absolute top-0 bottom-0 left-0 bg-blue-500 rounded-full"
               style={{ width: `${progressPct}%` }}
             />
 
             {/* Scrub dot */}
             <div
-              className="absolute top-1/2 -translate-y-1/2 w-3 h-3 bg-red-500 rounded-full opacity-0 group-hover/seek:opacity-100 transition-opacity shadow-sm"
+              className="absolute top-1/2 -translate-y-1/2 w-3 h-3 bg-blue-500 rounded-full opacity-0 group-hover/seek:opacity-100 transition-opacity shadow-sm"
               style={{ left: `${progressPct}%`, marginLeft: '-6px' }}
             />
 
@@ -356,10 +347,6 @@ export default function VideoPlayer({ videoUrl, filename, fishCount = 0, canWrit
               </button>
               <button onClick={() => stepFrame('next')} className="p-1.5 text-white/70 hover:text-white transition-colors" title="Next frame (→)">
                 <ChevronRight className="w-4 h-4" />
-              </button>
-
-              <button onClick={toggleMute} className="p-1.5 text-white/70 hover:text-white transition-colors ml-1" title="Mute (M)">
-                {isMuted ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
               </button>
 
               <span className="text-[12px] text-white/70 font-mono ml-2 select-none">
@@ -405,6 +392,19 @@ export default function VideoPlayer({ videoUrl, filename, fishCount = 0, canWrit
                       </div>
                     </div>
                     <div>
+                      <label className="text-[10px] text-white/40 uppercase tracking-wider block mb-1">Sound</label>
+                      <button
+                        onClick={toggleMute}
+                        className={cn(
+                          "flex items-center gap-2 px-2 py-1 rounded text-xs transition-colors w-full",
+                          isMuted ? "text-white/60 hover:text-white hover:bg-white/10" : "bg-white text-black font-semibold"
+                        )}
+                      >
+                        {isMuted ? <VolumeX className="w-3.5 h-3.5" /> : <Volume2 className="w-3.5 h-3.5" />}
+                        {isMuted ? 'Muted' : 'On'}
+                      </button>
+                    </div>
+                    <div>
                       <label className="text-[10px] text-white/40 uppercase tracking-wider block mb-1">Frame Rate</label>
                       <div className="flex flex-wrap gap-1">
                         {[23.976, 24, 25, 29.97, 30, 60].map(rate => (
@@ -427,9 +427,6 @@ export default function VideoPlayer({ videoUrl, filename, fishCount = 0, canWrit
                 )}
               </div>
 
-              <button onClick={toggleFullscreen} className="p-1.5 text-white/70 hover:text-white transition-colors" title="Fullscreen">
-                {isFullscreen ? <Minimize className="w-4 h-4" /> : <Maximize className="w-4 h-4" />}
-              </button>
             </div>
           </div>
         </div>
