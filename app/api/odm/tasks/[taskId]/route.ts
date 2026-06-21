@@ -52,7 +52,7 @@ export async function GET(req: NextRequest, { params }: RouteParams): Promise<Ne
         }
       } catch (err) {
         console.error('[ODM Tasks API] Failed to fetch log from S3:', err)
-        logs = task.error ? [task.error] : []
+        logs = []
       }
     } else {
       logs = ['Task was canceled by user.']
@@ -70,7 +70,7 @@ export async function GET(req: NextRequest, { params }: RouteParams): Promise<Ne
       output: logs.slice(outputLine),
       outputKey: task.outputKey ?? null,
       reportKey: task.reportKey ?? null,
-      error: task.error ?? null,
+      error: null,
     })
   }
 
@@ -169,7 +169,7 @@ export async function GET(req: NextRequest, { params }: RouteParams): Promise<Ne
   const statusLabel = ODM_STATUS[statusCode] as 'queued' | 'running' | 'failed' | 'completed' | 'canceled'
 
   // Sync status, processed, and progress to DB
-  const isDbTerminal = task.status === 'completed' || task.status === 'failed' || task.status === 'canceled'
+  const isDbTerminal = (task.status as string) === 'completed' || (task.status as string) === 'failed' || (task.status as string) === 'canceled'
 
   if (!isDbTerminal) {
     const nextDbStatus = (statusLabel === 'completed' && !task.outputKey) ? 'running' : statusLabel
