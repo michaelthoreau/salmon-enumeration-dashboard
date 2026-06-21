@@ -53,3 +53,11 @@ test-results/
 # dji-pipeline (CDK/Python)
 dji-pipeline/.venv/
 dji-pipeline/infrastructure/cdk.out/
+
+# GeoTIFF outputs and debug artifacts (large binary files — never commit these)
+*.tif
+*.tiff
+*.tif.aux.xml
+*.tiff.aux.xml
+debug_georef.*
+test_imgs/ref/

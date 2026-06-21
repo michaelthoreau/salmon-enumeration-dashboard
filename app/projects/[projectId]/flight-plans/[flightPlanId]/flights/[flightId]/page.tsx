@@ -98,14 +98,23 @@ export default async function FlightDetailPage({ params, searchParams }: PagePro
   // Filter out any generated outputs from the main file list
   const displayObjects = dbFiles.filter((o) => !o.key.includes('/outputs/') && !o.key.includes('/odm/') && !o.key.includes('/georef/'))
 
-  // Find processed outputs in S3 list, fallback to db records if S3 fails
-  const geotiffKey = s3Objects.find((o) => o.key.includes('/outputs/') && (o.key.endsWith('.tif') || o.key.endsWith('.tiff')))?.key
-    || s3Objects.find((o) => o.key.includes('/odm/') && (o.key.endsWith('.tif') || o.key.endsWith('.tiff')))?.key
-    || latestOdmTask?.outputKey
-    || s3Objects.find((o) => o.key.includes('/georef/') && (o.key.endsWith('.tif') || o.key.endsWith('.tiff')))?.key
-    || latestGeorefTask?.outputKey
+  // Pick the output key from the most recently created task that has one,
+  // regardless of whether it's an ODM or georef task. This ensures that
+  // a georef run after ODM correctly replaces the displayed orthophoto.
+  const odmOutputKey = latestOdmTask?.outputKey ?? null
+  const georefOutputKey = latestGeorefTask?.outputKey ?? null
 
-  const reportPdfKey = s3Objects.find((o) => o.key.includes('/odm/') && o.key.endsWith('.pdf'))?.key || latestOdmTask?.reportKey
+  let geotiffKey: string | undefined
+  if (odmOutputKey && georefOutputKey) {
+    // Both exist — pick the one from the newer task
+    const odmCreatedAt = latestOdmTask!.createdAt
+    const georefCreatedAt = latestGeorefTask!.createdAt
+    geotiffKey = new Date(georefCreatedAt) > new Date(odmCreatedAt) ? georefOutputKey : odmOutputKey
+  } else {
+    geotiffKey = odmOutputKey ?? georefOutputKey ?? undefined
+  }
+
+  const reportPdfKey = latestOdmTask?.reportKey ?? null
 
   let geotiffDownloadUrl = ''
   let reportPdfViewUrl = ''
