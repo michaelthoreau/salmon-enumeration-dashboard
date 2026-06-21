@@ -140,6 +140,7 @@ export const odmTasks = sqliteTable('odm_tasks', {
   totalImages: integer('total_images'), // number of images to upload; set at creation
   outputKey: text('output_key'), // S3 key of the collected GeoTIFF; null until complete
   reportKey: text('report_key'), // S3 key of the ODM PDF report; null until complete
+  tilesKey: text('tiles_key'), // S3 folder key of the WebP static tiles; null until complete
   createdBy: text('created_by').notNull(), // userId
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
   completedAt: integer('completed_at', { mode: 'timestamp' }),
@@ -158,6 +159,7 @@ export const georefTasks = sqliteTable('georef_tasks', {
   status: text('status').$type<GeorefTaskStatus>().notNull().default('pending'),
   totalImages: integer('total_images'), // number of images to process
   outputKey: text('output_key'), // S3 key of merged COG; null until complete
+  tilesKey: text('tiles_key'), // S3 folder key of the WebP static tiles; null until complete
   error: text('error'), // human-readable error message on failure
   createdBy: text('created_by').notNull(), // userId
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),

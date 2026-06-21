@@ -43,7 +43,18 @@ from pydantic import BaseModel
 
 image = (
     modal.Image.debian_slim(python_version="3.11")
-    .pip_install("fastapi[standard]", "boto3", "httpx")
+    .apt_install("gdal-bin", "python3-gdal", "libgl1", "libglib2.0-0")
+    .pip_install(
+        "fastapi[standard]",
+        "boto3",
+        "Pillow",
+        "piexif",
+        "pyproj",
+        "cameratransform",
+        "opencv-python-headless",
+        "rasterio",
+        "httpx",
+    )
 )
 
 app = modal.App("salmon-odm-worker", image=image)
@@ -78,6 +89,7 @@ class CollectRequest(BaseModel):
     project_id: str
     flight_plan_id: str
     bucket: str
+    odm_node_url: str
 
 
 # ── Persistent upload progress using modal.Dict ────────────────────────────────
@@ -95,7 +107,8 @@ CONCURRENT_UPLOADS = 5  # simultaneous S3→ODM pipelines
         modal.Secret.from_name("salmon")
     ],
     timeout=3600,   # 1 hour ceiling; large flights can take a while
-    memory=2048,    # 2 GB — comfortable for 5 concurrent image buffers
+    memory=8192,    # 8 GB
+    cpu=8,          # 8 CPUs
 )
 @modal.asgi_app()
 def web() -> FastAPI:
@@ -162,7 +175,7 @@ def web() -> FastAPI:
                         if img.filename.lower().endswith(".png")
                         else "image/jpeg"
                     )
-                    async with httpx.AsyncClient(timeout=300) as c:
+                    async with httpx.AsyncClient(timeout=300, follow_redirects=True) as c:
                         r = await c.post(
                             odm_url(f"/task/new/upload/{odm_uuid}"),
                             files={"images": (img.filename, buf.read(), content_type)},
@@ -184,7 +197,7 @@ def web() -> FastAPI:
             return
 
         # Commit — kicks off ODM processing
-        async with httpx.AsyncClient(timeout=30) as client:
+        async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
             r = await client.post(odm_url(f"/task/new/commit/{odm_uuid}"))
             if r.status_code != 200:
                 await update_progress(new_err_msg=f"ODM commit failed ({r.status_code}): {r.text}")
@@ -204,7 +217,7 @@ def web() -> FastAPI:
         odm_url = _make_odm_url()
 
         # Init ODM task synchronously so we have a UUID to return immediately
-        async with httpx.AsyncClient(timeout=30) as client:
+        async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
             r = await client.post(
                 odm_url("/task/new/init"),
                 data={
@@ -263,88 +276,292 @@ def web() -> FastAPI:
             "error": entry["error"],
         }
 
-    # ── POST /collect ──────────────────────────────────────────────────────
-    @web_app.post("/collect")
-    async def collect(
+    # ── POST /collect-async and GET /collect-status ────────────────────────
+    @web_app.post("/collect-async")
+    async def collect_async(
         req: CollectRequest,
+        background_tasks: BackgroundTasks,
         _: None = Depends(_require_auth),
     ) -> dict:
-        import zipfile
-        import boto3
-        import httpx
-
-        odm_url = _make_odm_url()
-        s3 = boto3.client(
-            "s3",
-            region_name=os.environ["AWS_REGION"],
-            aws_access_key_id=os.environ["AWS_ACCESS_KEY_ID"],
-            aws_secret_access_key=os.environ["AWS_SECRET_ACCESS_KEY"],
+        print(f"[collect-async] odm_uuid={req.odm_uuid} flight_id={req.flight_id} bucket={req.bucket}")
+        _progress[req.odm_uuid] = {
+            "phase": "collecting",
+            "status": "running",
+            "processed": 0,
+            "total": 100,
+            "output_key": None,
+            "report_key": None,
+            "tiles_key": None,
+            "error": None,
+            "output": ["Initiating output collection..."],
+        }
+        background_tasks.add_task(
+            _process_collect,
+            req.odm_uuid,
+            req.flight_id,
+            req.project_id,
+            req.flight_plan_id,
+            req.bucket,
+            req.odm_node_url,
         )
+        return {"status": "running"}
 
-        prefix = f"projects/{req.project_id}/flight-plans/{req.flight_plan_id}/flights/{req.flight_id}/"
-        
-        # 1. Download all.zip from NodeODM
-        print(f"[COLLECT] Downloading all.zip for task {req.odm_uuid}")
-        try:
-            async with httpx.AsyncClient(timeout=600) as client:
-                r = await client.get(odm_url(f"/task/{req.odm_uuid}/download/all.zip"))
-                if r.status_code != 200:
-                    raise HTTPException(
-                        status_code=502,
-                        detail=f"Failed to download all.zip from ODM ({r.status_code}): {r.text[:500]}",
-                    )
-                zip_data = r.content
-        except Exception as exc:
-            print(f"[COLLECT] Error downloading all.zip: {exc}")
-            raise HTTPException(status_code=502, detail=f"Error downloading all.zip: {exc}")
+    @web_app.get("/collect-status/{odm_uuid}")
+    async def collect_status(
+        odm_uuid: str,
+        _: None = Depends(_require_auth),
+    ) -> dict:
+        entry = _progress.get(odm_uuid)
+        if entry is None or entry.get("phase") != "collecting":
+            raise HTTPException(status_code=404, detail="No collection progress record for this UUID")
+        return {
+            "status": entry["status"],
+            "processed": entry["processed"],
+            "total": entry["total"],
+            "output_key": entry["output_key"],
+            "report_key": entry["report_key"],
+            "tiles_key": entry["tiles_key"],
+            "max_zoom": entry.get("max_zoom"),
+            "error": entry["error"],
+            "output": entry.get("output", []),
+        }
 
-        # 2. Extract and upload to S3
-        print(f"[COLLECT] Extracting and uploading outputs to S3 prefix: {prefix}")
-        output_key = f"{prefix}outputs/orthophoto.tif"
-        report_key = None
+    return web_app
 
-        try:
+
+def log_collect(odm_uuid: str, msg: str):
+    print(f"[{odm_uuid}] {msg}")
+    entry = dict(_progress.get(odm_uuid, {}))
+    output = list(entry.get("output", []))
+    output.append(msg)
+    entry["output"] = output
+    _progress[odm_uuid] = entry
+
+
+async def _process_collect(
+    odm_uuid: str,
+    flight_id: str,
+    project_id: str,
+    flight_plan_id: str,
+    bucket: str,
+    odm_node_url: str,
+) -> None:
+    import zipfile
+    import boto3
+    import httpx
+    import tempfile
+    import os
+    import io
+    import asyncio
+    import subprocess
+    import concurrent.futures
+    from PIL import Image
+
+    s3 = boto3.client(
+        "s3",
+        region_name=os.environ["AWS_REGION"],
+        aws_access_key_id=os.environ["AWS_ACCESS_KEY_ID"],
+        aws_secret_access_key=os.environ["AWS_SECRET_ACCESS_KEY"],
+    )
+    loop = asyncio.get_event_loop()
+
+    prefix = f"projects/{project_id}/flight-plans/{flight_plan_id}/flights/{flight_id}/"
+    log_collect(odm_uuid, f"[collect] Starting output collection for NodeODM uuid: {odm_uuid}")
+
+    from urllib.parse import urlparse, urlencode, parse_qsl, urlunparse
+    parsed = urlparse(odm_node_url)
+    base_params = dict(parse_qsl(parsed.query))
+    origin = urlunparse((parsed.scheme, parsed.netloc, "", "", "", ""))
+    def odm_url(path: str, extra: dict | None = None) -> str:
+        params = {**base_params, **(extra or {})}
+        qs = urlencode(params)
+        return f"{origin}{path}{'?' + qs if qs else ''}"
+
+    try:
+        log_collect(odm_uuid, f"[collect] Downloading output archive (all.zip) from NodeODM...")
+        async with httpx.AsyncClient(timeout=600, follow_redirects=True) as client:
+            r = await client.get(odm_url(f"/task/{odm_uuid}/download/all.zip"))
+            if r.status_code != 200:
+                raise RuntimeError(f"Failed to download all.zip from ODM ({r.status_code}): {r.text[:300]}")
+            zip_data = r.content
+
+        log_collect(odm_uuid, f"[collect] Extracting output files...")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_key = f"{prefix}outputs/orthophoto.tif"
+            report_key = None
+            cog_path = os.path.join(tmpdir, "orthophoto.tif")
+
             with zipfile.ZipFile(io.BytesIO(zip_data)) as z:
-                # Find GeoTIFF
                 tif_entry = next(
                     (name for name in z.namelist() if "odm_orthophoto" in name and (name.endswith(".tif") or name.endswith(".tiff"))),
                     None
                 )
                 if not tif_entry:
-                    raise HTTPException(status_code=502, detail="odm_orthophoto.tif not found in all.zip")
+                    raise RuntimeError("odm_orthophoto.tif not found in all.zip")
 
-                # Upload GeoTIFF
-                print(f"[COLLECT] Uploading GeoTIFF to S3: {output_key}")
-                with z.open(tif_entry) as f:
-                    s3.put_object(
-                        Bucket=req.bucket,
-                        Key=output_key,
-                        Body=f.read(),
-                        ContentType="image/tiff",
-                    )
+                with z.open(tif_entry) as f_in, open(cog_path, "wb") as f_out:
+                    f_out.write(f_in.read())
 
-                # Find and upload Report PDF (optional)
                 report_entry = next(
                     (name for name in z.namelist() if "report" in name and name.endswith(".pdf")),
                     None
                 )
                 if report_entry:
-                    report_key = f"{prefix}odm/{req.flight_id}_report.pdf"
-                    print(f"[COLLECT] Uploading Report PDF to S3: {report_key}")
-                    with z.open(report_entry) as f:
-                        s3.put_object(
-                            Bucket=req.bucket,
-                            Key=report_key,
-                            Body=f.read(),
-                            ContentType="application/pdf",
-                        )
-        except Exception as exc:
-            print(f"[COLLECT] Error extracting/uploading outputs: {exc}")
-            raise HTTPException(status_code=502, detail=f"Error extracting/uploading outputs: {exc}")
+                    report_key = f"{prefix}odm/{flight_id}_report.pdf"
+                    pdf_path = os.path.join(tmpdir, "report.pdf")
+                    with z.open(report_entry) as f_in, open(pdf_path, "wb") as f_out:
+                        f_out.write(f_in.read())
 
-        return {
-            "outputKey": output_key,
-            "reportKey": report_key,
-        }
+            log_collect(odm_uuid, f"[collect] Uploading orthophoto GeoTIFF to s3://{bucket}/{output_key}...")
+            await loop.run_in_executor(
+                None,
+                lambda: s3.upload_file(
+                    cog_path,
+                    bucket,
+                    output_key,
+                    ExtraArgs={"ContentType": "image/tiff"}
+                )
+            )
 
-    return web_app
+            if report_key:
+                log_collect(odm_uuid, f"[collect] Uploading PDF report to s3://{bucket}/{report_key}...")
+                await loop.run_in_executor(
+                    None,
+                    lambda: s3.upload_file(
+                        pdf_path,
+                        bucket,
+                        report_key,
+                        ExtraArgs={"ContentType": "application/pdf"}
+                    )
+                )
+
+            tiles_dir = os.path.join(tmpdir, "tiles")
+            os.makedirs(tiles_dir, exist_ok=True)
+            log_collect(odm_uuid, "[collect] Generating static map tiles with gdal2tiles...")
+            cmd_tiling = [
+                "gdal2tiles.py",
+                "--xyz",
+                "--processes=8",
+                "-w", "none",
+                cog_path,
+                tiles_dir
+            ]
+
+            def run_tiling_with_progress():
+                import re
+                process = subprocess.Popen(
+                    cmd_tiling,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    bufsize=1
+                )
+                buffer = ""
+                last_percent = -1
+                while True:
+                    char = process.stdout.read(1)
+                    if not char:
+                        break
+                    buffer += char
+                    if buffer.endswith("..."):
+                        matches = re.findall(r'(\d+)\.\.\.$', buffer)
+                        if matches:
+                            pct = int(matches[-1])
+                            if pct != last_percent:
+                                log_collect(odm_uuid, f"[collect] Tiling progress: {pct}%")
+                                last_percent = pct
+                        if len(buffer) > 1000:
+                            buffer = buffer[-100:]
+                stdout, stderr = process.communicate()
+                if process.returncode != 0:
+                    raise RuntimeError(f"Tiling failed: {stderr}")
+
+            await loop.run_in_executor(None, run_tiling_with_progress)
+
+            tiles_key = f"{prefix}outputs/tiles-{odm_uuid}"
+            tile_tasks = []
+            for root_dir, _, files_list in os.walk(tiles_dir):
+                for file_name in files_list:
+                    if file_name.endswith('.png'):
+                        png_path = os.path.join(root_dir, file_name)
+                        rel_path = os.path.relpath(png_path, tiles_dir)
+                        parts = rel_path.split(os.sep)
+                        if len(parts) == 3:
+                            z, x, y_png = parts
+                            y = y_png.rsplit('.', 1)[0]
+                            tile_tasks.append((png_path, z, x, y))
+
+            total_tiles = len(tile_tasks)
+            log_collect(odm_uuid, f"[collect] Found {total_tiles} generated tiles. Converting to WebP and uploading to S3...")
+
+            if total_tiles > 0:
+                # Update total in progress
+                entry = dict(_progress.get(odm_uuid, {}))
+                entry["total"] = total_tiles
+                _progress[odm_uuid] = entry
+
+                uploaded_tiles = 0
+
+                def upload_one_tile(png_path, z, x, y):
+                    nonlocal uploaded_tiles
+                    w_key = f"{tiles_key}/{z}/{x}/{y}.webp"
+                    try:
+                        with Image.open(png_path) as im:
+                            out_buf = io.BytesIO()
+                            im.save(out_buf, format="WEBP", quality=80)
+                            out_buf.seek(0)
+                            s3.put_object(
+                                Bucket=bucket,
+                                Key=w_key,
+                                Body=out_buf.read(),
+                                ContentType="image/webp",
+                            )
+                    except Exception:
+                        pass
+                    
+                    uploaded_tiles += 1
+                    entry = dict(_progress.get(odm_uuid, {}))
+                    entry["processed"] = uploaded_tiles
+                    _progress[odm_uuid] = entry
+
+                    if uploaded_tiles % 100 == 0 or uploaded_tiles == total_tiles:
+                        log_collect(odm_uuid, f"[collect] Uploaded {uploaded_tiles}/{total_tiles} WebP tiles ({int(uploaded_tiles / total_tiles * 100)}%)")
+
+                with concurrent.futures.ThreadPoolExecutor(max_workers=16) as executor:
+                    await loop.run_in_executor(
+                        None,
+                        lambda: list(executor.map(lambda t: upload_one_tile(*t), tile_tasks))
+                    )
+
+            log_collect(odm_uuid, f"[collect] Output collection and static WebP tiling completed.")
+            entry = dict(_progress.get(odm_uuid, {}))
+            entry["status"] = "completed"
+            entry["output_key"] = output_key
+            entry["report_key"] = report_key
+            entry["tiles_key"] = tiles_key
+            entry["max_zoom"] = max(int(t[1]) for t in tile_tasks) if tile_tasks else None
+            _progress[odm_uuid] = entry
+
+    except Exception as exc:
+        log_collect(odm_uuid, f"[collect] ERROR: {exc}")
+        entry = dict(_progress.get(odm_uuid, {}))
+        entry["status"] = "failed"
+        entry["error"] = str(exc)
+        _progress[odm_uuid] = entry
+    finally:
+        log_key = f"{prefix}outputs/orthophoto.log"
+        logs_text = "\n".join(_progress.get(odm_uuid, {}).get("output", []))
+        if s3 is not None and loop is not None:
+            try:
+                await loop.run_in_executor(
+                    None,
+                    lambda: s3.put_object(
+                        Bucket=bucket,
+                        Key=log_key,
+                        Body=logs_text.encode('utf-8'),
+                        ContentType='text/plain',
+                    )
+                )
+                print(f"[collect] Uploaded task logs to s3://{bucket}/{log_key}")
+            except Exception as log_exc:
+                print(f"[collect] Failed to upload logs to S3: {log_exc}")

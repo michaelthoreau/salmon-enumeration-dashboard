@@ -6,7 +6,7 @@ import { eq, and, isNull } from 'drizzle-orm'
 import { createPresignedUploadPost } from '@/lib/s3'
 
 const ALLOWED_TYPES = new Set([
-  'image/jpeg', 'image/png', 'image/tiff', 'image/webp',
+  'image/jpeg', 'image/png', 'image/webp',
   'video/mp4', 'video/quicktime', 'application/octet-stream',
 ])
 
@@ -47,6 +47,13 @@ export async function POST(request: NextRequest) {
   for (const f of files) {
     if (!f.name || typeof f.name !== 'string') {
       return NextResponse.json({ error: 'Each file must have a name' }, { status: 400 })
+    }
+    const ext = f.name.split('.').pop()?.toLowerCase()
+    if (ext === 'tif' || ext === 'tiff') {
+      return NextResponse.json(
+        { error: 'TIFF files (.tif/.tiff) cannot be uploaded as raw flight images. Use the "Upload GeoTIFF" option in the Processing Modal instead.' },
+        { status: 400 },
+      )
     }
     if (!ALLOWED_TYPES.has(f.type)) {
       return NextResponse.json({ error: `File type not allowed: ${f.type}` }, { status: 400 })

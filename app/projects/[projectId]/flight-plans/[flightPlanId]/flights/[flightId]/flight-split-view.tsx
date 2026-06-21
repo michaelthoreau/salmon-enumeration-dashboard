@@ -234,7 +234,7 @@ export default function FlightSplitView({
 
   // Unified task logic
   const latestOdm = latestOdmTask ? { ...latestOdmTask, type: 'odm' as const, error: null as string | null } : null
-  const latestGeoref = latestGeorefTask ? { ...latestGeorefTask, type: 'georef' as const } : null
+  const latestGeoref = latestGeorefTask ? { ...latestGeorefTask, type: latestGeorefTask.totalImages === 0 ? ('upload' as const) : ('georef' as const) } : null
 
   const activeOdm = latestOdm && !['completed', 'failed', 'canceled'].includes(latestOdm.status) ? latestOdm : null
   const activeGeoref = latestGeoref && !['completed', 'failed', 'canceled'].includes(latestGeoref.status) ? latestGeoref : null

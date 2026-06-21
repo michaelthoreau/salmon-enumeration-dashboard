@@ -61,6 +61,7 @@ export async function GET(req: NextRequest, { params }: RouteParams): Promise<Ne
       processed: task.totalImages ?? 0,
       total: task.totalImages ?? 0,
       outputKey: task.outputKey ?? null,
+      tilesKey: task.tilesKey ?? null,
       error: task.error ?? null,
       output: logs.slice(outputLine),
     })
@@ -82,6 +83,7 @@ export async function GET(req: NextRequest, { params }: RouteParams): Promise<Ne
     processed: number
     total: number
     output_key: string | null
+    tiles_key?: string | null
     error: string | null
     output?: string[]
   }
@@ -102,6 +104,7 @@ export async function GET(req: NextRequest, { params }: RouteParams): Promise<Ne
         processed: 0,
         total: task.totalImages ?? 0,
         outputKey: null,
+        tilesKey: null,
         error: null,
       })
     }
@@ -113,6 +116,7 @@ export async function GET(req: NextRequest, { params }: RouteParams): Promise<Ne
       processed: 0,
       total: task.totalImages ?? 0,
       outputKey: null,
+      tilesKey: null,
       error: null,
     })
   }
@@ -141,6 +145,20 @@ export async function GET(req: NextRequest, { params }: RouteParams): Promise<Ne
       console.error('[Georef Tasks API] Failed to pre-fetch bounds:', err)
     }
 
+    if (boundsStr) {
+      try {
+        const parsed = JSON.parse(boundsStr)
+        const mz = (workerData as any).max_zoom
+        if (mz !== undefined && mz !== null) {
+          parsed.maxzoom = Number(mz)
+          boundsStr = JSON.stringify(parsed)
+          console.log(`[Georef Tasks API] Overriding bounds maxzoom with actual static tile max_zoom: ${parsed.maxzoom}`)
+        }
+      } catch (err) {
+        console.error('[Georef Tasks API] Failed to override maxzoom in bounds:', err)
+      }
+    }
+
     await db
       .update(georefTasks)
       .set({
@@ -148,6 +166,7 @@ export async function GET(req: NextRequest, { params }: RouteParams): Promise<Ne
         processed: workerData.processed,
         progress: 100,
         outputKey: workerData.output_key,
+        tilesKey: workerData.tiles_key,
         bounds: boundsStr,
         completedAt: new Date(),
       })
@@ -183,6 +202,7 @@ export async function GET(req: NextRequest, { params }: RouteParams): Promise<Ne
     processed: workerData.processed,
     total: workerData.total,
     outputKey: workerData.output_key ?? null,
+    tilesKey: workerData.tiles_key ?? task.tilesKey ?? null,
     error: workerData.error ?? null,
     output: logs.slice(outputLine),
   })

@@ -33,6 +33,47 @@ export async function GET(req: NextRequest, { params }: RouteParams): Promise<Ne
     return NextResponse.json({ error: 'Task not found' }, { status: 404 })
   }
 
+  // Already terminal — return the DB state directly with S3 logs if available
+  if (task.status === 'completed' || task.status === 'failed' || task.status === 'canceled') {
+    let logs: string[] = []
+    if (task.status !== 'canceled') {
+      try {
+        const { getObjectBuffer } = await import('@/lib/s3')
+        const { flights, flightPlans } = await import('@/lib/schema')
+        const { eq: deq } = await import('drizzle-orm')
+        const [flight] = await db.select().from(flights).where(deq(flights.id, task.flightId))
+        if (flight) {
+          const [flightPlan] = await db.select().from(flightPlans).where(deq(flightPlans.id, flight.flightPlanId))
+          if (flightPlan) {
+            const logKey = `${flightPlan.projectId}/${flight.flightPlanId}/${task.flightId}/outputs/orthophoto.log`
+            const buf = await getObjectBuffer(logKey)
+            logs = buf.toString('utf-8').split('\n')
+          }
+        }
+      } catch (err) {
+        console.error('[ODM Tasks API] Failed to fetch log from S3:', err)
+        logs = task.error ? [task.error] : []
+      }
+    } else {
+      logs = ['Task was canceled by user.']
+    }
+
+    return NextResponse.json({
+      taskId,
+      odmUuid: task.odmUuid,
+      status: task.status,
+      uploadedImages: task.totalImages ?? 0,
+      totalImages: task.totalImages,
+      processingTime: -1,
+      imagesCount: task.totalImages ?? 0,
+      progress: task.status === 'completed' ? 100 : 0,
+      output: logs.slice(outputLine),
+      outputKey: task.outputKey ?? null,
+      reportKey: task.reportKey ?? null,
+      error: task.error ?? null,
+    })
+  }
+
   // ── Upload phase: poll Modal worker for progress ──────────────────────────
   if (task.status === 'uploading') {
     const workerUrl = process.env.MODAL_ODM_WORKER_URL
@@ -131,32 +172,113 @@ export async function GET(req: NextRequest, { params }: RouteParams): Promise<Ne
   const isDbTerminal = task.status === 'completed' || task.status === 'failed' || task.status === 'canceled'
 
   if (!isDbTerminal) {
-    const progressVal = statusLabel === 'completed' ? 100 : (statusLabel === 'canceled' || statusLabel === 'failed' ? 0 : (info.progress ?? 0))
+    const nextDbStatus = (statusLabel === 'completed' && !task.outputKey) ? 'running' : statusLabel
+    const progressVal = statusLabel === 'completed' ? (task.outputKey ? 100 : 90) : (statusLabel === 'canceled' || statusLabel === 'failed' ? 0 : ((info.progress ?? 0) * 0.9))
     const processedVal = statusLabel === 'completed' ? (task.totalImages ?? 0) : (info.imagesCount ?? 0)
 
     await db
       .update(odmTasks)
       .set({
-        status: statusLabel,
+        status: nextDbStatus,
         processed: processedVal,
         progress: progressVal,
-        ...(statusLabel === 'completed' || statusLabel === 'failed' || statusLabel === 'canceled'
+        ...(nextDbStatus === 'completed' || nextDbStatus === 'failed' || nextDbStatus === 'canceled'
           ? { completedAt: new Date() }
           : {}),
       })
       .where(eq(odmTasks.id, taskId))
   }
 
-  const finalStatus = isDbTerminal ? task.status : statusLabel
+  const finalStatus = isDbTerminal ? task.status : (statusLabel === 'completed' && !task.outputKey ? 'running' : statusLabel)
 
-  // When completed for the first time: download zip, extract GeoTIFF, upload to S3
+  // When NodeODM is completed but we haven't collected / tiled yet: trigger & poll async collection task
   let outputKey = task.outputKey
   let reportKey = task.reportKey
-  if (finalStatus === 'completed' && !outputKey) {
+  let progressVal = finalStatus === 'completed' ? 100 : (finalStatus === 'canceled' || finalStatus === 'failed' ? 0 : ((info.progress ?? 0) * 0.9))
+  let combinedOutput = finalStatus === 'canceled' ? ['Task was canceled by user.'] : (info.output ?? [])
+
+  if (statusLabel === 'completed' && !outputKey) {
+    const workerUrl = process.env.MODAL_ODM_WORKER_URL
+    const workerToken = process.env.MODAL_ODM_WORKER_TOKEN
+    if (!workerUrl || !workerToken) {
+      return NextResponse.json({ error: 'MODAL_ODM_WORKER_URL / MODAL_ODM_WORKER_TOKEN not set' }, { status: 500 })
+    }
+
+    let collectData: {
+      status: string
+      processed: number
+      total: number
+      output_key: string | null
+      report_key: string | null
+      tiles_key: string | null
+      error: string | null
+      output?: string[]
+    } | null = null
+
     try {
-      const collected = await collectOdmOutputs(task.odmUuid, task.flightId)
-      outputKey = collected.outputKey
-      reportKey = collected.reportKey ?? null
+      const res = await fetch(`${workerUrl}/collect-status/${task.odmUuid}`, {
+        headers: { Authorization: `Bearer ${workerToken}` },
+        cache: 'no-store',
+      })
+      if (res.ok) {
+        collectData = await res.json()
+      }
+    } catch (err) {
+      console.warn('[ODM Tasks API] Error checking collect status:', err)
+    }
+
+    if (!collectData) {
+      // Trigger asynchronous background collection + tiling on the Modal worker
+      try {
+        const { flights, flightPlans } = await import('@/lib/schema')
+        const { eq: deq } = await import('drizzle-orm')
+        const [flight] = await db.select().from(flights).where(deq(flights.id, task.flightId))
+        if (!flight) throw new Error('Flight not found')
+        const [flightPlan] = await db.select().from(flightPlans).where(deq(flightPlans.id, flight.flightPlanId))
+        if (!flightPlan) throw new Error('Flight plan not found')
+        const odmNodeUrl = process.env.ODM_NODE_URL
+        if (!odmNodeUrl) throw new Error('ODM_NODE_URL not configured')
+
+        console.log(`[ODM Tasks API] Triggering async collection on Modal for uuid: ${task.odmUuid}`)
+        await fetch(`${workerUrl}/collect-async`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${workerToken}`,
+          },
+          body: JSON.stringify({
+            odm_uuid: task.odmUuid,
+            flight_id: task.flightId,
+            project_id: flightPlan.projectId,
+            flight_plan_id: flight.flightPlanId,
+            bucket: process.env.S3_BUCKET_NAME,
+            odm_node_url: odmNodeUrl,
+          }),
+        })
+      } catch (err) {
+        console.error('[ODM Tasks API] Failed to trigger collect-async:', err)
+      }
+
+      progressVal = 90
+      combinedOutput.push('Initiating S3 collection & static WebP tile generation...')
+    } else if (collectData.status === 'failed') {
+      await db.update(odmTasks).set({ status: 'failed', completedAt: new Date() }).where(eq(odmTasks.id, taskId))
+      return NextResponse.json({
+        taskId,
+        odmUuid: task.odmUuid,
+        status: 'failed',
+        uploadedImages: task.totalImages ?? 0,
+        totalImages: task.totalImages,
+        processingTime: info.processingTime,
+        imagesCount: info.imagesCount,
+        progress: 0,
+        error: collectData.error ?? 'Output collection failed',
+        output: [...combinedOutput, ...(collectData.output ?? [])],
+        outputKey: null,
+      })
+    } else if (collectData.status === 'completed' && collectData.output_key) {
+      outputKey = collectData.output_key
+      reportKey = collectData.report_key
 
       // Pre-fetch bounds from the tile server
       let boundsStr: string | null = null
@@ -178,10 +300,41 @@ export async function GET(req: NextRequest, { params }: RouteParams): Promise<Ne
         console.error('[ODM Tasks API] Failed to pre-fetch bounds:', err)
       }
 
-      await db.update(odmTasks).set({ outputKey, reportKey, bounds: boundsStr }).where(eq(odmTasks.id, taskId))
-    } catch (err) {
-      // Non-fatal: client can retry on next poll
-      console.error('ODM output collection failed:', err)
+      if (boundsStr) {
+        try {
+          const parsed = JSON.parse(boundsStr)
+          const mz = (collectData as any).max_zoom
+          if (mz !== undefined && mz !== null) {
+            parsed.maxzoom = Number(mz)
+            boundsStr = JSON.stringify(parsed)
+            console.log(`[ODM Tasks API] Overriding bounds maxzoom with actual static tile max_zoom: ${parsed.maxzoom}`)
+          }
+        } catch (err) {
+          console.error('[ODM Tasks API] Failed to override maxzoom in bounds:', err)
+        }
+      }
+
+      await db
+        .update(odmTasks)
+        .set({
+          status: 'completed',
+          outputKey,
+          reportKey,
+          tilesKey: collectData.tiles_key,
+          bounds: boundsStr,
+          completedAt: new Date(),
+          progress: 100,
+          processed: task.totalImages ?? 0,
+        })
+        .where(eq(odmTasks.id, taskId))
+
+      progressVal = 100
+      combinedOutput.push(...(collectData.output ?? []))
+    } else {
+      // Collecting/tiling is in progress
+      const collectProgress = collectData.total > 0 ? (collectData.processed / collectData.total) * 10 : 5
+      progressVal = 90 + collectProgress
+      combinedOutput.push(...(collectData.output ?? []))
     }
   }
 
@@ -193,8 +346,8 @@ export async function GET(req: NextRequest, { params }: RouteParams): Promise<Ne
     totalImages: task.totalImages,
     processingTime: info.processingTime,
     imagesCount: info.imagesCount,
-    progress: finalStatus === 'completed' ? 100 : (finalStatus === 'canceled' || finalStatus === 'failed' ? 0 : (info.progress ?? 0)),
-    output: finalStatus === 'canceled' ? ['Task was canceled by user.'] : (info.output ?? []),
+    progress: Math.min(99.5, progressVal),
+    output: combinedOutput.slice(outputLine),
     outputKey,
     reportKey,
   })
@@ -229,95 +382,4 @@ export async function DELETE(req: NextRequest, { params }: RouteParams): Promise
   }
 
   return NextResponse.json({ success: true })
-}
-
-
-/**
- * Delegates the slow and memory-intensive output collection phase to the Modal worker
- * to prevent Vercel serverless functions from running out of memory (OOM).
- * Retries up to 3 times with short delays because NodeODM can take a moment
- * to finish writing all.zip after marking itself as complete (status 40).
- */
-async function collectOdmOutputs(
-  odmUuid: string,
-  flightId: string,
-): Promise<{ outputKey: string; reportKey?: string }> {
-  const { flights, flightPlans } = await import('@/lib/schema')
-  const { eq: deq } = await import('drizzle-orm')
-  const { db: database } = await import('@/lib/db')
-
-  const [flight] = await database.select().from(flights).where(deq(flights.id, flightId))
-  if (!flight) throw new Error('Flight not found when collecting ODM outputs')
-
-  const [flightPlan] = await database
-    .select()
-    .from(flightPlans)
-    .where(deq(flightPlans.id, flight.flightPlanId))
-  if (!flightPlan) throw new Error('FlightPlan not found when collecting ODM outputs')
-
-  const workerUrl = process.env.MODAL_ODM_WORKER_URL
-  const workerToken = process.env.MODAL_ODM_WORKER_TOKEN
-  if (!workerUrl || !workerToken) {
-    throw new Error('MODAL_ODM_WORKER_URL or MODAL_ODM_WORKER_TOKEN not configured')
-  }
-
-  // Pass the NodeODM URL that Next.js itself uses (including any token query param)
-  // so the Modal worker can download all.zip directly — nothing routes through Vercel.
-  const odmNodeUrl = process.env.ODM_NODE_URL
-  if (!odmNodeUrl) {
-    throw new Error('ODM_NODE_URL not configured')
-  }
-
-  const body = JSON.stringify({
-    odm_uuid: odmUuid,
-    flight_id: flightId,
-    project_id: flightPlan.projectId,
-    flight_plan_id: flight.flightPlanId,
-    bucket: process.env.S3_BUCKET_NAME,
-    odm_node_url: odmNodeUrl,
-  })
-
-  const MAX_ATTEMPTS = 3
-  const RETRY_DELAYS_MS = [3_000, 10_000] // wait before attempt 2, then attempt 3
-
-  let lastError: Error | null = null
-
-  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-    if (attempt > 1) {
-      const delay = RETRY_DELAYS_MS[attempt - 2]
-      console.log(`[ODM Tasks API] Retrying output collection (attempt ${attempt}/${MAX_ATTEMPTS}) after ${delay}ms for uuid: ${odmUuid}`)
-      await new Promise((r) => setTimeout(r, delay))
-    }
-
-    console.log(`[ODM Tasks API] Delegating output collection to Modal worker for uuid: ${odmUuid} (attempt ${attempt})`)
-
-    let res: Response
-    try {
-      res = await fetch(`${workerUrl}/collect`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${workerToken}`,
-        },
-        body,
-        signal: AbortSignal.timeout(90_000),
-      })
-    } catch (err) {
-      lastError = err instanceof Error ? err : new Error(String(err))
-      console.warn(`[ODM Tasks API] Fetch error on attempt ${attempt} for uuid ${odmUuid}:`, lastError.message)
-      continue
-    }
-
-    if (res.ok) {
-      const data = (await res.json()) as { outputKey: string; reportKey?: string }
-      console.log(`[ODM Tasks API] Successfully collected outputs via Modal worker (attempt ${attempt}):`, data)
-      return data
-    }
-
-    const text = await res.text()
-    lastError = new Error(`Modal worker collection failed (${res.status}): ${text}`)
-    console.warn(`[ODM Tasks API] Collection attempt ${attempt} failed for uuid ${odmUuid}: ${lastError.message}`)
-  }
-
-  throw lastError ?? new Error('Output collection failed after all attempts')
 }

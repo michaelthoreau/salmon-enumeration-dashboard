@@ -95,9 +95,29 @@ export default function FlightUploader({
 
   const startUpload = useCallback(
     async (files: File[]) => {
-      if (files.length === 0) return
+      // Filter out .tif and .tiff files from the standard flight uploader
+      const filteredFiles = files.filter((f) => {
+        const ext = f.name.split('.').pop()?.toLowerCase()
+        return ext !== 'tif' && ext !== 'tiff'
+      })
 
-      const initial: FileStatus[] = files.map((file) => ({
+      if (filteredFiles.length === 0) {
+        if (files.length > 0) {
+          alert('TIFF files (.tif/.tiff) cannot be uploaded as raw flight images. Use the "Upload GeoTIFF" option in the Processing Modal instead.')
+        }
+        return
+      }
+
+      const hasTif = files.some((f) => {
+        const ext = f.name.split('.').pop()?.toLowerCase()
+        return ext === 'tif' || ext === 'tiff'
+      })
+
+      if (hasTif && filteredFiles.length > 0) {
+        alert('Skipped TIFF files (.tif/.tiff) from the upload queue. TIFF format is reserved for preprocessed orthomaps; to upload one, use the "Upload GeoTIFF" option in the processing modal.')
+      }
+
+      const initial: FileStatus[] = filteredFiles.map((file) => ({
         file,
         status: 'queued',
         progress: 0,
@@ -105,7 +125,7 @@ export default function FlightUploader({
       setStatuses(initial)
       setIsRunning(true)
       setUploadSpeed(null)
-      fileLoadedRef.current = new Array(files.length).fill(0)
+      fileLoadedRef.current = new Array(filteredFiles.length).fill(0)
 
       // Sample total loaded bytes every 500 ms to compute speed
       let lastTotal = 0
@@ -127,7 +147,7 @@ export default function FlightUploader({
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             flightId,
-            files: files.map((f) => ({ name: f.name, type: f.type || 'application/octet-stream', size: f.size })),
+            files: filteredFiles.map((f) => ({ name: f.name, type: f.type || 'application/octet-stream', size: f.size })),
           }),
         })
         if (!res.ok) {
@@ -152,7 +172,7 @@ export default function FlightUploader({
           const { url, fields } = uploads[i]
           updateStatus(i, { status: 'uploading' })
           try {
-            await uploadFile(files[i], url, fields,
+            await uploadFile(filteredFiles[i], url, fields,
               (pct) => updateStatus(i, { progress: pct }),
               (loaded) => { fileLoadedRef.current[i] = loaded },
             )
@@ -252,14 +272,14 @@ export default function FlightUploader({
                   {isRunning ? 'Uploading…' : 'Drop files here or click to browse'}
                 </p>
                 <p className="text-xs text-gray-500 mt-1">
-                  Images (JPEG, PNG, TIFF), video (MP4, MOV) — up to 5 GB each — up to 500 files
+                  Images (JPEG, PNG), video (MP4, MOV) — up to 5 GB each — up to 500 files
                 </p>
               </div>
               <input
                 ref={inputRef}
                 type="file"
                 multiple
-                accept="image/*,video/*,.dng,.rtk,.nav,.obs,.mrk"
+                accept="image/jpeg,image/png,image/gif,video/*,.dng,.rtk,.nav,.obs,.mrk,.jpg,.jpeg,.png"
                 className="hidden"
                 onChange={onFileInputChange}
                 disabled={isRunning}

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSession } from '@/lib/session'
 import { db } from '@/lib/db'
-import { georefTasks, flights } from '@/lib/schema'
+import { georefTasks, flights, flightPlans } from '@/lib/schema'
 import { eq } from 'drizzle-orm'
 import { randomUUID } from 'crypto'
 
@@ -29,6 +29,12 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Flight not found' }, { status: 404 })
   }
 
+  // Load flightPlan
+  const [flightPlan] = await db.select().from(flightPlans).where(eq(flightPlans.id, flight.flightPlanId))
+  if (!flightPlan || flightPlan.deletedAt) {
+    return NextResponse.json({ error: 'Flight plan not found' }, { status: 404 })
+  }
+
   // Pre-fetch bounds from the tile server
   let boundsStr: string | null = null
   try {
@@ -52,23 +58,59 @@ export async function POST(request: NextRequest) {
     console.error('[Geotiff Register API] Failed to pre-fetch bounds from tile server:', err)
   }
 
-  // Create a completed georefTask record in the database
   const taskId = randomUUID()
+  const outputPrefix = `${flightPlan.projectId}/${flight.flightPlanId}/${flightId}/outputs`
+
+  // Trigger georef worker background tiling
+  const workerUrl = process.env.MODAL_GEOREF_WORKER_URL
+  const workerToken = process.env.MODAL_GEOREF_WORKER_TOKEN
+  if (!workerUrl || !workerToken) {
+    return NextResponse.json(
+      { error: 'MODAL_GEOREF_WORKER_URL and MODAL_GEOREF_WORKER_TOKEN must be set' },
+      { status: 500 },
+    )
+  }
+
+  try {
+    const res = await fetch(`${workerUrl}/tile`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${workerToken}`,
+      },
+      body: JSON.stringify({
+        task_id: taskId,
+        key: key,
+        bucket: process.env.S3_BUCKET_NAME,
+        output_prefix: outputPrefix,
+      }),
+    })
+    if (!res.ok) {
+      const text = await res.text()
+      console.error(`[Geotiff Register API] Worker tiling initiation failed: ${text}`)
+      return NextResponse.json({ error: `Tiling worker failed: ${text}` }, { status: 502 })
+    }
+  } catch (err) {
+    console.error('[Geotiff Register API] Failed to trigger georef worker tiling:', err)
+    return NextResponse.json({ error: `Failed to trigger georef worker: ${String(err)}` }, { status: 502 })
+  }
+
+  // Create a running georefTask record in the database
   try {
     await db
       .insert(georefTasks)
       .values({
         id: taskId,
         flightId,
-        status: 'completed',
+        status: 'running',
         totalImages: 0,
         outputKey: key,
         createdBy: session.userId,
         createdAt: new Date(),
-        completedAt: new Date(),
+        completedAt: null,
         bounds: boundsStr,
         processed: 0,
-        progress: 100,
+        progress: 0,
       })
 
     return NextResponse.json({ ok: true, taskId })

@@ -8,7 +8,6 @@ import { createPresignedUploadPost } from '@/lib/s3'
 const ALLOWED_TYPES = new Set([
   'image/jpeg',
   'image/png',
-  'image/tiff',
   'image/webp',
   'video/mp4',
   'video/quicktime',
@@ -69,6 +68,13 @@ export async function POST(request: NextRequest) {
   for (const file of files) {
     if (!file.name || typeof file.name !== 'string') {
       return NextResponse.json({ error: 'Each file must have a name' }, { status: 400 })
+    }
+    const ext = file.name.split('.').pop()?.toLowerCase()
+    if (ext === 'tif' || ext === 'tiff') {
+      return NextResponse.json(
+        { error: 'TIFF files (.tif/.tiff) cannot be uploaded as raw flight images. Use the "Upload GeoTIFF" option in the Processing Modal instead.' },
+        { status: 400 },
+      )
     }
     if (!ALLOWED_TYPES.has(file.type)) {
       return NextResponse.json(

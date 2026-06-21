@@ -126,10 +126,23 @@ describe('POST /api/upload/presign', () => {
     const res = await POST(
       makePost({
         flightId: 'flight-1',
-        files: [{ name: 'huge.tiff', type: 'image/tiff', size: 6 * 1024 * 1024 * 1024 }],
+        files: [{ name: 'huge.jpg', type: 'image/jpeg', size: 6 * 1024 * 1024 * 1024 }],
       }),
     )
     expect(res.status).toBe(400)
+  })
+
+  it('returns 400 for .tif or .tiff files', async () => {
+    mockDb.state.rows = [[FLIGHT], [FLIGHT_PLAN], [PROJECT]]
+    const res = await POST(
+      makePost({
+        flightId: 'flight-1',
+        files: [{ name: 'photo.tiff', type: 'image/tiff', size: 1024 }],
+      }),
+    )
+    expect(res.status).toBe(400)
+    const json = await res.json()
+    expect(json.error).toContain('TIFF files')
   })
 
   it('returns 200 with presigned upload data for valid request', async () => {

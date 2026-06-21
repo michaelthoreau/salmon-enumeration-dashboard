@@ -98,6 +98,7 @@ export default function ProcessingModal({
   const [altitudeOffset, setAltitudeOffset] = useState<number>(defaultAltitudeOffset)
   const [specifiedAltitude, setSpecifiedAltitude] = useState<number>(50)
   const [sampleFactor, setSampleFactor] = useState<number>(2)
+  const [cropFactor, setCropFactor] = useState<number>(80)
 
   // GeoTIFF Upload state
   const geotiffInputRef = useRef<HTMLInputElement>(null)
@@ -243,10 +244,12 @@ export default function ProcessingModal({
         if (!prev) return null
         return {
           ...prev,
-          status: 'completed',
-          progress: 100,
+          taskId: regData.taskId,
+          type: 'upload',
+          status: 'running',
+          progress: 0,
           outputKey: fields.key,
-          output: [...prev.output, 'Success! Processed GeoTIFF uploaded and registered successfully.'],
+          output: [...prev.output, 'GeoTIFF registered. Assembling and generating static WebP tiles...'],
         }
       })
 
@@ -387,7 +390,7 @@ export default function ProcessingModal({
   // Auto-polling useEffect hook
   useEffect(() => {
     if (!task) return
-    if (task.type === 'upload') return // Skip polling for direct geotiff uploads
+    if (task.type === 'upload' && task.taskId === 'upload-geotiff') return // Skip polling only during browser-to-S3 upload
     if (TERMINAL_STATUSES.has(task.status)) return
 
     let cancelledPoll = false
@@ -417,6 +420,16 @@ export default function ProcessingModal({
     return () => { cancelledPoll = true }
   }, [task?.taskId, task?.status, pollStatus, router])
 
+  // Load logs once for terminal tasks when the modal opens or task changes
+  useEffect(() => {
+    if (!task) return
+    if (task.type === 'upload' && task.taskId === 'upload-geotiff') return // Skip only during browser-to-S3 upload
+    if (!TERMINAL_STATUSES.has(task.status)) return
+    if (task.output && task.output.length > 0) return
+
+    pollStatus(task.taskId, task.type)
+  }, [task?.taskId, task?.status, task?.type, pollStatus])
+
   // Trigger processing
   async function startProcessing() {
     setStarting(true)
@@ -435,6 +448,7 @@ export default function ProcessingModal({
           altitudeOffset: Number(altitudeOffset),
           specifiedAltitude: Number(specifiedAltitude),
           sampleFactor: Number(sampleFactor),
+          cropFactor: Number(cropFactor),
         }
 
     try {
@@ -575,7 +589,7 @@ export default function ProcessingModal({
                   </span>
                 </label>
 
-                {/* ODM Option (Temporarily Disabled)
+                {/* ODM Option (3-D Reconstruction) */}
                 <label className={`flex flex-col p-4 rounded-xl border-2 text-left cursor-pointer transition-all ${
                   method === 'odm'
                     ? 'border-blue-600 bg-blue-50/20 dark:bg-blue-950/10'
@@ -599,8 +613,7 @@ export default function ProcessingModal({
                   <span className="text-xs text-slate-555 dark:text-slate-400 leading-snug">
                     Structure-from-motion photogrammetry pipeline. Processes in 10-30 minutes. High details.
                   </span>
-                </label>
-                */}                {/* Upload GeoTIFF Option */}
+                </label>                {/* Upload GeoTIFF Option */}
                 <label className={`flex flex-col p-4 rounded-xl border-2 text-left cursor-pointer transition-all ${
                   method === 'upload'
                     ? 'border-purple-600 bg-purple-50/20 dark:bg-purple-950/10'
@@ -746,7 +759,13 @@ export default function ProcessingModal({
                     <select
                       id="modal-sample-factor"
                       value={sampleFactor}
-                      onChange={(e) => setSampleFactor(Number(e.target.value) || 1)}
+                      onChange={(e) => {
+                        const val = Number(e.target.value) || 1
+                        setSampleFactor(val)
+                        if (val === 1) setCropFactor(50)
+                        else if (val === 2) setCropFactor(80)
+                        else setCropFactor(100)
+                      }}
                       className="px-3 py-1.5 text-xs w-full border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 rounded-lg text-slate-900 dark:text-white focus:outline-none focus:ring-1 focus:ring-emerald-500 focus:border-emerald-500 cursor-pointer"
                     >
                       <option value="1">Use all images (1/1)</option>
@@ -758,6 +777,29 @@ export default function ProcessingModal({
                     </select>
                     <p className="text-[10px] text-slate-500 dark:text-slate-400">
                       Processes only every Nth image to speed up draft georeferences. The first and last images are always processed.
+                    </p>
+                  </div>
+
+                  {/* Image Crop Area / Usage Select */}
+                  <div className="space-y-1.5 pt-1">
+                    <label htmlFor="modal-crop-factor" className="text-xs font-semibold text-slate-800 dark:text-slate-200">
+                      Image Crop Area (Vertical Center Crop)
+                    </label>
+                    <select
+                      id="modal-crop-factor"
+                      value={cropFactor}
+                      onChange={(e) => setCropFactor(Number(e.target.value) || 100)}
+                      className="px-3 py-1.5 text-xs w-full border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 rounded-lg text-slate-900 dark:text-white focus:outline-none focus:ring-1 focus:ring-emerald-500 focus:border-emerald-500 cursor-pointer"
+                    >
+                      <option value="50">Middle 50% of image height</option>
+                      <option value="60">Middle 60% of image height</option>
+                      <option value="70">Middle 70% of image height</option>
+                      <option value="80">Middle 80% of image height</option>
+                      <option value="90">Middle 90% of image height</option>
+                      <option value="100">Use 100% (Full Image)</option>
+                    </select>
+                    <p className="text-[10px] text-slate-500 dark:text-slate-400">
+                      Crops the top and bottom edges of raw images prior to georeferencing. Useful for eliminating camera lens distortions along the vertical flight axis.
                     </p>
                   </div>
 

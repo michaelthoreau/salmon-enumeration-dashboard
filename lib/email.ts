@@ -21,6 +21,16 @@ export async function sendOtpEmail(toEmail: string, otp: string): Promise<void> 
   const html = await render(React.createElement(OtpEmail, { otp }))
   const text = await render(React.createElement(OtpEmail, { otp }), { plainText: true })
 
+  const token = process.env.POSTMARK_SERVER_TOKEN
+  if (!token) {
+    console.log('====================================')
+    console.log(`[DEV EMAIL] To: ${toEmail}`)
+    console.log(`[DEV EMAIL] Subject: ${otp} is your login code`)
+    console.log(`[DEV EMAIL] Code: ${otp}`)
+    console.log('====================================')
+    return
+  }
+
   await getClient().sendEmail({
     From: getFromAddress(),
     To: toEmail,
@@ -46,6 +56,16 @@ export async function sendInviteEmail(
     React.createElement(InviteEmail, { toEmail, role, invitedByEmail, appUrl }),
     { plainText: true },
   )
+
+  const token = process.env.POSTMARK_SERVER_TOKEN
+  if (!token) {
+    console.log('====================================')
+    console.log(`[DEV EMAIL] Invite To: ${toEmail} as ${role}`)
+    console.log(`[DEV EMAIL] Subject: You've been invited to Salmon Enumeration Dashboard`)
+    console.log(`[DEV EMAIL] Link: ${appUrl}/login?email=${encodeURIComponent(toEmail)}`)
+    console.log('====================================')
+    return
+  }
 
   await getClient().sendEmail({
     From: getFromAddress(),

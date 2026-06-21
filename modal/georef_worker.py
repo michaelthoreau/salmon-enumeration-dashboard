@@ -74,7 +74,7 @@ from pydantic import BaseModel
 
 image = (
     modal.Image.debian_slim(python_version="3.11")
-    .apt_install("gdal-bin", "libgdal-dev", "g++", "libgl1", "libglib2.0-0")
+    .apt_install("gdal-bin", "python3-gdal", "libgl1", "libglib2.0-0")
     .pip_install(
         "fastapi[standard]",
         "boto3",
@@ -84,6 +84,7 @@ image = (
         "cameratransform",
         "opencv-python-headless",
         "rasterio",
+        "httpx",
     )
 )
 
@@ -125,6 +126,7 @@ class GeorefRequest(BaseModel):
     altitude_offset: float = 0.0     # Z offset to add to relative or LRF altitude
     specified_altitude: float = 50.0 # Fixed altitude to use if mode is 'specified'
     sample_factor: int = 1
+    crop_factor: float = 1.0
 
 
 # ── Persistent task state using modal.Dict ──────────────────────────────────────
@@ -341,6 +343,7 @@ def _compute_footprint(
     cy: float,
     width: int,
     height: int,
+    crop_factor: float = 1.0,
 ) -> list[tuple[float, float]]:
     """
     Return the four ground corners (lat, lon) for a DJI image using CameraTransform.
@@ -356,6 +359,7 @@ def _compute_footprint(
     print(f"[georef]   Gimbal orientation - Yaw: {gimbal_yaw:.3f}°, Pitch: {gimbal_pitch:.3f}°, Roll: {gimbal_roll:.3f}°")
     print(f"[georef]   Camera parameters - Focal: {focal_px:.3f} px, Center cx: {cx:.3f}, cy: {cy:.3f}")
     print(f"[georef]   Image size: {width} x {height}")
+    print(f"[georef]   Crop factor: {crop_factor:.2f}")
 
     # Set up Rectilinear Projection
     proj = ct.RectilinearProjection(
@@ -383,12 +387,14 @@ def _compute_footprint(
     cam = ct.Camera(proj, orientation)
     cam.setGPSpos(lat, lon, agl)
 
-    # Define corners in image pixel coordinates
+    # Define corners in image pixel coordinates, adjusting for vertical crop factor only
+    dx = 0.0
+    dy = height * (1.0 - crop_factor) / 2.0
     pixel_corners = [
-        (0, 0),
-        (width, 0),
-        (width, height),
-        (0, height)
+        (dx, dy),
+        (width - dx, dy),
+        (width - dx, height - dy),
+        (dx, height - dy)
     ]
 
     # Convert pixel coordinates to geographic coordinates on ground plane (Z=0)
@@ -448,6 +454,7 @@ def _warp_to_geotiff(
     out_path: str,
     dewarp_params: dict[str, float] = None,
     target_res: tuple[float, float] = None,
+    crop_factor: float = 1.0,
     log_fn=print,
 ) -> None:
     """
@@ -494,6 +501,15 @@ def _warp_to_geotiff(
                         dewarp_params["k3"]
                     ], dtype=np.float32)
                     undistorted_img = cv2.undistort(img, camera_matrix, dist_coeffs)
+                    
+                    if crop_factor < 1.0:
+                        # Center crop vertically only
+                        dy = int(height * (1.0 - crop_factor) / 2.0)
+                        undistorted_img = undistorted_img[dy:height-dy, :]
+                        width = undistorted_img.shape[1]
+                        height = undistorted_img.shape[0]
+                        log_fn(f"[warp] Vertically cropped undistorted image to middle {crop_factor*100:.0f}%: {width}x{height}")
+
                     _, encoded_img = cv2.imencode(".jpg", undistorted_img)
                     jpeg_bytes = encoded_img.tobytes()
                     t_undistort_end = time.perf_counter()
@@ -502,6 +518,24 @@ def _warp_to_geotiff(
                     log_fn("[warp] Warning: OpenCV failed to decode image. Proceeding with raw image.")
             except Exception as e:
                 log_fn(f"[warp] Error during undistortion: {e}. Proceeding with raw image.")
+        
+        # If not dewarping but crop_factor < 1.0, crop using Pillow
+        if not dewarp_params and crop_factor < 1.0:
+            try:
+                from PIL import Image
+                import io
+                log_fn(f"[warp] Vertically cropping raw image to middle {crop_factor*100:.0f}% with Pillow...")
+                img = Image.open(io.BytesIO(jpeg_bytes))
+                dy = int(height * (1.0 - crop_factor) / 2.0)
+                cropped_img = img.crop((0, dy, width, height - dy))
+                width = cropped_img.width
+                height = cropped_img.height
+                out_buf = io.BytesIO()
+                cropped_img.save(out_buf, format="JPEG", quality=95)
+                jpeg_bytes = out_buf.getvalue()
+                log_fn(f"[warp] Cropped image successfully: {width}x{height}")
+            except Exception as e:
+                log_fn(f"[warp] Error during raw cropping: {e}. Proceeding with original image.")
 
         t_write_start = time.perf_counter()
         with open(input_jpg, "wb") as f:
@@ -662,12 +696,13 @@ async def _process_images(
     altitude_offset: float = 0.0,
     specified_altitude: float = 50.0,
     sample_factor: int = 1,
+    crop_factor: float = 1.0,
 ) -> None:
     """Background task: georef each image in parallel on Modal, merge, upload COG to S3."""
     import boto3
     import numpy as np
 
-    log_task(task_id, f"[process] starting task_id={task_id} total={len(images)} bucket={bucket} prefix={output_prefix} dewarp={dewarp} altitude_mode={altitude_mode} offset={altitude_offset} sample_factor={sample_factor}")
+    log_task(task_id, f"[process] starting task_id={task_id} total={len(images)} bucket={bucket} prefix={output_prefix} dewarp={dewarp} altitude_mode={altitude_mode} offset={altitude_offset} sample_factor={sample_factor} crop_factor={crop_factor}")
     
     # 1. Apply image sampling if sample_factor > 1
     sampled_images = []
@@ -679,9 +714,11 @@ async def _process_images(
     
     log_task(task_id, f"[process] sampled {len(sampled_images)} images out of {L} (sample_factor={sample_factor})")
     
-    # Update total count in the task state
+    # Update total count in the task state (scaled by 1.25 to leave 20% room for static WebP tiling phase)
+    N = len(sampled_images)
+    virtual_total = int(N * 1.25) if N > 0 else 100
     state = dict(_tasks.get(task_id, {}))
-    state["total"] = len(sampled_images)
+    state["total"] = virtual_total
     _tasks[task_id] = state
 
     s3 = None
@@ -712,6 +749,7 @@ async def _process_images(
                         altitude_mode=altitude_mode,
                         altitude_offset=altitude_offset,
                         specified_altitude=specified_altitude,
+                        crop_factor=crop_factor,
                     )
                     return idx, res_bytes
                 except Exception as exc:
@@ -798,9 +836,34 @@ async def _process_images(
                 _tasks[task_id] = cur_state
                 return
 
-            log_task(task_id, f"[process] COMPLETED task_id={task_id} output_key={output_key}")
+            # Static WebP tiling phase (80% to 100%)
+            try:
+                tiles_key, max_zoom = await loop.run_in_executor(
+                    None,
+                    lambda: _tile_and_upload_geotiff(
+                        task_id=task_id,
+                        cog_path=cog_path,
+                        bucket=bucket,
+                        output_prefix=output_prefix,
+                        s3=s3,
+                        loop=loop,
+                        base_processed=N,
+                        virtual_total=virtual_total,
+                    )
+                )
+            except Exception as exc:
+                log_task(task_id, f"[process] Static WebP tiling ERROR: {exc}")
+                cur_state = dict(_tasks.get(task_id, {}))
+                cur_state["status"] = "failed"
+                cur_state["error"] = f"Static WebP tiling failed: {exc}"
+                _tasks[task_id] = cur_state
+                return
+
+            log_task(task_id, f"[process] COMPLETED task_id={task_id} output_key={output_key} tiles_key={tiles_key} max_zoom={max_zoom}")
             cur_state = dict(_tasks.get(task_id, {}))
             cur_state["output_key"] = output_key
+            cur_state["tiles_key"] = tiles_key
+            cur_state["max_zoom"] = max_zoom
             cur_state["status"] = "completed"
             _tasks[task_id] = cur_state
 
@@ -833,6 +896,213 @@ async def _process_images(
             print(f"[process] Skipping log upload to S3 because S3 client or event loop was not initialized.")
 
 
+def _tile_and_upload_geotiff(
+    task_id: str,
+    cog_path: str,
+    bucket: str,
+    output_prefix: str,
+    s3: Any,
+    loop: Any,
+    base_processed: int = 0,
+    virtual_total: int = 100,
+) -> str:
+    """
+    Tiling helper that runs gdal2tiles, converts PNGs to WebP, and uploads them to S3 in parallel.
+    Uses Pillow and boto3 client.
+    """
+    import subprocess
+    import os
+    import io
+    import concurrent.futures
+    from PIL import Image
+
+    tiles_dir = os.path.join(os.path.dirname(cog_path), "tiles")
+    os.makedirs(tiles_dir, exist_ok=True)
+    log_task(task_id, "[tiles] Generating static map tiles with gdal2tiles...")
+    cmd_tiling = [
+        "gdal2tiles.py",
+        "--xyz",
+        "--processes=8",
+        "-w", "none",
+        cog_path,
+        tiles_dir
+    ]
+    
+    import re
+    process = subprocess.Popen(
+        cmd_tiling,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        bufsize=1
+    )
+
+    buffer = ""
+    last_percent = -1
+    while True:
+        char = process.stdout.read(1)
+        if not char:
+            break
+        buffer += char
+        if buffer.endswith("..."):
+            matches = re.findall(r'(\d+)\.\.\.$', buffer)
+            if matches:
+                pct = int(matches[-1])
+                if pct != last_percent:
+                    log_task(task_id, f"[tiles] Tiling progress: {pct}%")
+                    last_percent = pct
+            if len(buffer) > 1000:
+                buffer = buffer[-100:]
+
+    stdout, stderr = process.communicate()
+    if process.returncode != 0:
+        log_task(task_id, f"[tiles] gdal2tiles failed: {stderr}")
+        raise RuntimeError(f"Tiling failed: {stderr}")
+
+    tiles_key = f"{output_prefix.rstrip('/')}/tiles-{task_id}"
+    tile_tasks = []
+    for root_dir, _, files_list in os.walk(tiles_dir):
+        for file_name in files_list:
+            if file_name.endswith('.png'):
+                png_path = os.path.join(root_dir, file_name)
+                rel_path = os.path.relpath(png_path, tiles_dir)
+                parts = rel_path.split(os.sep)
+                if len(parts) == 3:
+                    z, x, y_png = parts
+                    y = y_png.rsplit('.', 1)[0]
+                    tile_tasks.append((png_path, z, x, y))
+
+    total_tiles = len(tile_tasks)
+    log_task(task_id, f"[tiles] Found {total_tiles} generated tiles. Converting to WebP and uploading to S3...")
+
+    if total_tiles == 0:
+        cur_state = dict(_tasks.get(task_id, {}))
+        cur_state["processed"] = virtual_total
+        _tasks[task_id] = cur_state
+        return tiles_key, None
+
+    uploaded_tiles = 0
+
+    def upload_one_tile(png_path, z, x, y):
+        nonlocal uploaded_tiles
+        w_key = f"{tiles_key}/{z}/{x}/{y}.webp"
+        try:
+            with Image.open(png_path) as im:
+                out_buf = io.BytesIO()
+                im.save(out_buf, format="WEBP", quality=80)
+                out_buf.seek(0)
+                s3.put_object(
+                    Bucket=bucket,
+                    Key=w_key,
+                    Body=out_buf.read(),
+                    ContentType="image/webp",
+                )
+        except Exception as e:
+            # Silent fallback / logging
+            pass
+
+        uploaded_tiles += 1
+        progress_increment = int((virtual_total - base_processed) * (uploaded_tiles / total_tiles))
+        cur_state = dict(_tasks.get(task_id, {}))
+        cur_state["processed"] = base_processed + progress_increment
+        _tasks[task_id] = cur_state
+
+        if uploaded_tiles % 100 == 0 or uploaded_tiles == total_tiles:
+            log_task(task_id, f"[tiles] Uploaded {uploaded_tiles}/{total_tiles} WebP tiles ({int(uploaded_tiles / total_tiles * 100)}%)")
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=16) as executor:
+        list(executor.map(lambda t: upload_one_tile(*t), tile_tasks))
+
+    log_task(task_id, f"[tiles] Successfully uploaded all {total_tiles} static WebP tiles.")
+    max_zoom = max(int(t[1]) for t in tile_tasks) if tile_tasks else None
+    return tiles_key, max_zoom
+
+
+class TileRequest(BaseModel):
+    task_id: str
+    key: str
+    bucket: str
+    output_prefix: str
+
+
+async def _process_direct_tiling(task_id: str, key: str, bucket: str, output_prefix: str) -> None:
+    import boto3
+    import tempfile
+    import os
+    import asyncio
+
+    log_task(task_id, f"[tile] Starting tiling for task_id={task_id} key={key} bucket={bucket} prefix={output_prefix}")
+    s3 = None
+    loop = None
+
+    try:
+        s3 = boto3.client(
+            "s3",
+            region_name=os.environ["AWS_REGION"],
+            aws_access_key_id=os.environ["AWS_ACCESS_KEY_ID"],
+            aws_secret_access_key=os.environ["AWS_SECRET_ACCESS_KEY"],
+        )
+        loop = asyncio.get_event_loop()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cog_path = os.path.join(tmpdir, "input.tif")
+            
+            # Download COG from S3
+            log_task(task_id, f"[tile] Downloading GeoTIFF from S3...")
+            await loop.run_in_executor(
+                None,
+                lambda: s3.download_file(bucket, key, cog_path)
+            )
+
+            # Tiling and parallel upload
+            tiles_key, max_zoom = await loop.run_in_executor(
+                None,
+                lambda: _tile_and_upload_geotiff(
+                    task_id=task_id,
+                    cog_path=cog_path,
+                    bucket=bucket,
+                    output_prefix=output_prefix,
+                    s3=s3,
+                    loop=loop,
+                    base_processed=0,
+                    virtual_total=100,
+                )
+            )
+
+            log_task(task_id, f"[tile] COMPLETED task_id={task_id} output_key={key} tiles_key={tiles_key} max_zoom={max_zoom}")
+            cur_state = dict(_tasks.get(task_id, {}))
+            cur_state["output_key"] = key
+            cur_state["tiles_key"] = tiles_key
+            cur_state["max_zoom"] = max_zoom
+            cur_state["status"] = "completed"
+            _tasks[task_id] = cur_state
+
+    except Exception as e:
+        log_task(task_id, f"[tile] ERROR: {e}")
+        cur_state = dict(_tasks.get(task_id, {}))
+        cur_state["status"] = "failed"
+        cur_state["error"] = str(e)
+        _tasks[task_id] = cur_state
+
+    finally:
+        # Upload logs to S3 so they are persistent
+        log_key = f"{output_prefix.rstrip('/')}/orthophoto.log"
+        logs_text = "\n".join(_task_logs.get(task_id, []))
+        if s3 is not None and loop is not None:
+            try:
+                await loop.run_in_executor(
+                    None,
+                    lambda: s3.put_object(
+                        Bucket=bucket,
+                        Key=log_key,
+                        Body=logs_text.encode('utf-8'),
+                        ContentType='text/plain',
+                    )
+                )
+                log_task(task_id, f"[tile] Uploaded task logs to s3://{bucket}/{log_key}")
+            except Exception as exc:
+                print(f"[tile] Failed to upload logs to S3: {exc}")
+
+
 # ── ASGI app ───────────────────────────────────────────────────────────────────
 
 web_app = FastAPI(title="Salmon Georef Worker")
@@ -844,16 +1114,19 @@ async def georeference(
     background_tasks: BackgroundTasks,
     _: None = Depends(_require_auth),
 ) -> dict:
-    print(f"[georeference] task_id={req.task_id} images={len(req.images)} bucket={req.bucket} prefix={req.output_prefix} dewarp={req.dewarp} altitude_mode={req.altitude_mode} offset={req.altitude_offset} specified={req.specified_altitude} sample_factor={req.sample_factor}")
+    print(f"[georeference] task_id={req.task_id} images={len(req.images)} bucket={req.bucket} prefix={req.output_prefix} dewarp={req.dewarp} altitude_mode={req.altitude_mode} offset={req.altitude_offset} specified={req.specified_altitude} sample_factor={req.sample_factor} crop_factor={req.crop_factor}")
     if req.task_id in _tasks:
         print(f"[georeference] task_id={req.task_id} already exists, status={_tasks[req.task_id]['status']}")
         return {"task_id": req.task_id, "status": _tasks[req.task_id]["status"]}
 
+    N = len(req.images)
+    virtual_total = int(N * 1.25) if N > 0 else 100
     _tasks[req.task_id] = {
         "status": "running",
         "processed": 0,
-        "total": len(req.images),
+        "total": virtual_total,
         "output_key": None,
+        "tiles_key": None,
         "error": None,
     }
     background_tasks.add_task(
@@ -867,6 +1140,35 @@ async def georeference(
         req.altitude_offset,
         req.specified_altitude,
         req.sample_factor,
+        req.crop_factor,
+    )
+    return {"task_id": req.task_id}
+
+
+@web_app.post("/tile")
+async def tile_endpoint(
+    req: TileRequest,
+    background_tasks: BackgroundTasks,
+    _: None = Depends(_require_auth),
+) -> dict:
+    print(f"[tile] task_id={req.task_id} key={req.key} bucket={req.bucket} prefix={req.output_prefix}")
+    if req.task_id in _tasks:
+        return {"task_id": req.task_id, "status": _tasks[req.task_id]["status"]}
+
+    _tasks[req.task_id] = {
+        "status": "running",
+        "processed": 0,
+        "total": 100,
+        "output_key": req.key,
+        "tiles_key": None,
+        "error": None,
+    }
+    background_tasks.add_task(
+        _process_direct_tiling,
+        req.task_id,
+        req.key,
+        req.bucket,
+        req.output_prefix,
     )
     return {"task_id": req.task_id}
 
@@ -887,6 +1189,8 @@ async def georef_status(
         "processed": state["processed"],
         "total": state["total"],
         "output_key": state.get("output_key"),
+        "tiles_key": state.get("tiles_key"),
+        "max_zoom": state.get("max_zoom"),
         "error": state.get("error"),
         "output": logs,
     }
@@ -918,6 +1222,7 @@ def georeference_single_image_s3(
     altitude_mode: str = "relative",
     altitude_offset: float = 0.0,
     specified_altitude: float = 50.0,
+    crop_factor: float = 1.0,
 ) -> bytes:
     """
     Modal function to georeference a single image directly from S3 and return its GeoTIFF bytes.
@@ -1007,6 +1312,7 @@ def georeference_single_image_s3(
         lat, lon, agl,
         gimbal_yaw, gimbal_pitch, gimbal_roll,
         focal_px, cx, cy, width, height,
+        crop_factor=crop_factor,
     )
 
     # Calculate target resolution
@@ -1026,6 +1332,7 @@ def georeference_single_image_s3(
         _warp_to_geotiff(
             jpeg_bytes, corners, width, height, out_path,
             dewarp_params=dewarp_params, target_res=target_res,
+            crop_factor=crop_factor,
             log_fn=lambda msg: print(f"[worker] [{key}] {msg}")
         )
         t_warp_end = time.perf_counter()
