@@ -3,7 +3,22 @@ import { getSession } from '@/lib/session'
 import { deleteObject } from '@/lib/s3'
 import { db } from '@/lib/db'
 import { files } from '@/lib/schema'
-import { eq } from 'drizzle-orm'
+import { eq, sql } from 'drizzle-orm'
+
+export async function GET(request: NextRequest) {
+  const session = await getSession()
+  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
+  const flightId = request.nextUrl.searchParams.get('flightId')
+  if (!flightId) return NextResponse.json({ error: 'Missing flightId' }, { status: 400 })
+
+  const [result] = await db
+    .select({ count: sql<number>`count(*)` })
+    .from(files)
+    .where(eq(files.flightId, flightId))
+
+  return NextResponse.json({ count: result?.count ?? 0 })
+}
 
 export async function DELETE(request: NextRequest) {
   const session = await getSession()

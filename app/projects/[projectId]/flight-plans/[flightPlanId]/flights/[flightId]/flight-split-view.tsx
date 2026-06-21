@@ -347,6 +347,38 @@ export default function FlightSplitView({
     }
   }, [activeTask?.id, activeTask?.type, router])
 
+  // Poll for new files arriving (e.g. Lambda still registering after DJI sync)
+  const [fileCount, setFileCount] = useState(displayObjects.length)
+  const [fileSyncActive, setFileSyncActive] = useState(false)
+  const prevFileCountRef = useRef(displayObjects.length)
+
+  useEffect(() => {
+    setFileCount(displayObjects.length)
+    prevFileCountRef.current = displayObjects.length
+  }, [displayObjects.length])
+
+  useEffect(() => {
+    let active = true
+    const poll = async () => {
+      try {
+        const res = await fetch(`/api/files?flightId=${flightId}&count=true`)
+        if (!res.ok || !active) return
+        const { count } = await res.json()
+        if (!active) return
+        if (count > prevFileCountRef.current) {
+          setFileSyncActive(true)
+          setFileCount(count)
+          prevFileCountRef.current = count
+          router.refresh()
+        } else if (count === prevFileCountRef.current && fileSyncActive) {
+          setFileSyncActive(false)
+        }
+      } catch { /* skip */ }
+    }
+    const interval = setInterval(poll, 5000)
+    return () => { active = false; clearInterval(interval) }
+  }, [flightId, router, fileSyncActive])
+
   const [isSyncing, setIsSyncing] = useState(false)
   const [syncStatus, setSyncStatus] = useState<{ type: 'success' | 'error'; message: string } | null>(null)
 
@@ -1018,7 +1050,16 @@ export default function FlightSplitView({
 
         {/* File list */}
         <section className="border-t border-gray-100 pt-4">
-          <h2 className="text-xs font-semibold uppercase tracking-wider text-gray-400 mb-3">All Flight Files</h2>
+          <h2 className="text-xs font-semibold uppercase tracking-wider text-gray-400 mb-1">All Flight Files</h2>
+          {fileSyncActive && (
+            <div className="flex items-center gap-2 text-xs text-blue-600 mb-2 animate-pulse">
+              <RefreshCw className="w-3 h-3 animate-spin" />
+              <span>{fileCount} files synced — more arriving…</span>
+            </div>
+          )}
+          {!fileSyncActive && (
+            <p className="text-xs text-gray-400 mb-3">{displayObjects.length} files</p>
+          )}
           <div className="overflow-hidden rounded-xl border border-gray-200">
             <FileLightbox
               files={displayObjects}
