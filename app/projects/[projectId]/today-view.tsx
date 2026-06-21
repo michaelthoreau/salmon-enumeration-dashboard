@@ -42,6 +42,7 @@ interface Props {
   canWrite: boolean
   isAdmin: boolean
   highlightedFlightId: string | null
+  totalFishCount: number
 }
 
 function getLocalDateStr(date: Date | string, tz: string): string {
@@ -590,6 +591,7 @@ export default function TodayFlightsView({
   canWrite,
   isAdmin,
   highlightedFlightId,
+  totalFishCount,
 }: Props) {
   const router = useRouter()
   const [isLogModalOpen, setIsLogModalOpen] = useState(false)
@@ -793,7 +795,7 @@ export default function TodayFlightsView({
       )}
 
       {/* Summary Stats Row */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
         <div className="bg-white border border-gray-200/80 rounded-2xl p-4 shadow-sm flex flex-col justify-center">
           <span className="text-[10px] uppercase tracking-wider text-gray-400 font-bold select-none">Flights Flown</span>
           <span className="text-2xl font-bold text-gray-900 mt-1">{totalFlights}</span>
@@ -801,6 +803,10 @@ export default function TodayFlightsView({
         <div className="bg-white border border-gray-200/80 rounded-2xl p-4 shadow-sm flex flex-col justify-center">
           <span className="text-[10px] uppercase tracking-wider text-gray-400 font-bold select-none">Total Images</span>
           <span className="text-2xl font-bold text-gray-900 mt-1">{totalImages}</span>
+        </div>
+        <div className="bg-white border border-gray-200/80 rounded-2xl p-4 shadow-sm flex flex-col justify-center">
+          <span className="text-[10px] uppercase tracking-wider text-gray-400 font-bold select-none">Fish Counted</span>
+          <span className="text-2xl font-bold text-orange-600 mt-1">{totalFishCount}</span>
         </div>
         <div className="bg-white border border-gray-200/80 rounded-2xl p-4 shadow-sm flex flex-col justify-center">
           <span className="text-[10px] uppercase tracking-wider text-gray-400 font-bold select-none">Completed Maps</span>

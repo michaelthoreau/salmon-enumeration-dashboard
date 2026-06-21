@@ -1,7 +1,7 @@
 import React from 'react'
 import { notFound } from 'next/navigation'
 import { db } from '@/lib/db'
-import { projects, flightPlans, flights, files as filesTable, odmTasks, georefTasks } from '@/lib/schema'
+import { projects, flightPlans, flights, files as filesTable, odmTasks, georefTasks, annotations } from '@/lib/schema'
 import { eq, and, isNull, inArray, desc, sql } from 'drizzle-orm'
 import { getSession } from '@/lib/session'
 
@@ -54,6 +54,7 @@ export default async function ProjectTodayPage({ params }: PageProps) {
         canWrite={canWrite}
         isAdmin={isAdmin}
         highlightedFlightId={project.highlightedFlightId || null}
+        totalFishCount={0}
       />
     )
   }
@@ -86,6 +87,7 @@ export default async function ProjectTodayPage({ params }: PageProps) {
         canWrite={canWrite}
         isAdmin={isAdmin}
         highlightedFlightId={project.highlightedFlightId || null}
+        totalFishCount={0}
       />
     )
   }
@@ -118,6 +120,16 @@ export default async function ProjectTodayPage({ params }: PageProps) {
     .from(georefTasks)
     .where(inArray(georefTasks.flightId, flightIds))
     .orderBy(desc(georefTasks.createdAt))
+
+  const [fishCountResult] = await db
+    .select({ total: sql<number>`coalesce(sum(${annotations.fishCount}), 0)` })
+    .from(annotations)
+    .where(and(
+      inArray(annotations.flightId, flightIds),
+      isNull(annotations.deletedAt),
+    ))
+
+  const totalFishCount = fishCountResult?.total ?? 0
 
   const fileCountMap = new Map(fileCounts.map((r) => [r.flightId, r.count]))
 
@@ -173,6 +185,7 @@ export default async function ProjectTodayPage({ params }: PageProps) {
       canWrite={canWrite}
       isAdmin={isAdmin}
       highlightedFlightId={project.highlightedFlightId || null}
+      totalFishCount={totalFishCount}
     />
   )
 }
