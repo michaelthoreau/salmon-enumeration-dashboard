@@ -2,7 +2,7 @@
 
 import { useState, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
-import { Video, Search, RefreshCw } from 'lucide-react'
+import { Video, Search, RefreshCw, Fish, NotebookPen } from 'lucide-react'
 import Link from 'next/link'
 
 interface VideoEntry {
@@ -16,6 +16,8 @@ interface VideoEntry {
   planName: string
   flightId: string
   flightPlanId: string
+  fishCount: number
+  noteCount: number
 }
 
 function formatBytes(bytes: number): string {
@@ -173,6 +175,24 @@ export default function VideosView({ projectId, timezone, videos, canWrite }: Vi
                           </span>
                           <span className="text-xs text-gray-300">|</span>
                           <span className="text-xs text-gray-400">{formatBytes(v.size)}</span>
+                          {v.fishCount > 0 && (
+                            <>
+                              <span className="text-xs text-gray-300">|</span>
+                              <span className="inline-flex items-center gap-1 text-xs text-red-500">
+                                <Fish className="w-3 h-3" />
+                                {v.fishCount}
+                              </span>
+                            </>
+                          )}
+                          {v.noteCount > 0 && (
+                            <>
+                              <span className="text-xs text-gray-300">|</span>
+                              <span className="inline-flex items-center gap-1 text-xs text-yellow-600">
+                                <NotebookPen className="w-3 h-3" />
+                                {v.noteCount}
+                              </span>
+                            </>
+                          )}
                         </div>
                       </div>
                     </Link>

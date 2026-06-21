@@ -1,6 +1,6 @@
 import { notFound } from 'next/navigation'
 import { db } from '@/lib/db'
-import { projects, flightPlans, flights, files as filesTable } from '@/lib/schema'
+import { projects, flightPlans, flights, files as filesTable, annotations } from '@/lib/schema'
 import { eq, and, isNull, inArray, desc, sql } from 'drizzle-orm'
 import { getSession } from '@/lib/session'
 import VideosView from './videos-view'
@@ -71,6 +71,32 @@ export default async function VideosPage({ params }: PageProps) {
   const flightMap = new Map(allFlights.map((f) => [f.id, f]))
   const planMap = new Map(allPlans.map((p) => [p.id, p]))
 
+  // Fetch video annotations (fish counts and notes)
+  const videoFileIds = allFiles
+    .filter((f) => VIDEO_EXTS.includes(f.key.split('.').pop()?.toLowerCase() ?? ''))
+    .map((f) => f.id)
+
+  const videoAnnotations = videoFileIds.length > 0
+    ? await db
+        .select()
+        .from(annotations)
+        .where(and(
+          inArray(annotations.fileId, videoFileIds),
+          isNull(annotations.deletedAt),
+        ))
+    : []
+
+  const fishCountMap = new Map<string, number>()
+  const noteCountMap = new Map<string, number>()
+  for (const a of videoAnnotations) {
+    if (!a.fileId) continue
+    if (a.label === 'video-count') {
+      fishCountMap.set(a.fileId, a.fishCount)
+    } else if (a.label === 'video-note') {
+      noteCountMap.set(a.fileId, (noteCountMap.get(a.fileId) ?? 0) + 1)
+    }
+  }
+
   const videos = allFiles
     .filter((f) => {
       const ext = f.key.split('.').pop()?.toLowerCase() ?? ''
@@ -90,6 +116,8 @@ export default async function VideosPage({ params }: PageProps) {
         planName: plan.displayName || plan.name,
         flightId: flight.id,
         flightPlanId: flight.flightPlanId,
+        fishCount: fishCountMap.get(f.id) ?? 0,
+        noteCount: noteCountMap.get(f.id) ?? 0,
       }
     })
     .sort((a, b) => new Date(b.flightTimestamp).getTime() - new Date(a.flightTimestamp).getTime())
