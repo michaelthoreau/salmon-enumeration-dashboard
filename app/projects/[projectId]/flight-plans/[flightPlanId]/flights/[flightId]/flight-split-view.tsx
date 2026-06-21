@@ -1824,6 +1824,9 @@ export default function FlightSplitView({
                   canWrite={canWrite}
                   onIncrement={() => handleVideoIncrement(activeImage.id)}
                   onDecrement={() => handleVideoDecrement(activeImage.id)}
+                  notes={getVideoNotes(activeImage.id)}
+                  onAddNote={(note) => handleAddNote(activeImage.id, note)}
+                  onDeleteNote={handleDeleteNote}
                 />
               </div>
             ) : (
