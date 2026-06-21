@@ -105,6 +105,7 @@ interface FlightSplitViewProps {
     predictions: { time: string; value: number }[]
   } | null
   initialAnnotations?: any[]
+  userEmailMap?: Record<string, string>
   from?: string
   returnTo?: string
 }
@@ -130,6 +131,7 @@ export default function FlightSplitView({
   weather,
   tides,
   initialAnnotations = [],
+  userEmailMap = {},
   from,
   returnTo,
 }: FlightSplitViewProps) {
@@ -533,14 +535,15 @@ export default function FlightSplitView({
     return annotations
       .filter((a) => a.label === 'video-note' && a.fileId === fileId)
       .map((a) => {
+        const author = userEmailMap[a.createdBy] ?? a.createdBy ?? ''
         try {
           const data = JSON.parse(a.geometry)
-          return { id: a.id, time: data.time ?? 0, frame: data.frame ?? 0, text: data.text ?? '' }
+          return { id: a.id, time: data.time ?? 0, frame: data.frame ?? 0, text: data.text ?? '', author }
         } catch {
-          return { id: a.id, time: 0, frame: 0, text: '' }
+          return { id: a.id, time: 0, frame: 0, text: '', author }
         }
       })
-  }, [annotations])
+  }, [annotations, userEmailMap])
 
   const handleAddNote = useCallback(async (fileId: string, note: { time: number; frame: number; text: string }) => {
     const geometry = JSON.stringify({ time: note.time, frame: note.frame, text: note.text })

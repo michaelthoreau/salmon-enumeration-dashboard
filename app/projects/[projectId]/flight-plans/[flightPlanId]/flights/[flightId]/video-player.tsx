@@ -9,6 +9,7 @@ interface VideoNote {
   time: number
   frame: number
   text: string
+  author?: string
 }
 
 interface VideoPlayerProps {
@@ -535,6 +536,9 @@ export default function VideoPlayer({
                       )}
                     </div>
                     <p className="text-xs text-gray-300 leading-relaxed">{note.text}</p>
+                    {note.author && (
+                      <p className="text-[10px] text-gray-600 mt-0.5">{note.author}</p>
+                    )}
                   </div>
                 ))}
               </div>

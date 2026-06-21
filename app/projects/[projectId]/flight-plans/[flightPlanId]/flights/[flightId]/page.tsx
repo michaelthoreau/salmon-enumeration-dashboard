@@ -1,7 +1,7 @@
 import { notFound } from 'next/navigation'
 import { db } from '@/lib/db'
-import { flights, flightPlans, projects, files as filesTable, odmTasks, georefTasks } from '@/lib/schema'
-import { eq, desc } from 'drizzle-orm'
+import { flights, flightPlans, projects, files as filesTable, odmTasks, georefTasks, users } from '@/lib/schema'
+import { eq, desc, inArray } from 'drizzle-orm'
 import { getSession } from '@/lib/session'
 import { listFlightObjects, createPresignedGetUrl } from '@/lib/s3'
 import { fetchHistoricalWeather, fetchTidePredictions } from '@/lib/weather-tides'
@@ -186,6 +186,14 @@ export default async function FlightDetailPage({ params, searchParams }: PagePro
     console.error('Failed to fetch weather/tide/annotations data:', err)
   }
 
+  // Resolve annotation author userIds to emails
+  const authorIds = [...new Set(annotationsList.map((a) => a.createdBy).filter(Boolean))]
+  let userEmailMap: Record<string, string> = {}
+  if (authorIds.length > 0) {
+    const userRows = await db.select({ id: users.id, email: users.email }).from(users).where(inArray(users.id, authorIds))
+    userEmailMap = Object.fromEntries(userRows.map((u) => [u.id, u.email]))
+  }
+
   return (
     <FlightSplitView
       projectId={projectId}
@@ -195,6 +203,7 @@ export default async function FlightDetailPage({ params, searchParams }: PagePro
       flightPlan={flightPlan}
       project={project}
       initialAnnotations={annotationsList}
+      userEmailMap={userEmailMap}
       displayObjects={displayObjects.map((o) => ({
         id: o.id,
         key: o.key,
