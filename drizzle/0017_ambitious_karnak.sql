@@ -1,0 +1,1 @@
+ALTER TABLE `annotations` ADD `file_id` text;

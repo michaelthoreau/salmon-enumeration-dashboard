@@ -35,6 +35,8 @@ export async function POST(
       geometry: body.geometry,
       fishCount: body.fishCount,
       confidence: body.confidence,
+      fileId: body.fileId,
+      label: body.label,
     })
     return NextResponse.json(anno)
   } catch (err) {

@@ -65,6 +65,7 @@ const SPLIT_SELECT_CLASSES: Record<string, string> = {
 }
 
 interface FileEntry {
+  id: string
   key: string
   size: number
   lastModifiedIso: string
@@ -454,6 +455,128 @@ export default function FlightSplitView({
 
   // Calculate total fish count from annotations
   const totalFishCount = annotations.reduce((sum, anno) => sum + (anno.fishCount || 0), 0)
+
+  // Video fish counter helpers
+  const getVideoFishCount = useCallback((fileId: string) => {
+    const anno = annotations.find((a) => a.label === 'video-count' && a.fileId === fileId)
+    return anno?.fishCount ?? 0
+  }, [annotations])
+
+  const annotationsUrl = `/api/projects/${projectId}/flight-plans/${flightPlanId}/flights/${flightId}/annotations`
+
+  const handleVideoIncrement = useCallback(async (fileId: string) => {
+    const existing = annotations.find((a) => a.label === 'video-count' && a.fileId === fileId)
+    if (existing) {
+      const next = (existing.fishCount || 0) + 1
+      setAnnotations((prev) => prev.map((a) => a.id === existing.id ? { ...a, fishCount: next } : a))
+      try {
+        await fetch(annotationsUrl, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: existing.id, fishCount: next }),
+        })
+      } catch { /* poll will correct */ }
+    } else {
+      const tempId = `__optimistic__${Date.now()}`
+      const tempAnno = {
+        id: tempId,
+        flightId,
+        fileId,
+        shape: 'point',
+        geometry: '{"type":"Point","coordinates":[0,0]}',
+        fishCount: 1,
+        confidence: 1.0,
+        label: 'video-count',
+      }
+      setAnnotations((prev) => [...prev, tempAnno])
+      try {
+        const res = await fetch(annotationsUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            shape: 'point',
+            geometry: '{"type":"Point","coordinates":[0,0]}',
+            fishCount: 1,
+            confidence: 1.0,
+            fileId,
+            label: 'video-count',
+          }),
+        })
+        if (res.ok) {
+          const newAnno = await res.json()
+          setAnnotations((prev) => prev.map((a) => a.id === tempId ? newAnno : a))
+        } else {
+          setAnnotations((prev) => prev.filter((a) => a.id !== tempId))
+        }
+      } catch {
+        setAnnotations((prev) => prev.filter((a) => a.id !== tempId))
+      }
+    }
+  }, [annotations, annotationsUrl, flightId])
+
+  const handleVideoDecrement = useCallback(async (fileId: string) => {
+    const existing = annotations.find((a) => a.label === 'video-count' && a.fileId === fileId)
+    if (!existing || (existing.fishCount || 0) <= 0) return
+    const next = (existing.fishCount || 0) - 1
+    setAnnotations((prev) => prev.map((a) => a.id === existing.id ? { ...a, fishCount: next } : a))
+    try {
+      await fetch(annotationsUrl, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: existing.id, fishCount: next }),
+      })
+    } catch { /* poll will correct */ }
+  }, [annotations, annotationsUrl])
+
+  // Video notes helpers
+  const getVideoNotes = useCallback((fileId: string) => {
+    return annotations
+      .filter((a) => a.label === 'video-note' && a.fileId === fileId)
+      .map((a) => {
+        try {
+          const data = JSON.parse(a.geometry)
+          return { id: a.id, time: data.time ?? 0, frame: data.frame ?? 0, text: data.text ?? '' }
+        } catch {
+          return { id: a.id, time: 0, frame: 0, text: '' }
+        }
+      })
+  }, [annotations])
+
+  const handleAddNote = useCallback(async (fileId: string, note: { time: number; frame: number; text: string }) => {
+    const geometry = JSON.stringify({ time: note.time, frame: note.frame, text: note.text })
+    const tempId = `__optimistic__${Date.now()}`
+    const tempAnno = {
+      id: tempId, flightId, fileId, shape: 'point' as const,
+      geometry, fishCount: 0, confidence: 1.0, label: 'video-note',
+    }
+    setAnnotations((prev) => [...prev, tempAnno])
+    try {
+      const res = await fetch(annotationsUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ shape: 'point', geometry, fishCount: 0, confidence: 1.0, fileId, label: 'video-note' }),
+      })
+      if (res.ok) {
+        const newAnno = await res.json()
+        setAnnotations((prev) => prev.map((a) => a.id === tempId ? newAnno : a))
+      } else {
+        setAnnotations((prev) => prev.filter((a) => a.id !== tempId))
+      }
+    } catch {
+      setAnnotations((prev) => prev.filter((a) => a.id !== tempId))
+    }
+  }, [annotationsUrl, flightId])
+
+  const handleDeleteNote = useCallback(async (id: string) => {
+    const removed = annotations.find((a) => a.id === id)
+    setAnnotations((prev) => prev.filter((a) => a.id !== id))
+    try {
+      const res = await fetch(`${annotationsUrl}?id=${encodeURIComponent(id)}`, { method: 'DELETE' })
+      if (!res.ok && removed) setAnnotations((prev) => [...prev, removed])
+    } catch {
+      if (removed) setAnnotations((prev) => [...prev, removed])
+    }
+  }, [annotations, annotationsUrl])
 
   // Sync annotations if initialAnnotations changes (e.g. server-side refresh)
   useEffect(() => {
@@ -1067,7 +1190,8 @@ export default function FlightSplitView({
               canWrite={canWrite}
               onImageClick={(file) => {
                 setActiveTab('images')
-                setActiveImage(file)
+                const match = displayObjects.find((o) => o.key === file.key)
+                if (match) setActiveImage(match)
               }}
             />
           </div>
@@ -1346,27 +1470,31 @@ export default function FlightSplitView({
 
                       {/* Interactive Viewport (Takes up full area) */}
                       <div className="flex-1 min-h-0 flex items-center justify-center relative bg-gray-950">
-                        <button
-                          onClick={() => setIsFullscreenPlayer(true)}
-                          className={cn(
-                            "absolute right-4 z-10 p-2 bg-black/60 hover:bg-black/80 backdrop-blur-xs border border-gray-800 hover:border-gray-700 text-gray-300 hover:text-white rounded-lg shadow-lg transition-all hover:scale-105 cursor-pointer flex items-center gap-1.5 text-xs font-semibold",
-                            isVideo(activeImage.key) ? "top-4" : "bottom-4"
-                          )}
-                          title="Expand Viewport"
-                        >
-                          <Maximize2 className="w-3.5 h-3.5" />
-                          <span>Expand</span>
-                        </button>
-
                         {isVideo(activeImage.key) ? (
                           <div className="w-full h-full">
                             <VideoPlayer
                               videoUrl={activeImageDownloadUrl}
                               filename={activeImage.key.split('/').pop() || ''}
+                              fishCount={getVideoFishCount(activeImage.id)}
+                              canWrite={canWrite}
+                              onIncrement={() => handleVideoIncrement(activeImage.id)}
+                              onDecrement={() => handleVideoDecrement(activeImage.id)}
+                              notes={getVideoNotes(activeImage.id)}
+                              onAddNote={(note) => handleAddNote(activeImage.id, note)}
+                              onDeleteNote={handleDeleteNote}
+                              onExpand={() => setIsFullscreenPlayer(true)}
                             />
                           </div>
                         ) : (
                           <>
+                            <button
+                              onClick={() => setIsFullscreenPlayer(true)}
+                              className="absolute right-4 bottom-4 z-10 p-2 bg-black/60 hover:bg-black/80 backdrop-blur-xs border border-gray-800 hover:border-gray-700 text-gray-300 hover:text-white rounded-lg shadow-lg transition-all hover:scale-105 cursor-pointer flex items-center gap-1.5 text-xs font-semibold"
+                              title="Expand Viewport"
+                            >
+                              <Maximize2 className="w-3.5 h-3.5" />
+                              <span>Expand</span>
+                            </button>
                             {/* eslint-disable-next-line @next/next/no-img-element */}
                             <img
                               key={activeImage.key}
@@ -1731,6 +1859,13 @@ export default function FlightSplitView({
                 <VideoPlayer
                   videoUrl={activeImageDownloadUrl}
                   filename={activeImage.key.split('/').pop() || ''}
+                  fishCount={getVideoFishCount(activeImage.id)}
+                  canWrite={canWrite}
+                  onIncrement={() => handleVideoIncrement(activeImage.id)}
+                  onDecrement={() => handleVideoDecrement(activeImage.id)}
+                  notes={getVideoNotes(activeImage.id)}
+                  onAddNote={(note) => handleAddNote(activeImage.id, note)}
+                  onDeleteNote={handleDeleteNote}
                 />
               </div>
             ) : (
