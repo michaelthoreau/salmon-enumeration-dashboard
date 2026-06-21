@@ -93,6 +93,23 @@ export default function VideoPlayer({ videoUrl, filename, fishCount = 0, canWrit
     }
   }, [playbackRate])
 
+  // Hotkeys for fish counter: F to increment, D to decrement
+  useEffect(() => {
+    if (!canWrite) return
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement) return
+      if (e.key === 'f' || e.key === 'F') {
+        e.preventDefault()
+        onIncrement?.()
+      } else if (e.key === 'd' || e.key === 'D') {
+        e.preventDefault()
+        onDecrement?.()
+      }
+    }
+    document.addEventListener('keydown', handleKeyDown)
+    return () => document.removeEventListener('keydown', handleKeyDown)
+  }, [canWrite, onIncrement, onDecrement])
+
   const togglePlay = () => {
     const video = videoRef.current
     if (!video) return
@@ -265,26 +282,33 @@ export default function VideoPlayer({ videoUrl, filename, fishCount = 0, canWrit
           </div>
 
           {/* Center: Fish Counter */}
-          <div className="flex items-center gap-2">
-            <Fish className="w-4 h-4 text-orange-400" />
-            <span className="text-sm font-semibold text-slate-200 tabular-nums min-w-[2ch] text-center">{fishCount}</span>
+          <div className="flex items-center gap-1.5">
+            <Fish className="w-4 h-4 text-red-400" />
+            <span className="text-[10px] text-slate-400 font-medium">Fish Count:</span>
+            <span className="text-sm font-semibold text-red-400 tabular-nums">{fishCount}</span>
             {canWrite && (
               <>
-                <button
-                  onClick={onDecrement}
-                  disabled={fishCount <= 0}
-                  className="p-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg transition-colors border border-slate-700 disabled:opacity-30 disabled:cursor-not-allowed"
-                  title="Decrement fish count"
-                >
-                  <Minus className="w-3.5 h-3.5" />
-                </button>
-                <button
-                  onClick={onIncrement}
-                  className="p-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg transition-colors border border-slate-700"
-                  title="Increment fish count"
-                >
-                  <Plus className="w-3.5 h-3.5" />
-                </button>
+                <div className="flex flex-col items-center">
+                  <button
+                    onClick={onDecrement}
+                    disabled={fishCount <= 0}
+                    className="p-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg transition-colors border border-slate-700 disabled:opacity-30 disabled:cursor-not-allowed"
+                    title="Decrement fish count (D)"
+                  >
+                    <Minus className="w-3.5 h-3.5" />
+                  </button>
+                  <span className="text-[9px] text-slate-500 mt-0.5">D</span>
+                </div>
+                <div className="flex flex-col items-center">
+                  <button
+                    onClick={onIncrement}
+                    className="p-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg transition-colors border border-slate-700"
+                    title="Increment fish count (F)"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                  </button>
+                  <span className="text-[9px] text-slate-500 mt-0.5">F</span>
+                </div>
               </>
             )}
           </div>
