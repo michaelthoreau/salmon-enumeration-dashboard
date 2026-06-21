@@ -171,7 +171,7 @@ export default function VideosView({ projectId, timezone, videos, canWrite }: Vi
                           <tr key={v.fileId} className="hover:bg-gray-50 transition-colors">
                             <td className="px-6 py-3">
                               <Link
-                                href={`/projects/${projectId}/flight-plans/${v.flightPlanId}/flights/${v.flightId}`}
+                                href={`/projects/${projectId}/flight-plans/${v.flightPlanId}/flights/${v.flightId}?file=${v.fileId}`}
                                 className={cn(buttonVariants({ variant: 'outline', size: 'sm' }), "truncate max-w-[220px]")}
                               >
                                 {filename}

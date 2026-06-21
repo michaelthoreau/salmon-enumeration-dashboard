@@ -108,6 +108,7 @@ interface FlightSplitViewProps {
   userEmailMap?: Record<string, string>
   from?: string
   returnTo?: string
+  initialFileId?: string
 }
 
 export default function FlightSplitView({
@@ -134,11 +135,12 @@ export default function FlightSplitView({
   userEmailMap = {},
   from,
   returnTo,
+  initialFileId,
 }: FlightSplitViewProps) {
   const router = useRouter()
   const [sidebarWidth, setSidebarWidth] = useState(500)
   const [zoomTrigger, setZoomTrigger] = useState(0)
-  const [activeTab, setActiveTab] = useState<'map' | 'images'>(geotiffKey ? 'map' : 'images')
+  const [activeTab, setActiveTab] = useState<'map' | 'images'>(initialFileId ? 'images' : geotiffKey ? 'map' : 'images')
   const isResizingRef = useRef(false)
 
   const [isModalOpen, setIsModalOpen] = useState(false)
@@ -611,7 +613,8 @@ export default function FlightSplitView({
 
   // Image list filtering
   const images = displayObjects.filter((o) => isImage(o.key) || isVideo(o.key))
-  const [activeImage, setActiveImage] = useState<FileEntry | null>(images[0] ?? null)
+  const initialImage = (initialFileId && images.find((o) => o.id === initialFileId)) || images[0] || null
+  const [activeImage, setActiveImage] = useState<FileEntry | null>(initialImage)
   const [loadedKeys, setLoadedKeys] = useState<Record<string, boolean>>({})
   const activeImageLoading = !!(activeImage && !isVideo(activeImage.key) && !loadedKeys[activeImage.key])
 

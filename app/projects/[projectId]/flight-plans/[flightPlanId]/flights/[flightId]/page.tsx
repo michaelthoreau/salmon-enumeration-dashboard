@@ -13,7 +13,7 @@ export const dynamic = 'force-dynamic'
 
 interface PageProps {
   params: Promise<{ projectId: string; flightPlanId: string; flightId: string }>
-  searchParams: Promise<{ from?: string; returnTo?: string }>
+  searchParams: Promise<{ from?: string; returnTo?: string; file?: string }>
 }
 
 function formatInTz(date: Date, tz: string): string {
@@ -38,7 +38,7 @@ function toLocalInputValue(date: Date, tz: string): string {
 
 export default async function FlightDetailPage({ params, searchParams }: PageProps) {
   const { projectId, flightPlanId, flightId } = await params
-  const { from, returnTo } = await searchParams
+  const { from, returnTo, file: initialFileId } = await searchParams
   const session = await getSession()
   const canWrite = session?.role === 'read-write' || session?.role === 'admin'
 
@@ -229,6 +229,7 @@ export default async function FlightDetailPage({ params, searchParams }: PagePro
       tides={tideData}
       from={from}
       returnTo={returnTo}
+      initialFileId={initialFileId}
     />
   )
 }
