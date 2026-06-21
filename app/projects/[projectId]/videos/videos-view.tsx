@@ -4,6 +4,8 @@ import { useState, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
 import { Video, Search, RefreshCw, Fish, NotebookPen } from 'lucide-react'
 import Link from 'next/link'
+import { cn } from '@/lib/utils'
+import { buttonVariants } from '@/components/ui/button'
 
 interface VideoEntry {
   fileId: string
@@ -57,7 +59,7 @@ function getDateKey(iso: string, tz: string): string {
   return `${y}-${m}-${d}`
 }
 
-interface VideosViewProps {
+export interface VideosViewProps {
   projectId: string
   timezone: string
   videos: VideoEntry[]
@@ -101,108 +103,116 @@ export default function VideosView({ projectId, timezone, videos, canWrite }: Vi
   }, [filtered, timezone])
 
   return (
-    <div className="max-w-5xl mx-auto px-6 py-8 space-y-6">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <Video className="w-6 h-6 text-blue-600" />
-          <h1 className="text-xl font-bold text-gray-900">Videos</h1>
-          <span className="text-sm text-gray-400 font-mono">{videos.length} total</span>
-          <button
-            onClick={handleRefresh}
-            disabled={isRefreshing}
-            className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-gray-600 transition-colors"
-            title="Refresh"
-          >
-            <RefreshCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin' : ''}`} />
-          </button>
+    <div className="space-y-8">
+      <section>
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-lg font-semibold text-gray-900">
+            Videos{' '}
+            <span className="text-sm font-normal text-gray-500">({videos.length})</span>
+          </h2>
+          <div className="flex items-center gap-3">
+            <div className="relative w-64">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+              <input
+                type="text"
+                placeholder="Search..."
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                className="w-full pl-9 pr-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              />
+            </div>
+            <button
+              onClick={handleRefresh}
+              disabled={isRefreshing}
+              className="p-2 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-gray-600 transition-colors"
+              title="Refresh"
+            >
+              <RefreshCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin' : ''}`} />
+            </button>
+          </div>
         </div>
 
-        <div className="relative w-72">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-          <input
-            type="text"
-            placeholder="Search by filename or notes..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="w-full pl-9 pr-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-          />
-        </div>
-      </div>
+        {grouped.length === 0 ? (
+          <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+            <div className="text-center py-16 space-y-3">
+              <Video className="w-12 h-12 text-gray-300 mx-auto" />
+              <p className="text-sm text-gray-500 font-medium">
+                {videos.length === 0 ? 'No videos have been synced yet.' : 'No videos match your search.'}
+              </p>
+              {videos.length === 0 && (
+                <p className="text-xs text-gray-400">
+                  Videos from DJI FlightHub2 will appear here automatically when synced.
+                </p>
+              )}
+            </div>
+          </div>
+        ) : (
+          <div className="space-y-6">
+            {grouped.map(([dateKey, group]) => (
+              <div key={dateKey}>
+                <h3 className="text-sm font-medium text-gray-500 mb-2">{group.label}</h3>
+                <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+                  <table className="w-full text-sm">
+                    <thead className="bg-gray-50 border-b border-gray-200">
+                      <tr>
+                        <th className="text-left px-6 py-3 font-medium text-gray-600">Filename</th>
+                        <th className="text-left px-6 py-3 font-medium text-gray-600">Route</th>
+                        <th className="text-left px-6 py-3 font-medium text-gray-600">Time</th>
+                        <th className="text-left px-6 py-3 font-medium text-gray-600">Size</th>
+                        <th className="text-left px-6 py-3 font-medium text-gray-600">Fish</th>
+                        <th className="text-left px-6 py-3 font-medium text-gray-600">Notes</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-100">
+                      {group.videos.map((v) => {
+                        const filename = v.key.split('/').pop() ?? v.key
 
-      {grouped.length === 0 ? (
-        <div className="text-center py-16 space-y-3">
-          <Video className="w-12 h-12 text-gray-300 mx-auto" />
-          <p className="text-sm text-gray-500 font-medium">
-            {videos.length === 0 ? 'No videos have been synced yet.' : 'No videos match your search.'}
-          </p>
-          {videos.length === 0 && (
-            <p className="text-xs text-gray-400">
-              Videos from DJI FlightHub2 will appear here automatically when synced.
-            </p>
-          )}
-        </div>
-      ) : (
-        <div className="space-y-8">
-          {grouped.map(([dateKey, group]) => (
-            <section key={dateKey}>
-              <div className="flex items-center gap-3 mb-3">
-                <h2 className="text-sm font-semibold text-gray-700">{group.label}</h2>
-                <span className="text-xs text-gray-400 font-mono">{group.videos.length} video{group.videos.length !== 1 ? 's' : ''}</span>
-                <div className="flex-1 border-t border-gray-100" />
+                        return (
+                          <tr key={v.fileId} className="hover:bg-gray-50 transition-colors">
+                            <td className="px-6 py-3">
+                              <Link
+                                href={`/projects/${projectId}/flight-plans/${v.flightPlanId}/flights/${v.flightId}`}
+                                className={cn(buttonVariants({ variant: 'outline', size: 'sm' }), "truncate max-w-[220px]")}
+                              >
+                                {filename}
+                              </Link>
+                            </td>
+                            <td className="px-6 py-3 text-gray-500">{v.planName}</td>
+                            <td className="px-6 py-3 text-gray-500 font-mono text-xs">
+                              {formatTime(v.flightTimestamp, timezone)}
+                            </td>
+                            <td className="px-6 py-3 text-gray-500">{formatBytes(v.size)}</td>
+                            <td className="px-6 py-3">
+                              {v.fishCount > 0 ? (
+                                <span className="inline-flex items-center gap-1 text-red-500">
+                                  <Fish className="w-3.5 h-3.5" />
+                                  {v.fishCount}
+                                </span>
+                              ) : (
+                                <span className="text-gray-300">—</span>
+                              )}
+                            </td>
+                            <td className="px-6 py-3">
+                              {v.noteCount > 0 ? (
+                                <span className="inline-flex items-center gap-1 text-yellow-600">
+                                  <NotebookPen className="w-3.5 h-3.5" />
+                                  {v.noteCount}
+                                </span>
+                              ) : (
+                                <span className="text-gray-300">—</span>
+                              )}
+                            </td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                </div>
               </div>
-
-              <div className="space-y-2">
-                {group.videos.map((v) => {
-                  const filename = v.key.split('/').pop() ?? v.key
-
-                  return (
-                    <Link
-                      key={v.fileId}
-                      href={`/projects/${projectId}/flight-plans/${v.flightPlanId}/flights/${v.flightId}`}
-                      className="flex items-center gap-4 px-4 py-3 bg-white border border-gray-200 rounded-xl hover:border-blue-300 hover:shadow-sm transition-all group"
-                    >
-                      <div className="w-10 h-10 rounded-lg bg-slate-900 flex items-center justify-center flex-shrink-0">
-                        <Video className="w-5 h-5 text-slate-400" />
-                      </div>
-
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium text-gray-900 truncate group-hover:text-blue-700 transition-colors">
-                          {filename}
-                        </p>
-                        <div className="flex items-center gap-3 mt-0.5">
-                          <span className="text-xs text-gray-400 font-mono">
-                            {formatTime(v.flightTimestamp, timezone)}
-                          </span>
-                          <span className="text-xs text-gray-300">|</span>
-                          <span className="text-xs text-gray-400">{formatBytes(v.size)}</span>
-                          {v.fishCount > 0 && (
-                            <>
-                              <span className="text-xs text-gray-300">|</span>
-                              <span className="inline-flex items-center gap-1 text-xs text-red-500">
-                                <Fish className="w-3 h-3" />
-                                {v.fishCount}
-                              </span>
-                            </>
-                          )}
-                          {v.noteCount > 0 && (
-                            <>
-                              <span className="text-xs text-gray-300">|</span>
-                              <span className="inline-flex items-center gap-1 text-xs text-yellow-600">
-                                <NotebookPen className="w-3 h-3" />
-                                {v.noteCount}
-                              </span>
-                            </>
-                          )}
-                        </div>
-                      </div>
-                    </Link>
-                  )
-                })}
-              </div>
-            </section>
-          ))}
-        </div>
-      )}
+            ))}
+          </div>
+        )}
+      </section>
     </div>
   )
 }
