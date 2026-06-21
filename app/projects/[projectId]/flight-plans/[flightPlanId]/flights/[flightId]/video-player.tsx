@@ -284,8 +284,8 @@ export default function VideoPlayer({
           )}
         </div>
 
-        {/* Fish Counter HUD — top right, always visible */}
-        <div className="absolute top-4 right-4 flex items-center gap-3 bg-black/60 backdrop-blur-sm rounded-xl px-4 py-2.5">
+        {/* Fish Counter HUD — top left, always visible */}
+        <div className="absolute top-4 left-4 flex items-center gap-3 bg-black/60 backdrop-blur-sm rounded-xl px-4 py-2.5">
           {canWrite && (
             <button
               onClick={onDecrement}
@@ -392,16 +392,21 @@ export default function VideoPlayer({
 
                 {/* Notepad toggle */}
                 {canWrite && (
-                  <button
-                    onClick={() => setShowNotepad(p => !p)}
-                    className={cn(
-                      "p-1.5 transition-colors",
-                      showNotepad ? "text-yellow-400 hover:text-yellow-300" : "text-white/70 hover:text-white"
+                  <div className="flex items-center gap-1">
+                    <button
+                      onClick={() => setShowNotepad(p => !p)}
+                      className={cn(
+                        "p-1.5 transition-colors",
+                        showNotepad ? "text-yellow-400 hover:text-yellow-300" : "text-white/70 hover:text-white"
+                      )}
+                      title="Notes (N)"
+                    >
+                      <NotebookPen className="w-4 h-4" />
+                    </button>
+                    {!showNotepad && (
+                      <span className="text-[10px] text-white/30">press <kbd className="font-mono bg-white/10 rounded px-1">N</kbd> for notes</span>
                     )}
-                    title="Notes (N)"
-                  >
-                    <NotebookPen className="w-4 h-4" />
-                  </button>
+                  </div>
                 )}
 
                 {/* Settings */}

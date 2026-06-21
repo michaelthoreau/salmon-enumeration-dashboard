@@ -1432,7 +1432,7 @@ export default function FlightSplitView({
                         <button
                           onClick={() => setIsFullscreenPlayer(true)}
                           className={cn(
-                            "absolute right-4 bottom-4 z-10 p-2 bg-black/60 hover:bg-black/80 backdrop-blur-xs border border-gray-800 hover:border-gray-700 text-gray-300 hover:text-white rounded-lg shadow-lg transition-all hover:scale-105 cursor-pointer flex items-center gap-1.5 text-xs font-semibold"
+                            "absolute right-4 top-4 z-10 p-2 bg-black/60 hover:bg-black/80 backdrop-blur-xs border border-gray-800 hover:border-gray-700 text-gray-300 hover:text-white rounded-lg shadow-lg transition-all hover:scale-105 cursor-pointer flex items-center gap-1.5 text-xs font-semibold"
                           )}
                           title="Expand Viewport"
                         >
