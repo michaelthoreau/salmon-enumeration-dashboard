@@ -189,9 +189,10 @@ export default async function FlightDetailPage({ params, searchParams }: PagePro
   // Resolve annotation author userIds to emails
   const authorIds = [...new Set(annotationsList.map((a) => a.createdBy).filter(Boolean))]
   let userEmailMap: Record<string, string> = {}
+  if (session) userEmailMap[session.userId] = session.email
   if (authorIds.length > 0) {
     const userRows = await db.select({ id: users.id, email: users.email }).from(users).where(inArray(users.id, authorIds))
-    userEmailMap = Object.fromEntries(userRows.map((u) => [u.id, u.email]))
+    for (const u of userRows) userEmailMap[u.id] = u.email
   }
 
   return (
