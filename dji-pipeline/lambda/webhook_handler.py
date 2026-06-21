@@ -183,10 +183,17 @@ def _get_plan_name(dji_project_id: str, created_at: int, fh2_file_path: str) -> 
             return ""
         waylines = _get_wayline_list(dji_project_id)
         slug = _slugify(parsed)
-        match = waylines.get(slug)
-        if match:
-            print(f"Wayline matched: {fh2_file_path!r} → {match!r}")
-        return match or ""
+        # Exact match
+        if slug in waylines:
+            print(f"Wayline matched (exact): {fh2_file_path!r} → {waylines[slug]!r}")
+            return parsed
+        # Suffix match: strip hyphens so camelCase filepath slugs match spaced wayline slugs
+        slug_compact = slug.replace("-", "")
+        for w_slug in waylines:
+            if slug_compact.endswith(w_slug.replace("-", "")):
+                print(f"Wayline matched (suffix): {fh2_file_path!r} → {waylines[w_slug]!r}")
+                return parsed
+        return ""
 
     # DITB: task → wayline lookup
     if not created_at:
