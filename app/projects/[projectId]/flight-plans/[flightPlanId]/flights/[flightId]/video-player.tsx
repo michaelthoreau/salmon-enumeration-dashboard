@@ -47,6 +47,7 @@ export default function VideoPlayer({
   const [showSettings, setShowSettings] = useState(false)
   const [showNotepad, setShowNotepad] = useState(false)
   const [noteInput, setNoteInput] = useState('')
+  const [showAdvancedFps, setShowAdvancedFps] = useState(false)
   const [hoverTime, setHoverTime] = useState<number | null>(null)
   const [hoverX, setHoverX] = useState(0)
 
@@ -467,8 +468,8 @@ export default function VideoPlayer({
                       </div>
                       <div>
                         <label className="text-[10px] text-white/40 uppercase tracking-wider block mb-1">Frame Rate</label>
-                        <div className="flex flex-wrap gap-1">
-                          {[23.976, 24, 25, 29.97, 30, 60].map(rate => (
+                        <div className="flex flex-wrap gap-1 items-center">
+                          {[24, 25, 30, 60].map(rate => (
                             <button
                               key={rate}
                               onClick={() => setFps(rate)}
@@ -477,10 +478,45 @@ export default function VideoPlayer({
                                 fps === rate ? "bg-white text-black font-semibold" : "text-white/60 hover:text-white hover:bg-white/10"
                               )}
                             >
-                              {rate === 23.976 ? '23.98' : rate}
+                              {rate}
                             </button>
                           ))}
+                          <button
+                            onClick={() => setShowAdvancedFps(p => !p)}
+                            className={cn(
+                              "px-2 py-0.5 rounded text-[10px] transition-colors",
+                              showAdvancedFps || fps === 23.976 || fps === 29.97
+                                ? "text-white/80 bg-white/10"
+                                : "text-white/30 hover:text-white/50"
+                            )}
+                          >
+                            Advanced
+                          </button>
                         </div>
+                        {showAdvancedFps && (
+                          <div className="flex flex-col gap-1 mt-2">
+                            <button
+                              onClick={() => setFps(23.976)}
+                              className={cn(
+                                "flex items-center justify-between px-2 py-1 rounded text-xs transition-colors",
+                                fps === 23.976 ? "bg-white text-black font-semibold" : "text-white/60 hover:text-white hover:bg-white/10"
+                              )}
+                            >
+                              <span>23.976</span>
+                              <span className={cn("text-[10px]", fps === 23.976 ? "text-black/50" : "text-white/30")}>NTSC Film</span>
+                            </button>
+                            <button
+                              onClick={() => setFps(29.97)}
+                              className={cn(
+                                "flex items-center justify-between px-2 py-1 rounded text-xs transition-colors",
+                                fps === 29.97 ? "bg-white text-black font-semibold" : "text-white/60 hover:text-white hover:bg-white/10"
+                              )}
+                            >
+                              <span>29.97</span>
+                              <span className={cn("text-[10px]", fps === 29.97 ? "text-black/50" : "text-white/30")}>NTSC Broadcast</span>
+                            </button>
+                          </div>
+                        )}
                       </div>
                     </div>
                   )}
