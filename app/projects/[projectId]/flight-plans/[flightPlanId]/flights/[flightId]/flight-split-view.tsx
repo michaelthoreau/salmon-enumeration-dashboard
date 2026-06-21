@@ -65,6 +65,7 @@ const SPLIT_SELECT_CLASSES: Record<string, string> = {
 }
 
 interface FileEntry {
+  id: string
   key: string
   size: number
   lastModifiedIso: string
@@ -422,6 +423,78 @@ export default function FlightSplitView({
 
   // Calculate total fish count from annotations
   const totalFishCount = annotations.reduce((sum, anno) => sum + (anno.fishCount || 0), 0)
+
+  // Video fish counter helpers
+  const getVideoFishCount = useCallback((fileId: string) => {
+    const anno = annotations.find((a) => a.label === 'video-count' && a.fileId === fileId)
+    return anno?.fishCount ?? 0
+  }, [annotations])
+
+  const annotationsUrl = `/api/projects/${projectId}/flight-plans/${flightPlanId}/flights/${flightId}/annotations`
+
+  const handleVideoIncrement = useCallback(async (fileId: string) => {
+    const existing = annotations.find((a) => a.label === 'video-count' && a.fileId === fileId)
+    if (existing) {
+      const next = (existing.fishCount || 0) + 1
+      setAnnotations((prev) => prev.map((a) => a.id === existing.id ? { ...a, fishCount: next } : a))
+      try {
+        await fetch(annotationsUrl, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: existing.id, fishCount: next }),
+        })
+      } catch { /* poll will correct */ }
+    } else {
+      const tempId = `__optimistic__${Date.now()}`
+      const tempAnno = {
+        id: tempId,
+        flightId,
+        fileId,
+        shape: 'point',
+        geometry: '{"type":"Point","coordinates":[0,0]}',
+        fishCount: 1,
+        confidence: 1.0,
+        label: 'video-count',
+      }
+      setAnnotations((prev) => [...prev, tempAnno])
+      try {
+        const res = await fetch(annotationsUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            shape: 'point',
+            geometry: '{"type":"Point","coordinates":[0,0]}',
+            fishCount: 1,
+            confidence: 1.0,
+            fileId,
+            label: 'video-count',
+          }),
+        })
+        if (res.ok) {
+          const newAnno = await res.json()
+          setAnnotations((prev) => prev.map((a) => a.id === tempId ? newAnno : a))
+        } else {
+          setAnnotations((prev) => prev.filter((a) => a.id !== tempId))
+        }
+      } catch {
+        setAnnotations((prev) => prev.filter((a) => a.id !== tempId))
+      }
+    }
+  }, [annotations, annotationsUrl, flightId])
+
+  const handleVideoDecrement = useCallback(async (fileId: string) => {
+    const existing = annotations.find((a) => a.label === 'video-count' && a.fileId === fileId)
+    if (!existing || (existing.fishCount || 0) <= 0) return
+    const next = (existing.fishCount || 0) - 1
+    setAnnotations((prev) => prev.map((a) => a.id === existing.id ? { ...a, fishCount: next } : a))
+    try {
+      await fetch(annotationsUrl, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: existing.id, fishCount: next }),
+      })
+    } catch { /* poll will correct */ }
+  }, [annotations, annotationsUrl])
 
   // Sync annotations if initialAnnotations changes (e.g. server-side refresh)
   useEffect(() => {
@@ -1026,7 +1099,8 @@ export default function FlightSplitView({
               canWrite={canWrite}
               onImageClick={(file) => {
                 setActiveTab('images')
-                setActiveImage(file)
+                const match = displayObjects.find((o) => o.key === file.key)
+                if (match) setActiveImage(match)
               }}
             />
           </div>
@@ -1322,6 +1396,10 @@ export default function FlightSplitView({
                             <VideoPlayer
                               videoUrl={activeImageDownloadUrl}
                               filename={activeImage.key.split('/').pop() || ''}
+                              fishCount={getVideoFishCount(activeImage.id)}
+                              canWrite={canWrite}
+                              onIncrement={() => handleVideoIncrement(activeImage.id)}
+                              onDecrement={() => handleVideoDecrement(activeImage.id)}
                             />
                           </div>
                         ) : (
@@ -1690,6 +1768,10 @@ export default function FlightSplitView({
                 <VideoPlayer
                   videoUrl={activeImageDownloadUrl}
                   filename={activeImage.key.split('/').pop() || ''}
+                  fishCount={getVideoFishCount(activeImage.id)}
+                  canWrite={canWrite}
+                  onIncrement={() => handleVideoIncrement(activeImage.id)}
+                  onDecrement={() => handleVideoDecrement(activeImage.id)}
                 />
               </div>
             ) : (

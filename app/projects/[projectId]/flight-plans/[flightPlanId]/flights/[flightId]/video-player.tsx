@@ -1,15 +1,19 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
-import { Play, Pause, ChevronLeft, ChevronRight, Volume2, VolumeX, Loader2 } from 'lucide-react'
+import { Play, Pause, ChevronLeft, ChevronRight, Volume2, VolumeX, Loader2, Fish, Plus, Minus } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 interface VideoPlayerProps {
   videoUrl: string
   filename: string
+  fishCount?: number
+  canWrite?: boolean
+  onIncrement?: () => void
+  onDecrement?: () => void
 }
 
-export default function VideoPlayer({ videoUrl, filename }: VideoPlayerProps) {
+export default function VideoPlayer({ videoUrl, filename, fishCount = 0, canWrite = false, onIncrement, onDecrement }: VideoPlayerProps) {
   const videoRef = useRef<HTMLVideoElement>(null)
   const [isPlaying, setIsPlaying] = useState(false)
   const [currentTime, setCurrentTime] = useState(0)
@@ -258,6 +262,31 @@ export default function VideoPlayer({ videoUrl, filename }: VideoPlayerProps) {
               <ChevronRight className="w-4 h-4" />
             </button>
             <span className="text-[10px] text-slate-500 font-medium hidden sm:inline">Frame-by-Frame</span>
+          </div>
+
+          {/* Center: Fish Counter */}
+          <div className="flex items-center gap-2">
+            <Fish className="w-4 h-4 text-orange-400" />
+            <span className="text-sm font-semibold text-slate-200 tabular-nums min-w-[2ch] text-center">{fishCount}</span>
+            {canWrite && (
+              <>
+                <button
+                  onClick={onDecrement}
+                  disabled={fishCount <= 0}
+                  className="p-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg transition-colors border border-slate-700 disabled:opacity-30 disabled:cursor-not-allowed"
+                  title="Decrement fish count"
+                >
+                  <Minus className="w-3.5 h-3.5" />
+                </button>
+                <button
+                  onClick={onIncrement}
+                  className="p-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg transition-colors border border-slate-700"
+                  title="Increment fish count"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                </button>
+              </>
+            )}
           </div>
 
           {/* Right: Volume & Mute */}

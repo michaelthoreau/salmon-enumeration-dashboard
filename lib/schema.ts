@@ -184,6 +184,7 @@ export const apiKeys = sqliteTable('api_keys', {
 export const annotations = sqliteTable('annotations', {
   id: text('id').primaryKey(), // nanoid
   flightId: text('flight_id').notNull(), // FK → flights.id
+  fileId: text('file_id'), // FK → files.id; null for map annotations
   shape: text('shape').$type<'point' | 'polygon' | 'linestring'>().notNull(),
   label: text('label').notNull().default('fish'),
   fishCount: integer('fish_count').notNull().default(1),

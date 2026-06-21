@@ -24,6 +24,8 @@ export async function createAnnotation(data: {
   geometry: string
   fishCount?: number
   confidence?: number
+  fileId?: string
+  label?: string
 }) {
   const session = await getSession()
   if (!session || !canWrite(session.role)) {
@@ -38,8 +40,9 @@ export async function createAnnotation(data: {
     .values({
       id,
       flightId: data.flightId,
+      fileId: data.fileId ?? null,
       shape: data.shape,
-      label: 'fish',
+      label: data.label ?? 'fish',
       fishCount: data.fishCount ?? 1,
       confidence: data.confidence ?? 1.0,
       geometry: data.geometry,

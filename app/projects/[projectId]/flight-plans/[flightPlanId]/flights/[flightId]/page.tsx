@@ -187,6 +187,7 @@ export default async function FlightDetailPage({ params, searchParams }: PagePro
       project={project}
       initialAnnotations={annotationsList}
       displayObjects={displayObjects.map((o) => ({
+        id: o.id,
         key: o.key,
         size: o.size ?? 0,
         lastModifiedIso: o.uploadedAt.toISOString(),
