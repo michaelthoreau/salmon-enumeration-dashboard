@@ -127,6 +127,13 @@
       "when": 1782008732670,
       "tag": "0017_ambitious_karnak",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "6",
+      "when": 1782168712702,
+      "tag": "0018_classy_bishop",
+      "breakpoints": true
     }
   ]
 }

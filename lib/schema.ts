@@ -181,6 +181,23 @@ export const apiKeys = sqliteTable('api_keys', {
   revokedAt: integer('revoked_at', { mode: 'timestamp' }),
 })
 
+// ─── Geofences ────────────────────────────────────────────────────────────────
+
+export const geofences = sqliteTable('geofences', {
+  id: text('id').primaryKey(),
+  projectId: text('project_id').notNull(),
+  name: text('name').notNull(),
+  geometry: text('geometry').notNull(), // GeoJSON Polygon geometry string
+  color: text('color').notNull().default('#ef4444'),
+  createdBy: text('created_by').notNull(),
+  createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
+})
+
+export const fileGeofenceTags = sqliteTable('file_geofence_tags', {
+  fileId: text('file_id').notNull(),
+  geofenceId: text('geofence_id').notNull(),
+})
+
 // ─── Annotations ───────────────────────────────────────────────────────────────
 
 export const annotations = sqliteTable('annotations', {

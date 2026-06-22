@@ -1,12 +1,8 @@
 {
   "version": "6",
   "dialect": "sqlite",
-<<<<<<< HEAD
-  "id": "843b6ae9-2f70-413b-b277-724dbe210a2d",
-=======
-  "id": "be82e8ce-4504-4b0b-9ccf-907b71ee6a4b",
->>>>>>> feature/video-fish-counter
-  "prevId": "a00c786f-3909-4660-86fc-24cd70dfd9e4",
+  "id": "4431aca3-b73d-4cd7-ad3c-3b7b0a23f550",
+  "prevId": "843b6ae9-2f70-413b-b277-724dbe210a2d",
   "tables": {
     "annotations": {
       "name": "annotations",
@@ -25,8 +21,6 @@
           "notNull": true,
           "autoincrement": false
         },
-<<<<<<< HEAD
-=======
         "file_id": {
           "name": "file_id",
           "type": "text",
@@ -34,7 +28,6 @@
           "notNull": false,
           "autoincrement": false
         },
->>>>>>> feature/video-fish-counter
         "shape": {
           "name": "shape",
           "type": "text",
@@ -510,7 +503,6 @@
           "notNull": false,
           "autoincrement": false
         },
-<<<<<<< HEAD
         "tiles_key": {
           "name": "tiles_key",
           "type": "text",
@@ -518,8 +510,6 @@
           "notNull": false,
           "autoincrement": false
         },
-=======
->>>>>>> feature/video-fish-counter
         "error": {
           "name": "error",
           "type": "text",
@@ -882,7 +872,6 @@
           "notNull": false,
           "autoincrement": false
         },
-<<<<<<< HEAD
         "tiles_key": {
           "name": "tiles_key",
           "type": "text",
@@ -890,8 +879,6 @@
           "notNull": false,
           "autoincrement": false
         },
-=======
->>>>>>> feature/video-fish-counter
         "created_by": {
           "name": "created_by",
           "type": "text",
