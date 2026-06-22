@@ -182,8 +182,8 @@ export default function MapView({ projectId, timezone, routes, geofences, canWri
       const map = new maplibre.Map({
         container: mapContainerRef.current,
         style: 'https://tiles.openfreemap.org/styles/liberty',
-        zoom: 2,
-        center: [-152, 61],
+        zoom: 10,
+        center: [-158.5, 59.05],
         attributionControl: false,
         maxZoom: 26,
       })
@@ -319,7 +319,7 @@ export default function MapView({ projectId, timezone, routes, geofences, canWri
   }, [basemap, mapReady])
 
   return (
-    <div className="fixed top-[44px] bottom-0 left-0 right-0 z-10 bg-gray-50">
+    <div className="fixed top-[100px] bottom-0 left-0 right-0 z-10 bg-gray-50">
       <div className="w-full h-full relative">
         <div ref={mapContainerRef} className="w-full h-full absolute inset-0" />
 
