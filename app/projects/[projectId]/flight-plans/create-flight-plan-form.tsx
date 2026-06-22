@@ -340,6 +340,9 @@ export default function CreateFlightPlanForm({ projectId, timezone }: { projectI
                   <span className="text-sm text-gray-500">Select a folder with DJI flight subfolders</span>
                   <span className="text-xs text-gray-400">e.g. June 20 AM / DJI_202606200730_007_...</span>
                 </button>
+                <div className="bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 text-xs text-amber-700">
+                  <strong>Video uploads only.</strong> Folder must contain DJI subfolders in the format <code className="bg-amber-100 px-1 rounded">DJI_YYYYMMDDHHMM_NNN_RouteName</code>. Each subfolder will become a separate flight.
+                </div>
               ) : (
                 /* Preview detected flights */
                 <>
