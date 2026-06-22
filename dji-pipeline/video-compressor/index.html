@@ -298,7 +298,15 @@
           <h3>Encoding Settings</h3>
         </div>
 
-        <div class="settings-grid">
+        <div style="margin-bottom: 12px">
+          <label style="font-size: 11px; color: #555; font-weight: 500; display: block; margin-bottom: 6px;">Preset</label>
+          <div style="display: flex; gap: 6px;">
+            <button class="preset-pill active" onclick="applyPreset('handbrake')" id="preset-handbrake">HandBrake 1080p30</button>
+            <button class="preset-pill" onclick="applyPreset('custom')" id="preset-custom">Custom</button>
+          </div>
+        </div>
+
+        <div class="settings-grid" id="settings-grid" style="display: none;">
           <!-- Codec -->
           <div class="setting-group">
             <label>Video Codec</label>
@@ -482,7 +490,28 @@
       currentPreset = btn.dataset.val
     }
 
+    let activePresetMode = 'handbrake'
+
+    function applyPreset(mode) {
+      activePresetMode = mode
+      document.getElementById('preset-handbrake').classList.toggle('active', mode === 'handbrake')
+      document.getElementById('preset-custom').classList.toggle('active', mode === 'custom')
+      document.getElementById('settings-grid').style.display = mode === 'custom' ? 'grid' : 'none'
+    }
+
     function getSettings() {
+      if (activePresetMode === 'handbrake') {
+        return {
+          codec: 'h264',
+          encoder: 'software',
+          quality: 22,
+          preset: 'veryfast',
+          resolution: '1080p',
+          framerate: '30',
+          audioCodec: 'none',
+          audioBitrate: '128k',
+        }
+      }
       return {
         codec: document.getElementById('set-codec').value,
         encoder: document.getElementById('set-encoder').value,
