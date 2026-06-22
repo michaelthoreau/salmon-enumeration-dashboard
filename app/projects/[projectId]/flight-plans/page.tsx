@@ -44,7 +44,7 @@ export default async function FlightPlansPage({ params }: PageProps) {
           <div className="flex items-center gap-2">
             {canWrite && <DjiSyncButton projectId={projectId} />}
             {canWrite && <SyncProjectButton projectId={projectId} />}
-            {isAdmin && <CreateFlightPlanForm projectId={projectId} />}
+            {isAdmin && <CreateFlightPlanForm projectId={projectId} timezone={project.timezone} />}
           </div>
         </div>
         <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">

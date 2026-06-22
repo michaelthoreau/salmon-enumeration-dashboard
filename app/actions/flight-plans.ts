@@ -13,6 +13,41 @@ function slugify(name: string): string {
   return name.trim().toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '')
 }
 
+export async function findOrCreateFlightPlan(
+  projectId: string,
+  name: string,
+  displayName?: string,
+): Promise<{ id: string; existed: boolean; error?: string }> {
+  const session = await getSession()
+  if (!session || (session.role !== 'read-write' && session.role !== 'admin')) {
+    return { id: '', existed: false, error: 'Unauthorized.' }
+  }
+
+  const slug = slugify(name)
+  if (!slug) return { id: '', existed: false, error: 'Invalid name.' }
+
+  const [existing] = await db
+    .select()
+    .from(flightPlans)
+    .where(and(eq(flightPlans.projectId, projectId), eq(flightPlans.name, slug)))
+
+  if (existing) return { id: existing.id, existed: true }
+
+  const id = randomUUID()
+  await db.insert(flightPlans).values({
+    id,
+    projectId,
+    name: slug,
+    displayName: displayName?.trim() || null,
+    createdBy: session.userId,
+    createdAt: new Date(),
+    deletedAt: null,
+  })
+
+  revalidatePath(`/projects/${projectId}/flight-plans`)
+  return { id, existed: false }
+}
+
 export async function createFlightPlan(_prev: State, formData: FormData): Promise<State> {
   const session = await getSession()
   if (!session || session.role !== 'admin') return { error: 'Unauthorized.' }

@@ -41,6 +41,47 @@ function canWrite(role: string): boolean {
   return role === 'read-write' || role === 'admin'
 }
 
+export async function createFlightForUpload(data: {
+  flightPlanId: string
+  timestamp: string
+  timezone: string
+  notes?: string
+}): Promise<{ id: string; existed: boolean; error?: string }> {
+  const session = await getSession()
+  if (!session || !canWrite(session.role)) {
+    return { id: '', existed: false, error: 'Unauthorized.' }
+  }
+
+  const { flightPlanId, timestamp, timezone, notes } = data
+  if (!flightPlanId || !timestamp) {
+    return { id: '', existed: false, error: 'flightPlanId and timestamp are required.' }
+  }
+
+  // Deduplicate by notes (folder name)
+  if (notes) {
+    const [existing] = await db
+      .select()
+      .from(flights)
+      .where(and(eq(flights.flightPlanId, flightPlanId), eq(flights.notes, notes)))
+    if (existing) return { id: existing.id, existed: true }
+  }
+
+  const ts = parseInTimezone(timestamp, timezone || 'UTC')
+  if (isNaN(ts.getTime())) return { id: '', existed: false, error: 'Invalid timestamp.' }
+
+  const id = randomUUID()
+  await db.insert(flights).values({
+    id,
+    flightPlanId,
+    timestamp: ts,
+    notes: notes?.trim() || null,
+    createdBy: session.userId,
+    createdAt: new Date(),
+  })
+
+  return { id, existed: false }
+}
+
 export async function createFlight(_prev: State, formData: FormData): Promise<State> {
   const session = await getSession()
   if (!session || !canWrite(session.role)) return { error: 'Unauthorized.' }
