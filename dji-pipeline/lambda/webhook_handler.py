@@ -197,21 +197,28 @@ def _get_plan_name(dji_project_id: str, created_at: int, fh2_file_path: str) -> 
 
     # DITB: task → wayline lookup
     if not created_at:
+        print(f"[DITB] No created_at for {fh2_file_path!r}, skipping wayline lookup")
         return ""
 
     task_name = re.sub(r'[-\s]\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}.*$', '', fh2_file_path).strip()
     if not task_name:
+        print(f"[DITB] Could not parse task name from {fh2_file_path!r}")
         return ""
+
+    print(f"[DITB] Looking up wayline for task={task_name!r} created_at={created_at}")
 
     try:
         if dji_project_id not in _dji_device_cache:
             resp = _dji_get("/openapi/v0.1/project/device", project_uuid=dji_project_id)
             _dji_device_cache[dji_project_id] = (resp.get("data") or {}).get("list") or []
 
+        devices = _dji_device_cache[dji_project_id]
+        print(f"[DITB] Found {len(devices)} device(s)")
+
         begin_at = (created_at - 86400) * 1000
         end_at   = (created_at + 3600) * 1000
 
-        for device in _dji_device_cache[dji_project_id]:
+        for device in devices:
             sn = device.get("sn")
             if not sn:
                 continue
@@ -220,10 +227,15 @@ def _get_plan_name(dji_project_id: str, created_at: int, fh2_file_path: str) -> 
                 project_uuid=dji_project_id,
                 params={"sn": sn, "begin_at": begin_at, "end_at": end_at},
             )
-            for task in ((tasks_resp.get("data") or {}).get("list") or []):
+            task_list = (tasks_resp.get("data") or {}).get("list") or []
+            task_names = [t.get("name", "") for t in task_list]
+            print(f"[DITB] Device {sn}: {len(task_list)} task(s) in window: {task_names}")
+
+            for task in task_list:
                 if task.get("name") != task_name:
                     continue
                 wayline_uuid = task.get("wayline_uuid")
+                print(f"[DITB] Task matched: name={task.get('name')!r} wayline_uuid={wayline_uuid!r}")
                 if not wayline_uuid:
                     continue
                 if wayline_uuid not in _dji_wayline_cache:
@@ -233,6 +245,9 @@ def _get_plan_name(dji_project_id: str, created_at: int, fh2_file_path: str) -> 
                 if name:
                     print(f"Task→wayline resolved: {fh2_file_path!r} → {name!r}")
                     return name
+                print(f"[DITB] Wayline {wayline_uuid} resolved to empty name")
+
+        print(f"[DITB] No wayline match found for task={task_name!r}")
 
     except Exception as e:
         print(f"[WARN] Task wayline lookup failed: {e}")
@@ -291,10 +306,10 @@ def _resolve_flight(fh2_file_path: str, dji_project_id: str = "", created_at: in
     plan_name = _get_plan_name(dji_project_id, created_at, fh2_file_path)
     timestamp = _parse_timestamp(fh2_file_path)
 
+    if not plan_name:
+        plan_name = _parse_plan_name(fh2_file_path)
     if not plan_name and timestamp:
         plan_name = f"{timestamp[:16].replace('T', '-').replace(':', '')}-no-route-flight"
-    elif not plan_name:
-        plan_name = _parse_plan_name(fh2_file_path)
 
     if not plan_name:
         raise ValueError(f"Could not parse plan name from: {fh2_file_path!r}")
