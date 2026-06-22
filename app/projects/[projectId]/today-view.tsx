@@ -26,7 +26,8 @@ interface FlightRow {
   flightPlanLocation: string | null
   timestamp: Date
   notes: string | null
-  imageCount: number
+  fileCount: number
+  totalFish: number
   taskStatus: 'uploading' | 'queued' | 'running' | 'failed' | 'completed' | 'canceled' | null
   outputKey: string | null
 }
@@ -79,7 +80,7 @@ function formatLongDate(dateStr: string): string {
   })
 }
 
-function StatusBadge({ status, imageCount }: { status: string | null; imageCount: number }) {
+function StatusBadge({ status, fileCount }: { status: string | null; fileCount: number }) {
   if (status === 'completed') {
     return (
       <span className="inline-flex items-center gap-1 rounded-md bg-green-50 border border-green-200 px-2 py-0.5 text-[11px] text-green-700 font-medium">
@@ -112,7 +113,7 @@ function StatusBadge({ status, imageCount }: { status: string | null; imageCount
       </span>
     )
   }
-  if (imageCount > 0) {
+  if (fileCount > 0) {
     return null
   }
   return (
@@ -381,9 +382,15 @@ function FlightCard({
           <div className="flex flex-wrap items-center gap-x-2 text-xs text-gray-500 font-medium">
             <span>{formatTimeOnly(flight.timestamp, timezone)} local time</span>
             <span>•</span>
-            <span>{flight.imageCount} images</span>
+            <span>{flight.fileCount} files</span>
+            {flight.totalFish > 0 && (
+              <>
+                <span>•</span>
+                <span className="text-red-500">{flight.totalFish} fish</span>
+              </>
+            )}
             <span>•</span>
-            <StatusBadge status={flight.taskStatus} imageCount={flight.imageCount} />
+            <StatusBadge status={flight.taskStatus} fileCount={flight.fileCount} />
           </div>
 
           {/* Flight Notes */}
@@ -692,7 +699,7 @@ export default function TodayFlightsView({
 
   // Stats Calculations on all flights
   const totalFlights = flights.length
-  const totalImages = flights.reduce((acc, curr) => acc + curr.imageCount, 0)
+  const totalImages = flights.reduce((acc, curr) => acc + curr.fileCount, 0)
   const completedMaps = flights.filter((f) => f.taskStatus === 'completed').length
   const pendingProcessing = flights.filter((f) =>
     ['queued', 'running', 'uploading'].includes(f.taskStatus || '')
@@ -770,9 +777,15 @@ export default function TodayFlightsView({
                       {formatTimeOnly(highlightedFlight.timestamp, timezone)} local time
                     </span>
                     <span className="text-gray-300">•</span>
-                    <span>{highlightedFlight.imageCount} images</span>
+                    <span>{highlightedFlight.fileCount} files</span>
+                    {highlightedFlight.totalFish > 0 && (
+                      <>
+                        <span className="text-gray-300">•</span>
+                        <span className="text-red-500">{highlightedFlight.totalFish} fish</span>
+                      </>
+                    )}
                     <span className="text-gray-300">•</span>
-                    <StatusBadge status={highlightedFlight.taskStatus} imageCount={highlightedFlight.imageCount} />
+                    <StatusBadge status={highlightedFlight.taskStatus} fileCount={highlightedFlight.fileCount} />
                   </div>
                 </div>
                 

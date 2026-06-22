@@ -133,6 +133,15 @@ export default async function ProjectTodayPage({ params }: PageProps) {
 
   const fileCountMap = new Map(fileCounts.map((r) => [r.flightId, r.count]))
 
+  const fishCountsPerFlight = flightIds.length > 0
+    ? await db
+        .select({ flightId: annotations.flightId, total: sql<number>`sum(fish_count)`.as('total') })
+        .from(annotations)
+        .where(and(inArray(annotations.flightId, flightIds), isNull(annotations.deletedAt)))
+        .groupBy(annotations.flightId)
+    : []
+  const fishCountMap = new Map(fishCountsPerFlight.map((r) => [r.flightId, r.total ?? 0]))
+
   const latestOdmMap = new Map<string, typeof odmTaskRows[number]>()
   for (const task of odmTaskRows) {
     if (!latestOdmMap.has(task.flightId)) latestOdmMap.set(task.flightId, task)
@@ -163,7 +172,8 @@ export default async function ProjectTodayPage({ params }: PageProps) {
       flightPlanLocation: plan.location,
       timestamp: flight.timestamp,
       notes: flight.notes,
-      imageCount: fileCountMap.get(flight.id) ?? 0,
+      fileCount: fileCountMap.get(flight.id) ?? 0,
+      totalFish: fishCountMap.get(flight.id) ?? 0,
       taskStatus: (task?.status as any) ?? null,
       outputKey: task?.outputKey ?? null,
     }
