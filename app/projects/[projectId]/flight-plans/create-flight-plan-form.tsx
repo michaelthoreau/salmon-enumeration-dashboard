@@ -119,7 +119,14 @@ export default function CreateFlightPlanForm({ projectId, timezone }: { projectI
       }
     }
 
-    setRouteName(topFolderName)
+    // Format display name: "June 21 PM - Compressed" → "june-21-pm-2026-compressed-flights"
+    const year = new Date().getFullYear()
+    const formatted = topFolderName
+      .toLowerCase()
+      .replace(/\s+/g, '-')
+      .replace(/-{2,}/g, '-')
+      .replace(/^-|-$/g, '')
+    setRouteName(`${formatted}-${year}-flights`)
 
     const flights: DetectedFlight[] = []
     for (const [folder, folderFiles] of subfolders) {
