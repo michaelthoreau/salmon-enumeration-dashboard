@@ -389,7 +389,7 @@ function FlightCard({
                 <span className="text-red-500">{flight.totalFish} fish</span>
               </>
             )}
-            <span>•</span>
+            {(flight.taskStatus || flight.fileCount === 0) && <span>•</span>}
             <StatusBadge status={flight.taskStatus} fileCount={flight.fileCount} />
           </div>
 
@@ -768,15 +768,10 @@ export default function TodayFlightsView({
                       {highlightedFlight.notes}
                     </p>
                   )}
-                  <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-gray-550">
-                    <span className="font-semibold text-gray-700">
-                      {formatLongDate(getLocalDateStr(highlightedFlight.timestamp, timezone))}
-                    </span>
-                    <span className="text-gray-300">•</span>
-                    <span className="font-mono">
-                      {formatTimeOnly(highlightedFlight.timestamp, timezone)} local time
-                    </span>
-                    <span className="text-gray-300">•</span>
+                  <p className="text-sm font-semibold text-gray-700">
+                    {formatLongDate(getLocalDateStr(highlightedFlight.timestamp, timezone))} at {formatTimeOnly(highlightedFlight.timestamp, timezone)}
+                  </p>
+                  <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-gray-500">
                     <span>{highlightedFlight.fileCount} files</span>
                     {highlightedFlight.totalFish > 0 && (
                       <>
@@ -784,7 +779,7 @@ export default function TodayFlightsView({
                         <span className="text-red-500">{highlightedFlight.totalFish} fish</span>
                       </>
                     )}
-                    <span className="text-gray-300">•</span>
+                    {(highlightedFlight.taskStatus || highlightedFlight.fileCount === 0) && <span className="text-gray-300">•</span>}
                     <StatusBadge status={highlightedFlight.taskStatus} fileCount={highlightedFlight.fileCount} />
                   </div>
                 </div>
