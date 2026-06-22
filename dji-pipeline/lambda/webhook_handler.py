@@ -256,7 +256,10 @@ def _resolve_flight(fh2_file_path: str, dji_project_id: str = "", created_at: in
     timestamp = _parse_timestamp(fh2_file_path)
 
     if not plan_name:
-        plan_name = _parse_plan_name(fh2_file_path)
+        parsed = _parse_plan_name(fh2_file_path)
+        # Filter out system-generated names (e.g. spawner-FLY-TO)
+        if parsed and not parsed.lower().startswith('spawner'):
+            plan_name = parsed
     if not plan_name and timestamp:
         plan_name = f"{timestamp[:16].replace('T', '-').replace(':', '')}-no-route-flight"
 
