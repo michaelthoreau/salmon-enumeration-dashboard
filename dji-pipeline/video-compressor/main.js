@@ -3,7 +3,11 @@ const path = require('path')
 const fs = require('fs')
 const { spawn } = require('child_process')
 
-const ffmpegPath = require('ffmpeg-static')
+let ffmpegPath = require('ffmpeg-static')
+// In packaged app, ffmpeg-static is unpacked from asar — fix the path
+if (ffmpegPath && ffmpegPath.includes('app.asar')) {
+  ffmpegPath = ffmpegPath.replace('app.asar', 'app.asar.unpacked')
+}
 
 let mainWindow
 
@@ -110,6 +114,8 @@ ipcMain.handle('compress', async (event, { inputFolder, videos, settings, overwr
         status: 'done',
       })
     } catch (err) {
+      // Clean up partial file so it doesn't get skipped on next run
+      try { if (fs.existsSync(outputPath)) fs.unlinkSync(outputPath) } catch {}
       completed++
       event.sender.send('progress', {
         current: completed,
@@ -135,16 +141,31 @@ function buildArgs(input, output, settings) {
   const resolution = settings.resolution || 'auto'
   const audioBitrate = settings.audioBitrate || '128k'
 
-  // Video codec
+  // Video codec — pick hardware encoder based on platform
+  const isMac = process.platform === 'darwin'
+  const isWin = process.platform === 'win32'
+
   if (codec === 'h265') {
     if (encoder === 'hardware') {
-      args.push('-c:v', 'hevc_videotoolbox', '-q:v', String(Math.round(quality * 2.7)))
+      if (isMac) {
+        args.push('-c:v', 'hevc_videotoolbox', '-q:v', String(Math.round(quality * 2.7)))
+      } else if (isWin) {
+        args.push('-c:v', 'hevc_nvenc', '-cq', String(quality), '-preset', 'p4')
+      } else {
+        args.push('-c:v', 'libx265', '-crf', String(quality), '-preset', preset)
+      }
     } else {
       args.push('-c:v', 'libx265', '-crf', String(quality), '-preset', preset)
     }
   } else if (codec === 'h264') {
     if (encoder === 'hardware') {
-      args.push('-c:v', 'h264_videotoolbox', '-q:v', String(Math.round(quality * 2.7)))
+      if (isMac) {
+        args.push('-c:v', 'h264_videotoolbox', '-q:v', String(Math.round(quality * 2.7)))
+      } else if (isWin) {
+        args.push('-c:v', 'h264_nvenc', '-cq', String(quality), '-preset', 'p4')
+      } else {
+        args.push('-c:v', 'libx264', '-crf', String(quality), '-preset', preset)
+      }
     } else {
       args.push('-c:v', 'libx264', '-crf', String(quality), '-preset', preset)
     }
