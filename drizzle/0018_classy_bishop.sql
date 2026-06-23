@@ -11,4 +11,4 @@ CREATE TABLE `geofences` (
 	`color` text DEFAULT '#ef4444' NOT NULL,
 	`created_by` text NOT NULL,
 	`created_at` integer NOT NULL
-);T
+);
