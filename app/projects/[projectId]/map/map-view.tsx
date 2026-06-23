@@ -1,8 +1,19 @@
 'use client'
 
 import { useEffect, useRef, useState, useMemo } from 'react'
-import { Map, Layers, MapPin, Image, Video, Calendar } from 'lucide-react'
+import { useRouter } from 'next/navigation'
+import { Map, Layers, MapPin, Image, Video, Pentagon, Trash2, X } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { Button } from '@/components/ui/button'
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from '@/components/ui/dialog'
+import { createGeofence, deleteGeofence } from '@/app/actions/geofences'
 import 'maplibre-gl/dist/maplibre-gl.css'
 
 interface RouteEntry {
@@ -108,13 +119,27 @@ function buildPopupHtml(route: RouteEntry, projectId: string): string {
   `
 }
 
+const GEOFENCE_COLORS = ['#ef4444', '#f97316', '#eab308', '#22c55e', '#3b82f6', '#8b5cf6']
+
 export default function MapView({ projectId, timezone, routes, geofences, canWrite }: Props) {
+  const router = useRouter()
   const mapContainerRef = useRef<HTMLDivElement>(null)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const mapRef = useRef<any | null>(null)
   const [mapReady, setMapReady] = useState(false)
   const [basemap, setBasemap] = useState<'street' | 'satellite'>('satellite')
   const [filterType, setFilterType] = useState<'all' | 'images' | 'videos'>('all')
+
+  // Geofence drawing state
+  const [isDrawing, setIsDrawing] = useState(false)
+  const [drawPoints, setDrawPoints] = useState<[number, number][]>([])
+  const [cursorCoord, setCursorCoord] = useState<[number, number] | null>(null)
+  const [showNameDialog, setShowNameDialog] = useState(false)
+  const [geofenceName, setGeofenceName] = useState('')
+  const [geofenceColor, setGeofenceColor] = useState(GEOFENCE_COLORS[0])
+  const [isSaving, setIsSaving] = useState(false)
+  const [showGeofenceList, setShowGeofenceList] = useState(false)
+  const [deletingId, setDeletingId] = useState<string | null>(null)
 
   const filteredRoutes = useMemo(() => {
     if (filterType === 'all') return routes
@@ -182,8 +207,8 @@ export default function MapView({ projectId, timezone, routes, geofences, canWri
       const map = new maplibre.Map({
         container: mapContainerRef.current,
         style: 'https://tiles.openfreemap.org/styles/liberty',
-        zoom: 10,
-        center: [-158.5, 59.05],
+        zoom: 11,
+        center: [-158.55, 59.12],
         attributionControl: false,
         maxZoom: 26,
       })
@@ -318,6 +343,173 @@ export default function MapView({ projectId, timezone, routes, geofences, canWri
     updateMapBasemap(mapRef.current, basemap)
   }, [basemap, mapReady])
 
+  // Update geofence data
+  useEffect(() => {
+    if (!mapRef.current || !mapReady) return
+    const source = mapRef.current.getSource('geofences-source')
+    if (source) source.setData(geofenceGeojson)
+  }, [geofenceGeojson, mapReady])
+
+  // Drawing polygon preview layer
+  useEffect(() => {
+    if (!mapRef.current || !mapReady) return
+    const map = mapRef.current
+
+    const allPoints = cursorCoord && isDrawing ? [...drawPoints, cursorCoord] : drawPoints
+    const closed = allPoints.length >= 3 ? [...allPoints, allPoints[0]] : allPoints
+
+    const lineData: any = {
+      type: 'FeatureCollection',
+      features: allPoints.length >= 2
+        ? [{ type: 'Feature', geometry: { type: 'LineString', coordinates: closed }, properties: {} }]
+        : [],
+    }
+    const pointData: any = {
+      type: 'FeatureCollection',
+      features: drawPoints.map((p) => ({
+        type: 'Feature',
+        geometry: { type: 'Point', coordinates: p },
+        properties: {},
+      })),
+    }
+
+    if (!map.getSource('draw-line')) {
+      map.addSource('draw-line', { type: 'geojson', data: lineData })
+      map.addLayer({
+        id: 'draw-line-layer',
+        type: 'line',
+        source: 'draw-line',
+        paint: { 'line-color': geofenceColor, 'line-width': 2, 'line-dasharray': [4, 2] },
+      })
+      map.addSource('draw-points', { type: 'geojson', data: pointData })
+      map.addLayer({
+        id: 'draw-points-layer',
+        type: 'circle',
+        source: 'draw-points',
+        paint: {
+          'circle-color': geofenceColor,
+          'circle-radius': 5,
+          'circle-stroke-color': '#ffffff',
+          'circle-stroke-width': 2,
+        },
+      })
+    } else {
+      map.getSource('draw-line')?.setData(lineData)
+      map.getSource('draw-points')?.setData(pointData)
+      if (map.getLayer('draw-line-layer')) {
+        map.setPaintProperty('draw-line-layer', 'line-color', geofenceColor)
+      }
+      if (map.getLayer('draw-points-layer')) {
+        map.setPaintProperty('draw-points-layer', 'circle-color', geofenceColor)
+      }
+    }
+  }, [drawPoints, cursorCoord, isDrawing, mapReady, geofenceColor])
+
+  // Map click handler for drawing
+  useEffect(() => {
+    if (!mapRef.current || !mapReady) return
+    const map = mapRef.current
+
+    const handleClick = (e: any) => {
+      if (!isDrawing) return
+      const lngLat: [number, number] = [e.lngLat.lng, e.lngLat.lat]
+      setDrawPoints((prev) => [...prev, lngLat])
+    }
+
+    const handleDblClick = (e: any) => {
+      if (!isDrawing) return
+      e.preventDefault()
+      if (drawPoints.length >= 3) {
+        setIsDrawing(false)
+        setCursorCoord(null)
+        setShowNameDialog(true)
+      }
+    }
+
+    const handleMouseMove = (e: any) => {
+      if (!isDrawing) return
+      setCursorCoord([e.lngLat.lng, e.lngLat.lat])
+    }
+
+    map.on('click', handleClick)
+    map.on('dblclick', handleDblClick)
+    map.on('mousemove', handleMouseMove)
+
+    return () => {
+      map.off('click', handleClick)
+      map.off('dblclick', handleDblClick)
+      map.off('mousemove', handleMouseMove)
+    }
+  }, [isDrawing, drawPoints, mapReady])
+
+  // Escape to cancel drawing
+  useEffect(() => {
+    if (!isDrawing) return
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setIsDrawing(false)
+        setDrawPoints([])
+        setCursorCoord(null)
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [isDrawing])
+
+  // Cursor style while drawing
+  useEffect(() => {
+    if (!mapRef.current) return
+    mapRef.current.getCanvas().style.cursor = isDrawing ? 'crosshair' : ''
+  }, [isDrawing])
+
+  function startDrawing() {
+    setDrawPoints([])
+    setCursorCoord(null)
+    setGeofenceName('')
+    setGeofenceColor(GEOFENCE_COLORS[0])
+    setIsDrawing(true)
+  }
+
+  function cancelDrawing() {
+    setIsDrawing(false)
+    setDrawPoints([])
+    setCursorCoord(null)
+    setShowNameDialog(false)
+    setGeofenceName('')
+  }
+
+  async function saveGeofence() {
+    if (!geofenceName.trim() || drawPoints.length < 3) return
+    setIsSaving(true)
+
+    const ring = [...drawPoints, drawPoints[0]]
+    const geometry = JSON.stringify({ type: 'Polygon', coordinates: [ring] })
+
+    const result = await createGeofence(projectId, geofenceName.trim(), geometry, geofenceColor)
+    setIsSaving(false)
+
+    if (result.error) {
+      alert(result.error)
+      return
+    }
+
+    setShowNameDialog(false)
+    setDrawPoints([])
+    setGeofenceName('')
+    router.refresh()
+  }
+
+  async function handleDeleteGeofence(id: string) {
+    setDeletingId(id)
+    const result = await deleteGeofence(id, projectId)
+    setDeletingId(null)
+    if (result.error) {
+      alert(result.error)
+      return
+    }
+    router.refresh()
+  }
+
   return (
     <div className="fixed top-[100px] bottom-0 left-0 right-0 z-10 bg-gray-50">
       <div className="w-full h-full relative">
@@ -373,12 +565,95 @@ export default function MapView({ projectId, timezone, routes, geofences, canWri
           </div>
         </div>
 
+        {/* Geofence controls */}
+        {canWrite && (
+          <div className="absolute top-4 right-16 z-40 flex items-center gap-2">
+            {geofences.length > 0 && (
+              <button
+                type="button"
+                onClick={() => setShowGeofenceList((v) => !v)}
+                className={cn(
+                  'bg-white/90 hover:bg-white backdrop-blur-sm px-3 py-1.5 rounded-xl shadow-md border border-gray-200/80 text-xs font-semibold transition-all',
+                  showGeofenceList ? 'text-blue-600 border-blue-300' : 'text-gray-700',
+                )}
+              >
+                {geofences.length} geofence{geofences.length !== 1 ? 's' : ''}
+              </button>
+            )}
+            {!isDrawing && (
+              <button
+                type="button"
+                onClick={startDrawing}
+                className="bg-white/90 hover:bg-white backdrop-blur-sm px-3 py-1.5 rounded-xl shadow-md border border-gray-200/80 text-xs font-semibold text-gray-700 hover:text-blue-600 transition-all flex items-center gap-1.5"
+              >
+                <Pentagon className="w-3.5 h-3.5" />
+                <span>Draw Geofence</span>
+              </button>
+            )}
+          </div>
+        )}
+
         {/* Route count badge */}
-        <div className="absolute top-4 right-16 z-40 bg-white/90 backdrop-blur-sm px-3 py-1.5 rounded-xl shadow-md border border-gray-200/80 select-none">
-          <span className="text-xs font-semibold text-gray-700">
-            {filteredRoutes.length} route{filteredRoutes.length !== 1 ? 's' : ''}
-          </span>
-        </div>
+        {!canWrite && (
+          <div className="absolute top-4 right-16 z-40 bg-white/90 backdrop-blur-sm px-3 py-1.5 rounded-xl shadow-md border border-gray-200/80 select-none">
+            <span className="text-xs font-semibold text-gray-700">
+              {filteredRoutes.length} route{filteredRoutes.length !== 1 ? 's' : ''}
+            </span>
+          </div>
+        )}
+
+        {/* Drawing instructions banner */}
+        {isDrawing && (
+          <div className="absolute top-4 left-1/2 -translate-x-1/2 z-50 bg-blue-600 text-white px-4 py-2 rounded-xl shadow-lg flex items-center gap-3 select-none">
+            <span className="text-xs font-semibold">
+              Click to place points ({drawPoints.length} placed) · Double-click to finish · Escape to cancel
+            </span>
+            <button
+              type="button"
+              onClick={cancelDrawing}
+              className="p-1 hover:bg-blue-500 rounded transition-colors"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        )}
+
+        {/* Geofence list panel */}
+        {showGeofenceList && geofences.length > 0 && (
+          <div className="absolute top-16 right-16 z-40 bg-white/95 backdrop-blur-sm rounded-xl shadow-lg border border-gray-200/80 w-64 max-h-80 overflow-y-auto">
+            <div className="px-3 py-2 border-b border-gray-100 flex items-center justify-between">
+              <span className="text-xs font-bold uppercase tracking-wider text-gray-400">Geofences</span>
+              <button
+                type="button"
+                onClick={() => setShowGeofenceList(false)}
+                className="p-0.5 hover:bg-gray-100 rounded transition-colors"
+              >
+                <X className="w-3.5 h-3.5 text-gray-400" />
+              </button>
+            </div>
+            <div className="p-2 space-y-1">
+              {geofences.map((g) => (
+                <div key={g.id} className="flex items-center justify-between gap-2 px-2 py-1.5 rounded-lg hover:bg-gray-50 group">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span className="w-3 h-3 rounded-full flex-shrink-0" style={{ backgroundColor: g.color }} />
+                    <span className="text-xs font-medium text-gray-700 truncate">{g.name}</span>
+                  </div>
+                  {canWrite && (
+                    <button
+                      type="button"
+                      onClick={() => handleDeleteGeofence(g.id)}
+                      disabled={deletingId === g.id}
+                      className="p-1 opacity-0 group-hover:opacity-100 hover:bg-red-50 rounded transition-all text-gray-400 hover:text-red-500"
+                      title="Delete geofence"
+                    >
+                      <Trash2 className={cn('w-3.5 h-3.5', deletingId === g.id && 'animate-spin')} />
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* Basemap switcher */}
         <div className="absolute bottom-6 right-4 z-40 bg-white/90 hover:bg-white backdrop-blur-sm p-1 rounded-xl shadow-md border border-gray-200/80 flex gap-1 select-none transition-all">
@@ -410,6 +685,55 @@ export default function MapView({ projectId, timezone, routes, geofences, canWri
           </button>
         </div>
       </div>
+
+      {/* Name geofence dialog */}
+      <Dialog open={showNameDialog} onOpenChange={(open) => { if (!open) cancelDrawing() }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Name this geofence</DialogTitle>
+            <DialogDescription>
+              Files with coordinates inside this area will be tagged with this name.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <div>
+              <label className="text-xs font-medium text-gray-700 block mb-1.5">Name</label>
+              <input
+                type="text"
+                value={geofenceName}
+                onChange={(e) => setGeofenceName(e.target.value)}
+                placeholder="e.g. Wood River, Lower Nushagak..."
+                className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                autoFocus
+                onKeyDown={(e) => { if (e.key === 'Enter' && geofenceName.trim()) saveGeofence() }}
+              />
+            </div>
+            <div>
+              <label className="text-xs font-medium text-gray-700 block mb-1.5">Color</label>
+              <div className="flex gap-2">
+                {GEOFENCE_COLORS.map((color) => (
+                  <button
+                    key={color}
+                    type="button"
+                    onClick={() => setGeofenceColor(color)}
+                    className={cn(
+                      'w-7 h-7 rounded-full border-2 transition-all',
+                      geofenceColor === color ? 'border-gray-900 scale-110' : 'border-transparent hover:scale-105',
+                    )}
+                    style={{ backgroundColor: color }}
+                  />
+                ))}
+              </div>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={cancelDrawing}>Cancel</Button>
+            <Button onClick={saveGeofence} disabled={!geofenceName.trim() || isSaving}>
+              {isSaving ? 'Saving...' : 'Save Geofence'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
@@ -427,6 +751,7 @@ function updateMapBasemap(map: any, currentBasemap: 'street' | 'satellite') {
       'esri-satellite-layer',
       'routes-fill', 'routes-line', 'routes-point',
       'geofences-fill', 'geofences-line',
+      'draw-line-layer', 'draw-points-layer',
     ])
     for (const layer of style.layers) {
       if ((layer.type === 'fill' || layer.type === 'background') && !skipIds.has(layer.id)) {
