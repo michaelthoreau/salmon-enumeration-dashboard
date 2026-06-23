@@ -1,9 +1,9 @@
 'use client'
 
-import { useState, useRef, useEffect, useCallback } from 'react'
+import { useState, useMemo, useRef, useEffect, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
-import { ArrowLeft, ExternalLink, Layers, CheckCircle2, AlertCircle, PlayCircle, ImageMinus, Maximize2, Sliders, Pencil } from 'lucide-react'
+import { ArrowLeft, ExternalLink, Layers, CheckCircle2, AlertCircle, PlayCircle, ImageMinus, Maximize2, Sliders, Pencil, MapPin } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { buttonVariants } from '@/components/ui/button'
 import OrthoMap from './[flightId]/ortho-map'
@@ -26,6 +26,7 @@ export interface FlightRow {
   taskStatus: OdmTaskStatus | GeorefTaskStatus | null
   outputKey: string | null
   taskCompletedAt?: Date | null
+  locationTags?: string[]
 }
 
 interface Props {
@@ -43,6 +44,7 @@ interface Props {
   }
   from?: string
   isAdmin: boolean
+  availableLocationTags?: string[]
 }
 
 function StatusBadge({ status, fileCount }: { status: OdmTaskStatus | GeorefTaskStatus | null; fileCount: number }) {
@@ -106,9 +108,16 @@ export default function FlightsView({
   flightPlan,
   from,
   isAdmin,
+  availableLocationTags = [],
 }: Props) {
   const router = useRouter()
   const [sidebarWidth, setSidebarWidth] = useState(500)
+  const [locationFilter, setLocationFilter] = useState<string>('')
+
+  const filteredRows = useMemo(() => {
+    if (!locationFilter) return rows
+    return rows.filter((r) => r.locationTags?.includes(locationFilter))
+  }, [rows, locationFilter])
   const [zoomTrigger, setZoomTrigger] = useState(0)
   const isResizingRef = useRef(false)
 
@@ -256,20 +265,37 @@ export default function FlightsView({
 
         {/* Flights List */}
         <section className="border-t border-gray-100 pt-4 flex-1 flex flex-col min-h-0">
-          <h2 className="text-xs font-semibold uppercase tracking-wider text-gray-400 mb-3">
-            Flights ({rows.length})
-          </h2>
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-xs font-semibold uppercase tracking-wider text-gray-400">
+              Flights ({filteredRows.length}{locationFilter ? ` of ${rows.length}` : ''})
+            </h2>
+            {availableLocationTags.length > 0 && (
+              <div className="relative">
+                <MapPin className="absolute left-2 top-1/2 -translate-y-1/2 w-3 h-3 text-gray-400" />
+                <select
+                  value={locationFilter}
+                  onChange={(e) => setLocationFilter(e.target.value)}
+                  className="pl-6 pr-6 py-1 text-[11px] border border-gray-200 rounded-md focus:outline-none focus:ring-1 focus:ring-blue-500 appearance-none bg-white cursor-pointer"
+                >
+                  <option value="">All locations</option>
+                  {availableLocationTags.map((tag) => (
+                    <option key={tag} value={tag}>{tag}</option>
+                  ))}
+                </select>
+              </div>
+            )}
+          </div>
           <div className="flex-1 overflow-y-auto no-scrollbar space-y-3 pr-1 pb-4">
-            {rows.length === 0 ? (
+            {filteredRows.length === 0 ? (
               <div className="text-center py-8 text-gray-400 border border-dashed border-gray-200 rounded-xl">
                 <span className="text-2xl block mb-1">✈️</span>
-                <p className="text-sm font-medium">No flights logged yet.</p>
-                {canWrite && (
+                <p className="text-sm font-medium">{locationFilter ? 'No flights match this location.' : 'No flights logged yet.'}</p>
+                {canWrite && !locationFilter && (
                   <p className="text-xs text-gray-500 mt-1">Use the button above to log your first flight.</p>
                 )}
               </div>
             ) : (
-              rows.map((row) => {
+              filteredRows.map((row) => {
                 const isSelected = row.flight.id === selectedId
 
                 return (

@@ -1,8 +1,8 @@
 import React from 'react'
 import { notFound } from 'next/navigation'
 import { db } from '@/lib/db'
-import { projects, flightPlans, flights, files as filesTable, odmTasks, georefTasks } from '@/lib/schema'
-import { eq, desc, inArray, sql } from 'drizzle-orm'
+import { projects, flightPlans, flights, files as filesTable, odmTasks, georefTasks, geofences, fileGeofenceTags } from '@/lib/schema'
+import { eq, desc, inArray, sql, and, isNull } from 'drizzle-orm'
 import { getSession } from '@/lib/session'
 
 import FlightsView from './flights-view'
@@ -97,6 +97,42 @@ export default async function FlightsPage({ params, searchParams }: PageProps) {
     if (!latestGeorefMap.has(task.flightId)) latestGeorefMap.set(task.flightId, task)
   }
 
+  // Fetch geofence tags per flight
+  const allGeofences = await db
+    .select()
+    .from(geofences)
+    .where(eq(geofences.projectId, projectId))
+
+  const geofenceNameMap = new Map(allGeofences.map((g) => [g.id, g.name]))
+  const flightTagsMap = new Map<string, string[]>()
+
+  if (flightIds.length > 0 && allGeofences.length > 0) {
+    const allFiles = await db
+      .select({ id: filesTable.id, flightId: filesTable.flightId })
+      .from(filesTable)
+      .where(inArray(filesTable.flightId, flightIds))
+
+    if (allFiles.length > 0) {
+      const fileIds = allFiles.map((f) => f.id)
+      const allTags = await db
+        .select()
+        .from(fileGeofenceTags)
+        .where(inArray(fileGeofenceTags.fileId, fileIds))
+
+      const fileToFlight = new Map(allFiles.map((f) => [f.id, f.flightId]))
+      for (const tag of allTags) {
+        const flightId = fileToFlight.get(tag.fileId)
+        const gName = geofenceNameMap.get(tag.geofenceId)
+        if (!flightId || !gName) continue
+        if (!flightTagsMap.has(flightId)) flightTagsMap.set(flightId, [])
+        const tags = flightTagsMap.get(flightId)!
+        if (!tags.includes(gName)) tags.push(gName)
+      }
+    }
+  }
+
+  const availableLocationTags = [...new Set(allGeofences.map((g) => g.name))].sort()
+
   const rows: FlightRow[] = active.map((flight) => {
     const odmTask = latestOdmMap.get(flight.id)
     const georefTask = latestGeorefMap.get(flight.id)
@@ -117,6 +153,7 @@ export default async function FlightsPage({ params, searchParams }: PageProps) {
       taskStatus: (task?.status as any) ?? null,
       outputKey: task?.outputKey ?? null,
       taskCompletedAt: task?.completedAt ?? null,
+      locationTags: flightTagsMap.get(flight.id) ?? [],
     }
   })
 
@@ -131,6 +168,7 @@ export default async function FlightsPage({ params, searchParams }: PageProps) {
       flightPlan={flightPlan}
       from={from}
       isAdmin={session?.role === 'admin'}
+      availableLocationTags={availableLocationTags}
     />
   )
 }
