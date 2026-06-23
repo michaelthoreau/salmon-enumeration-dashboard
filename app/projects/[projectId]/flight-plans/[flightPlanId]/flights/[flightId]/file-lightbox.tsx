@@ -15,6 +15,7 @@ import { buttonVariants } from '@/components/ui/button'
 import {
   DownloadIcon,
   Trash2Icon,
+  MapPin,
 } from 'lucide-react'
 import type { Split } from '@/lib/schema'
 import { assignFileSplit } from '@/app/actions/files'
@@ -46,19 +47,21 @@ function thumbnailUrl(key: string, etag: string, size: number): string {
 
 interface FileEntry {
   key: string
+  id?: string
   size: number
   lastModifiedIso: string
   etag: string
   split: Split | null
+  latitude?: number | null
+  longitude?: number | null
 }
-
-// Split badge helpers removed
 
 interface Props {
   files: FileEntry[]
   timezone: string
   canWrite?: boolean
   onImageClick?: (file: FileEntry) => void
+  onSetLocation?: (file: FileEntry) => void
 }
 
 type SortField = 'name' | 'size' | 'date'
@@ -81,7 +84,7 @@ function sortFiles(files: FileEntry[], field: SortField, dir: SortDir): FileEntr
   })
 }
 
-export default function FileLightbox({ files: initialFiles, timezone, canWrite = false, onImageClick }: Props) {
+export default function FileLightbox({ files: initialFiles, timezone, canWrite = false, onImageClick, onSetLocation }: Props) {
   const router = useRouter()
   const [sortField, setSortField] = useState<SortField>('name')
   const [sortDir, setSortDir] = useState<SortDir>('asc')
@@ -288,7 +291,7 @@ export default function FileLightbox({ files: initialFiles, timezone, canWrite =
           <th className="text-left px-4 py-3 font-medium text-gray-600 cursor-pointer select-none hover:text-gray-900" onClick={() => handleSort('name')}>Filename{sortArrow('name')}</th>
           <th className="text-left px-4 py-3 font-medium text-gray-600 cursor-pointer select-none hover:text-gray-900" onClick={() => handleSort('size')}>Size{sortArrow('size')}</th>
           <th className="text-left px-4 py-3 font-medium text-gray-600 cursor-pointer select-none hover:text-gray-900" onClick={() => handleSort('date')}>Last modified{sortArrow('date')}</th>
-          {canWrite && <th className="w-10 px-4 py-3" />}
+          {canWrite && <th className="px-4 py-3 text-right font-medium text-gray-600">Actions</th>}
         </tr>
       </thead>
       <tbody className="divide-y divide-gray-100">
@@ -335,14 +338,36 @@ export default function FileLightbox({ files: initialFiles, timezone, canWrite =
               <td className="px-4 py-3 text-gray-500">{formatBytes(file.size)}</td>
               <td className="px-4 py-3 text-gray-500">{fmt.format(new Date(file.lastModifiedIso))}</td>
               {canWrite && (
-                <td className="px-4 py-3">
-                  <button
-                    onClick={() => deleteSingle(file.key)}
-                    className={cn(buttonVariants({ variant: 'ghost', size: 'xs' }), 'text-destructive hover:text-destructive')}
-                    aria-label="Delete"
-                  >
-                    <Trash2Icon className="w-3.5 h-3.5" />
-                  </button>
+                <td className="px-4 py-3 text-right">
+                  <div className="flex items-center justify-end gap-1.5">
+                    {onSetLocation && isVideo(file.key) && (
+                      file.latitude != null && file.longitude != null ? (
+                        <button
+                          onClick={() => onSetLocation(file)}
+                          className="inline-flex items-center gap-1 rounded-md bg-green-50 border border-green-200 px-2 py-0.5 text-[11px] text-green-700 font-medium hover:bg-green-100 transition-colors cursor-pointer"
+                          title={`${file.latitude.toFixed(4)}, ${file.longitude?.toFixed(4)} — click to change`}
+                        >
+                          <MapPin className="w-3 h-3" />
+                          <span>Change</span>
+                        </button>
+                      ) : (
+                        <button
+                          onClick={() => onSetLocation(file)}
+                          className="inline-flex items-center gap-1 rounded-md bg-red-50 border border-red-200 px-2 py-0.5 text-[11px] text-red-600 font-medium hover:bg-red-100 transition-colors cursor-pointer"
+                        >
+                          <MapPin className="w-3 h-3" />
+                          <span>Set location</span>
+                        </button>
+                      )
+                    )}
+                    <button
+                      onClick={() => deleteSingle(file.key)}
+                      className={cn(buttonVariants({ variant: 'ghost', size: 'xs' }), 'text-destructive hover:text-destructive')}
+                      aria-label="Delete"
+                    >
+                      <Trash2Icon className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
                 </td>
               )}
             </tr>

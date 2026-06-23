@@ -22,7 +22,7 @@ import OrthoMap from './ortho-map'
 import ProcessingModal from './processing-modal'
 import VideoPlayer from './video-player'
 import { Layers } from 'lucide-react'
-import { assignFileSplit, syncFlightFiles, updateBulkFileLocation } from '@/app/actions/files'
+import { assignFileSplit, syncFlightFiles, updateBulkFileLocation, updateFileLocation } from '@/app/actions/files'
 import { updateFlightPlanLocation } from '@/app/actions/flight-plans'
 import type { Split, flights, flightPlans, projects, odmTasks, georefTasks } from '@/lib/schema'
 import type { InferSelectModel } from 'drizzle-orm'
@@ -157,6 +157,8 @@ export default function FlightSplitView({
   const [showLocationDialog, setShowLocationDialog] = useState(false)
   const [locationPin, setLocationPin] = useState<[number, number] | null>(null)
   const [isSavingLocation, setIsSavingLocation] = useState(false)
+  const [singleLocationFileId, setSingleLocationFileId] = useState<string | null>(null)
+  const [singleLocationFileName, setSingleLocationFileName] = useState<string>('')
   const locationMapRef = useRef<HTMLDivElement>(null)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const locationMapInstanceRef = useRef<any | null>(null)
@@ -259,12 +261,25 @@ export default function FlightSplitView({
     }
   }, [showLocationDialog])
 
+  function openSingleLocationDialog(file: { key: string; id?: string; latitude?: number | null; longitude?: number | null }) {
+    if (!file.id) return
+    setSingleLocationFileId(file.id)
+    setSingleLocationFileName(file.key.split('/').pop() ?? file.key)
+    setLocationPin(file.latitude != null && file.longitude != null ? [file.longitude, file.latitude] : null)
+    setShowLocationDialog(true)
+  }
+
   async function handleSaveFileLocations() {
     if (!locationPin) return
     setIsSavingLocation(true)
 
-    const ids = filesMissingLocation.map((f) => f.id)
-    const result = await updateBulkFileLocation(ids, locationPin[1], locationPin[0])
+    let result: { error?: string }
+    if (singleLocationFileId) {
+      result = await updateFileLocation(singleLocationFileId, locationPin[1], locationPin[0])
+    } else {
+      const ids = filesMissingLocation.map((f) => f.id)
+      result = await updateBulkFileLocation(ids, locationPin[1], locationPin[0])
+    }
 
     setIsSavingLocation(false)
     if (result.error) {
@@ -274,6 +289,8 @@ export default function FlightSplitView({
 
     setShowLocationDialog(false)
     setLocationPin(null)
+    setSingleLocationFileId(null)
+    setSingleLocationFileName('')
     router.refresh()
   }
 
@@ -1352,6 +1369,7 @@ export default function FlightSplitView({
                 const match = displayObjects.find((o) => o.key === file.key)
                 if (match) setActiveImage(match)
               }}
+              onSetLocation={openSingleLocationDialog}
             />
           </div>
         </section>
@@ -2062,12 +2080,15 @@ export default function FlightSplitView({
       )}
 
       {/* Set Location Dialog */}
-      <Dialog open={showLocationDialog} onOpenChange={(open) => { if (!open) { setShowLocationDialog(false); setLocationPin(null) } }}>
+      <Dialog open={showLocationDialog} onOpenChange={(open) => { if (!open) { setShowLocationDialog(false); setLocationPin(null); setSingleLocationFileId(null); setSingleLocationFileName('') } }}>
         <DialogContent className="sm:max-w-3xl">
           <DialogHeader>
-            <DialogTitle>Set file location</DialogTitle>
+            <DialogTitle>{singleLocationFileId ? 'Set video location' : 'Set file location'}</DialogTitle>
             <DialogDescription>
-              Click the map to drop a pin. This will set coordinates for {filesMissingLocation.length} file{filesMissingLocation.length !== 1 ? 's' : ''} without location data.
+              {singleLocationFileId
+                ? <>Click the map to place a pin for <strong>{singleLocationFileName}</strong>.</>
+                : <>Click the map to drop a pin. This will set coordinates for {filesMissingLocation.length} file{filesMissingLocation.length !== 1 ? 's' : ''} without location data.</>
+              }
             </DialogDescription>
           </DialogHeader>
           <div
