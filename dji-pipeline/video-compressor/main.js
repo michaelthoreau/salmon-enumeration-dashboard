@@ -131,7 +131,7 @@ ipcMain.handle('compress', async (event, { inputFolder, videos, settings, overwr
 })
 
 function buildArgs(input, output, settings) {
-  const args = ['-i', input, '-map_metadata', '0', '-movflags', 'use_metadata_tags']
+  const args = ['-i', input, '-map', '0:v:0', '-map', '0:a?', '-map', '0:s?', '-map_metadata', '0', '-movflags', 'use_metadata_tags']
 
   const codec = settings.codec || 'h265'
   const encoder = settings.encoder || 'hardware'
@@ -192,7 +192,7 @@ function buildArgs(input, output, settings) {
     args.push('-c:a', 'aac', '-b:a', audioBitrate)
   }
 
-  args.push('-y', output)
+  args.push('-c:s', 'mov_text', '-y', output)
   return args
 }
 
