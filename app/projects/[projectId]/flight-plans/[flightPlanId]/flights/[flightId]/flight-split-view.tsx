@@ -5,7 +5,15 @@ import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { cn } from '@/lib/utils'
 import { Button, buttonVariants } from '@/components/ui/button'
-import { MapIcon, ImageIcon, DownloadIcon, ArrowLeft, Maximize2, Minimize2, RefreshCw, X, Wind, Cloud, Droplet, Thermometer, Compass, Waves, AlertTriangle, ZoomIn, ZoomOut, ChevronLeft, ChevronRight } from 'lucide-react'
+import { MapIcon, ImageIcon, DownloadIcon, ArrowLeft, Maximize2, Minimize2, RefreshCw, X, Wind, Cloud, Droplet, Thermometer, Compass, Waves, AlertTriangle, ZoomIn, ZoomOut, ChevronLeft, ChevronRight, MapPin } from 'lucide-react'
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from '@/components/ui/dialog'
 import FlightUploader from './flight-uploader'
 import FileLightbox from './file-lightbox'
 import EditFlightButton from './edit-flight-button'
@@ -14,7 +22,7 @@ import OrthoMap from './ortho-map'
 import ProcessingModal from './processing-modal'
 import VideoPlayer from './video-player'
 import { Layers } from 'lucide-react'
-import { assignFileSplit, syncFlightFiles } from '@/app/actions/files'
+import { assignFileSplit, syncFlightFiles, updateBulkFileLocation } from '@/app/actions/files'
 import { updateFlightPlanLocation } from '@/app/actions/flight-plans'
 import type { Split, flights, flightPlans, projects, odmTasks, georefTasks } from '@/lib/schema'
 import type { InferSelectModel } from 'drizzle-orm'
@@ -144,6 +152,129 @@ export default function FlightSplitView({
   const isResizingRef = useRef(false)
 
   const [isModalOpen, setIsModalOpen] = useState(false)
+
+  // Location override state
+  const [showLocationDialog, setShowLocationDialog] = useState(false)
+  const [locationPin, setLocationPin] = useState<[number, number] | null>(null)
+  const [isSavingLocation, setIsSavingLocation] = useState(false)
+  const locationMapRef = useRef<HTMLDivElement>(null)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const locationMapInstanceRef = useRef<any | null>(null)
+
+  const filesMissingLocation = displayObjects.filter(
+    (f) => f.latitude == null || f.longitude == null
+  )
+
+  // Init mini map in location dialog
+  useEffect(() => {
+    if (!showLocationDialog || !locationMapRef.current) return
+    let cancelled = false
+
+    async function initMiniMap() {
+      const maplibre = (await import('maplibre-gl')).default
+      await import('maplibre-gl/dist/maplibre-gl.css')
+      if (cancelled || !locationMapRef.current) return
+
+      const map = new maplibre.Map({
+        container: locationMapRef.current,
+        style: 'https://tiles.openfreemap.org/styles/liberty',
+        zoom: 10,
+        center: [-158.65, 59.25],
+        attributionControl: false,
+      })
+
+      locationMapInstanceRef.current = map
+
+      map.addControl(new maplibre.NavigationControl(), 'top-right')
+
+      // Satellite basemap
+      map.on('load', () => {
+        if (cancelled) return
+        map.addSource('esri-satellite', {
+          type: 'raster',
+          tiles: ['https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'],
+          tileSize: 256,
+          maxzoom: 17,
+        })
+        const firstLayerId = map.getStyle().layers?.[0]?.id
+        map.addLayer({ id: 'esri-satellite-layer', type: 'raster', source: 'esri-satellite' }, firstLayerId)
+
+        // Hide vector layers for satellite view
+        const style = map.getStyle()
+        if (style?.layers) {
+          for (const layer of style.layers) {
+            if ((layer.type === 'fill' || layer.type === 'background') && layer.id !== 'esri-satellite-layer') {
+              map.setLayoutProperty(layer.id, 'visibility', 'none')
+            }
+          }
+        }
+
+        // Pin source
+        map.addSource('pin-source', {
+          type: 'geojson',
+          data: { type: 'FeatureCollection', features: [] },
+        })
+        map.addLayer({
+          id: 'pin-layer',
+          type: 'circle',
+          source: 'pin-source',
+          paint: {
+            'circle-color': '#ef4444',
+            'circle-radius': 8,
+            'circle-stroke-color': '#ffffff',
+            'circle-stroke-width': 2,
+          },
+        })
+      })
+
+      map.on('click', (e: any) => {
+        const lngLat: [number, number] = [e.lngLat.lng, e.lngLat.lat]
+        setLocationPin(lngLat)
+
+        const src = map.getSource('pin-source')
+        if (src) {
+          (src as any).setData({
+            type: 'FeatureCollection',
+            features: [{
+              type: 'Feature',
+              geometry: { type: 'Point', coordinates: lngLat },
+              properties: {},
+            }],
+          })
+        }
+      })
+
+      map.getCanvas().style.cursor = 'crosshair'
+    }
+
+    initMiniMap()
+
+    return () => {
+      cancelled = true
+      if (locationMapInstanceRef.current) {
+        locationMapInstanceRef.current.remove()
+        locationMapInstanceRef.current = null
+      }
+    }
+  }, [showLocationDialog])
+
+  async function handleSaveFileLocations() {
+    if (!locationPin) return
+    setIsSavingLocation(true)
+
+    const ids = filesMissingLocation.map((f) => f.id)
+    const result = await updateBulkFileLocation(ids, locationPin[1], locationPin[0])
+
+    setIsSavingLocation(false)
+    if (result.error) {
+      alert(result.error)
+      return
+    }
+
+    setShowLocationDialog(false)
+    setLocationPin(null)
+    router.refresh()
+  }
 
   // Helper to compute Tide SVG path parameters for a given viewport size
   const getTideSvgData = useCallback((width: number, height: number, padX: number, padY: number) => {
@@ -1177,6 +1308,27 @@ export default function FlightSplitView({
           )}
         </section>
 
+        {/* Missing location banner */}
+        {canWrite && filesMissingLocation.length > 0 && (
+          <div className="border-t border-gray-100 pt-4">
+            <button
+              type="button"
+              onClick={() => setShowLocationDialog(true)}
+              className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg bg-amber-50 border border-amber-200 text-left hover:bg-amber-100 transition-colors group"
+            >
+              <MapPin className="w-4 h-4 text-amber-500 flex-shrink-0" />
+              <div className="flex-1 min-w-0">
+                <p className="text-xs font-semibold text-amber-700">
+                  {filesMissingLocation.length} file{filesMissingLocation.length !== 1 ? 's' : ''} missing location
+                </p>
+                <p className="text-[10px] text-amber-600 mt-0.5">
+                  Click to drop a pin on the map
+                </p>
+              </div>
+            </button>
+          </div>
+        )}
+
         {/* File list */}
         <section className="border-t border-gray-100 pt-4">
           <h2 className="text-xs font-semibold uppercase tracking-wider text-gray-400 mb-1">All Flight Files</h2>
@@ -1907,6 +2059,35 @@ export default function FlightSplitView({
           </div>
         </div>
       )}
+
+      {/* Set Location Dialog */}
+      <Dialog open={showLocationDialog} onOpenChange={(open) => { if (!open) { setShowLocationDialog(false); setLocationPin(null) } }}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Set file location</DialogTitle>
+            <DialogDescription>
+              Click the map to drop a pin. This will set coordinates for {filesMissingLocation.length} file{filesMissingLocation.length !== 1 ? 's' : ''} without location data.
+            </DialogDescription>
+          </DialogHeader>
+          <div
+            ref={locationMapRef}
+            className="w-full h-64 rounded-lg border border-gray-200 overflow-hidden"
+          />
+          {locationPin && (
+            <p className="text-xs text-gray-500 font-mono">
+              {locationPin[1].toFixed(6)}, {locationPin[0].toFixed(6)}
+            </p>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => { setShowLocationDialog(false); setLocationPin(null) }}>
+              Cancel
+            </Button>
+            <Button onClick={handleSaveFileLocations} disabled={!locationPin || isSavingLocation}>
+              {isSavingLocation ? 'Saving...' : 'Set Location'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

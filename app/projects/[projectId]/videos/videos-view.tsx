@@ -1,11 +1,20 @@
 'use client'
 
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useRef, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { Video, Search, RefreshCw, Fish, NotebookPen, MapPin } from 'lucide-react'
 import Link from 'next/link'
 import { cn } from '@/lib/utils'
-import { buttonVariants } from '@/components/ui/button'
+import { Button, buttonVariants } from '@/components/ui/button'
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from '@/components/ui/dialog'
+import { updateFileLocation } from '@/app/actions/files'
 
 interface VideoEntry {
   fileId: string
@@ -21,6 +30,8 @@ interface VideoEntry {
   fishCount: number
   noteCount: number
   locationTags: string[]
+  latitude: number | null
+  longitude: number | null
 }
 
 function formatBytes(bytes: number): string {
@@ -73,6 +84,132 @@ export default function VideosView({ projectId, timezone, videos, canWrite, avai
   const [search, setSearch] = useState('')
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [locationFilter, setLocationFilter] = useState<string>('')
+
+  // Location dialog state
+  const [locationDialogFileId, setLocationDialogFileId] = useState<string | null>(null)
+  const [locationDialogFileName, setLocationDialogFileName] = useState<string>('')
+  const [locationPin, setLocationPin] = useState<[number, number] | null>(null)
+  const [isSavingLocation, setIsSavingLocation] = useState(false)
+  const locationMapRef = useRef<HTMLDivElement>(null)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const locationMapInstanceRef = useRef<any | null>(null)
+
+  function openLocationDialog(video: VideoEntry) {
+    const filename = video.key.split('/').pop() ?? video.key
+    setLocationDialogFileId(video.fileId)
+    setLocationDialogFileName(filename)
+    setLocationPin(video.latitude != null && video.longitude != null ? [video.longitude, video.latitude] : null)
+  }
+
+  function closeLocationDialog() {
+    setLocationDialogFileId(null)
+    setLocationDialogFileName('')
+    setLocationPin(null)
+  }
+
+  // Init mini map when dialog opens
+  useEffect(() => {
+    if (!locationDialogFileId || !locationMapRef.current) return
+    let cancelled = false
+
+    async function initMiniMap() {
+      const maplibre = (await import('maplibre-gl')).default
+      await import('maplibre-gl/dist/maplibre-gl.css')
+      if (cancelled || !locationMapRef.current) return
+
+      const initialCenter: [number, number] = locationPin ?? [-158.65, 59.25]
+
+      const map = new maplibre.Map({
+        container: locationMapRef.current,
+        style: 'https://tiles.openfreemap.org/styles/liberty',
+        zoom: 10,
+        center: initialCenter,
+        attributionControl: false,
+      })
+
+      locationMapInstanceRef.current = map
+      map.addControl(new maplibre.NavigationControl(), 'top-right')
+
+      map.on('load', () => {
+        if (cancelled) return
+        map.addSource('esri-satellite', {
+          type: 'raster',
+          tiles: ['https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'],
+          tileSize: 256,
+          maxzoom: 17,
+        })
+        const firstLayerId = map.getStyle().layers?.[0]?.id
+        map.addLayer({ id: 'esri-satellite-layer', type: 'raster', source: 'esri-satellite' }, firstLayerId)
+
+        const style = map.getStyle()
+        if (style?.layers) {
+          for (const layer of style.layers) {
+            if ((layer.type === 'fill' || layer.type === 'background') && layer.id !== 'esri-satellite-layer') {
+              map.setLayoutProperty(layer.id, 'visibility', 'none')
+            }
+          }
+        }
+
+        map.addSource('pin-source', {
+          type: 'geojson',
+          data: {
+            type: 'FeatureCollection',
+            features: locationPin
+              ? [{ type: 'Feature', geometry: { type: 'Point', coordinates: locationPin }, properties: {} }]
+              : [],
+          },
+        })
+        map.addLayer({
+          id: 'pin-layer',
+          type: 'circle',
+          source: 'pin-source',
+          paint: {
+            'circle-color': '#ef4444',
+            'circle-radius': 8,
+            'circle-stroke-color': '#ffffff',
+            'circle-stroke-width': 2,
+          },
+        })
+      })
+
+      map.on('click', (e: any) => {
+        const lngLat: [number, number] = [e.lngLat.lng, e.lngLat.lat]
+        setLocationPin(lngLat)
+        const src = map.getSource('pin-source')
+        if (src) {
+          (src as any).setData({
+            type: 'FeatureCollection',
+            features: [{ type: 'Feature', geometry: { type: 'Point', coordinates: lngLat }, properties: {} }],
+          })
+        }
+      })
+
+      map.getCanvas().style.cursor = 'crosshair'
+    }
+
+    initMiniMap()
+    return () => {
+      cancelled = true
+      if (locationMapInstanceRef.current) {
+        locationMapInstanceRef.current.remove()
+        locationMapInstanceRef.current = null
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [locationDialogFileId])
+
+  async function handleSaveLocation() {
+    if (!locationDialogFileId || !locationPin) return
+    setIsSavingLocation(true)
+    const result = await updateFileLocation(locationDialogFileId, locationPin[1], locationPin[0])
+    setIsSavingLocation(false)
+    if (result.error) {
+      alert(result.error)
+      return
+    }
+    closeLocationDialog()
+    router.refresh()
+  }
 
   const handleRefresh = () => {
     setIsRefreshing(true)
@@ -184,6 +321,7 @@ export default function VideosView({ projectId, timezone, videos, canWrite, avai
                         <th className="text-left px-6 py-3 font-medium text-gray-600">Time</th>
                         <th className="text-left px-6 py-3 font-medium text-gray-600">Size</th>
                         <th className="text-left px-6 py-3 font-medium text-gray-600">Fish</th>
+                        <th className="text-left px-6 py-3 font-medium text-gray-600">Location</th>
                         <th className="text-left px-6 py-3 font-medium text-gray-600">Notes</th>
                       </tr>
                     </thead>
@@ -217,6 +355,30 @@ export default function VideosView({ projectId, timezone, videos, canWrite, avai
                               )}
                             </td>
                             <td className="px-6 py-3">
+                              {v.latitude != null && v.longitude != null ? (
+                                <button
+                                  type="button"
+                                  onClick={() => openLocationDialog(v)}
+                                  className="inline-flex items-center gap-1 text-green-600 hover:text-green-700 transition-colors text-xs"
+                                  title={`${v.latitude.toFixed(4)}, ${v.longitude.toFixed(4)}`}
+                                >
+                                  <MapPin className="w-3.5 h-3.5" />
+                                  <span>Set</span>
+                                </button>
+                              ) : canWrite ? (
+                                <button
+                                  type="button"
+                                  onClick={() => openLocationDialog(v)}
+                                  className="inline-flex items-center gap-1 text-amber-500 hover:text-amber-600 transition-colors text-xs"
+                                >
+                                  <MapPin className="w-3.5 h-3.5" />
+                                  <span>Set</span>
+                                </button>
+                              ) : (
+                                <span className="text-gray-300">—</span>
+                              )}
+                            </td>
+                            <td className="px-6 py-3">
                               {v.noteCount > 0 ? (
                                 <span className="inline-flex items-center gap-1 text-yellow-600">
                                   <NotebookPen className="w-3.5 h-3.5" />
@@ -237,6 +399,33 @@ export default function VideosView({ projectId, timezone, videos, canWrite, avai
           </div>
         )}
       </section>
+
+      {/* Set Location Dialog */}
+      <Dialog open={!!locationDialogFileId} onOpenChange={(open) => { if (!open) closeLocationDialog() }}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Set video location</DialogTitle>
+            <DialogDescription>
+              Click the map to place a pin for <strong>{locationDialogFileName}</strong>.
+            </DialogDescription>
+          </DialogHeader>
+          <div
+            ref={locationMapRef}
+            className="w-full h-64 rounded-lg border border-gray-200 overflow-hidden"
+          />
+          {locationPin && (
+            <p className="text-xs text-gray-500 font-mono">
+              {locationPin[1].toFixed(6)}, {locationPin[0].toFixed(6)}
+            </p>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={closeLocationDialog}>Cancel</Button>
+            <Button onClick={handleSaveLocation} disabled={!locationPin || isSavingLocation}>
+              {isSavingLocation ? 'Saving...' : 'Set Location'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

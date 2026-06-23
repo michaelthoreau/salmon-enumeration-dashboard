@@ -3,7 +3,7 @@
 import { useEffect, useState, useActionState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { ChevronLeft, ChevronRight, Calendar, Layers, ArrowRight, CheckCircle2, AlertCircle, Sparkles, Pin, PinOff, EyeOff, Thermometer, Wind, Cloud, Waves, Plus } from 'lucide-react'
+import { ChevronLeft, ChevronRight, Calendar, Layers, ArrowRight, CheckCircle2, AlertCircle, Sparkles, Pin, PinOff, EyeOff, Thermometer, Wind, Cloud, Waves, Plus, MapPin } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Button, buttonVariants } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -391,6 +391,18 @@ function FlightCard({
             )}
             {(flight.taskStatus || flight.fileCount === 0) && <span>•</span>}
             <StatusBadge status={flight.taskStatus} fileCount={flight.fileCount} />
+            <span>•</span>
+            {loc ? (
+              <span className="inline-flex items-center gap-1 text-green-600">
+                <MapPin className="w-3 h-3" />
+                <span>Location set</span>
+              </span>
+            ) : (
+              <span className="inline-flex items-center gap-1 text-amber-500">
+                <MapPin className="w-3 h-3" />
+                <span>No location</span>
+              </span>
+            )}
           </div>
 
           {/* Flight Notes */}

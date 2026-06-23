@@ -141,6 +141,8 @@ export default async function VideosPage({ params }: PageProps) {
         fishCount: fishCountMap.get(f.id) ?? 0,
         noteCount: noteCountMap.get(f.id) ?? 0,
         locationTags: tagsByFileId.get(f.id) ?? [],
+        latitude: f.latitude ?? null,
+        longitude: f.longitude ?? null,
       }
     })
     .sort((a, b) => new Date(b.flightTimestamp).getTime() - new Date(a.flightTimestamp).getTime())

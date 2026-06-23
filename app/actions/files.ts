@@ -2,7 +2,7 @@
 
 import { db } from '@/lib/db'
 import { files, flightPlans, flights } from '@/lib/schema'
-import { eq, and, isNull } from 'drizzle-orm'
+import { eq, and, isNull, inArray } from 'drizzle-orm'
 import { getSession } from '@/lib/session'
 import { headObject, listFlightObjects } from '@/lib/s3'
 import { randomUUID } from 'crypto'
@@ -287,4 +287,38 @@ export async function getProjectFlightsForSync(
     console.error('Failed to get project flights for sync:', err)
     return { ok: false, flights: [], error: String(err) }
   }
+}
+
+export async function updateFileLocation(
+  fileId: string,
+  latitude: number | null,
+  longitude: number | null,
+): Promise<{ error?: string; ok?: boolean }> {
+  const session = await getSession()
+  if (!session || session.role === 'read') return { error: 'Unauthorized.' }
+
+  await db
+    .update(files)
+    .set({ latitude, longitude })
+    .where(eq(files.id, fileId))
+
+  return { ok: true }
+}
+
+export async function updateBulkFileLocation(
+  fileIds: string[],
+  latitude: number,
+  longitude: number,
+): Promise<{ error?: string; updated?: number }> {
+  const session = await getSession()
+  if (!session || session.role === 'read') return { error: 'Unauthorized.' }
+
+  if (fileIds.length === 0) return { updated: 0 }
+
+  await db
+    .update(files)
+    .set({ latitude, longitude })
+    .where(inArray(files.id, fileIds))
+
+  return { updated: fileIds.length }
 }
