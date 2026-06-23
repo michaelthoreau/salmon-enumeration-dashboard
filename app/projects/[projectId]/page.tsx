@@ -109,6 +109,20 @@ export default async function ProjectTodayPage({ params }: PageProps) {
     .where(inArray(filesTable.flightId, flightIds))
     .groupBy(filesTable.flightId)
 
+  // Check which flights have files with coordinates
+  const flightsWithCoords = flightIds.length > 0
+    ? await db
+        .select({ flightId: filesTable.flightId })
+        .from(filesTable)
+        .where(and(
+          inArray(filesTable.flightId, flightIds),
+          sql`${filesTable.latitude} IS NOT NULL`,
+          sql`${filesTable.longitude} IS NOT NULL`,
+        ))
+        .groupBy(filesTable.flightId)
+    : []
+  const hasFileLocationSet = new Set(flightsWithCoords.map((r) => r.flightId))
+
   const odmTaskRows = await db
     .select()
     .from(odmTasks)
@@ -170,6 +184,7 @@ export default async function ProjectTodayPage({ params }: PageProps) {
       flightPlanId: flight.flightPlanId,
       flightPlanName: plan.displayName || plan.name,
       flightPlanLocation: plan.location,
+      hasFileLocations: hasFileLocationSet.has(flight.id),
       timestamp: flight.timestamp,
       notes: flight.notes,
       fileCount: fileCountMap.get(flight.id) ?? 0,

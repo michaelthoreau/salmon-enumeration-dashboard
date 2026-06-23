@@ -6,6 +6,7 @@ import { eq } from 'drizzle-orm'
 import { headObject } from '@/lib/s3'
 import { randomUUID } from 'crypto'
 import { extractExifGps } from '@/lib/exif'
+import { tagFilesAgainstGeofences, getProjectIdForFlight } from '@/lib/geofence-tagger'
 
 export async function POST(request: NextRequest) {
   const session = await getSession()
@@ -57,6 +58,16 @@ export async function POST(request: NextRequest) {
         longitude: coords?.longitude ?? null,
       },
     })
+
+  if (coords) {
+    const projectId = await getProjectIdForFlight(flightId)
+    if (projectId) {
+      const [file] = await db.select({ id: files.id }).from(files).where(eq(files.key, key))
+      if (file) {
+        tagFilesAgainstGeofences(projectId, [{ id: file.id, latitude: coords.latitude, longitude: coords.longitude }]).catch(() => {})
+      }
+    }
+  }
 
   return NextResponse.json({ ok: true, etag })
 }

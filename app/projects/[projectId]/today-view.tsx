@@ -24,6 +24,7 @@ interface FlightRow {
   flightPlanId: string
   flightPlanName: string
   flightPlanLocation: string | null
+  hasFileLocations: boolean
   timestamp: Date
   notes: string | null
   fileCount: number
@@ -392,13 +393,13 @@ function FlightCard({
             {(flight.taskStatus || flight.fileCount === 0) && <span>•</span>}
             <StatusBadge status={flight.taskStatus} fileCount={flight.fileCount} />
             <span>•</span>
-            {loc ? (
+            {loc || flight.hasFileLocations ? (
               <span className="inline-flex items-center gap-1 text-green-600">
                 <MapPin className="w-3 h-3" />
                 <span>Location set</span>
               </span>
             ) : (
-              <span className="inline-flex items-center gap-1 text-amber-500">
+              <span className="inline-flex items-center gap-1 text-red-500">
                 <MapPin className="w-3 h-3" />
                 <span>No location</span>
               </span>
