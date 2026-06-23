@@ -165,12 +165,13 @@ export default function FlightSplitView({
     (f) => f.latitude == null || f.longitude == null
   )
 
-  // Init mini map in location dialog
+  // Init mini map in location dialog (defer to let portal mount)
   useEffect(() => {
-    if (!showLocationDialog || !locationMapRef.current) return
+    if (!showLocationDialog) return
     let cancelled = false
 
     async function initMiniMap() {
+      await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))
       const maplibre = (await import('maplibre-gl')).default
       await import('maplibre-gl/dist/maplibre-gl.css')
       if (cancelled || !locationMapRef.current) return

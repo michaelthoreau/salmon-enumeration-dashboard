@@ -107,12 +107,14 @@ export default function VideosView({ projectId, timezone, videos, canWrite, avai
     setLocationPin(null)
   }
 
-  // Init mini map when dialog opens
+  // Init mini map when dialog opens (defer to let portal mount)
   useEffect(() => {
-    if (!locationDialogFileId || !locationMapRef.current) return
+    if (!locationDialogFileId) return
     let cancelled = false
 
     async function initMiniMap() {
+      // Wait for dialog portal to mount the container
+      await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))
       const maplibre = (await import('maplibre-gl')).default
       await import('maplibre-gl/dist/maplibre-gl.css')
       if (cancelled || !locationMapRef.current) return
