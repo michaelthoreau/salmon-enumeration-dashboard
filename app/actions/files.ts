@@ -1,13 +1,66 @@
 'use server'
 
 import { db } from '@/lib/db'
-import { files, flightPlans, flights } from '@/lib/schema'
-import { eq, and, isNull, inArray } from 'drizzle-orm'
+import { files, flightPlans, flights, geofences, fileGeofenceTags } from '@/lib/schema'
+import { eq, and, isNull, inArray, isNotNull } from 'drizzle-orm'
 import { getSession } from '@/lib/session'
 import { headObject, listFlightObjects } from '@/lib/s3'
 import { randomUUID } from 'crypto'
 import type { Split } from '@/lib/schema'
 import { extractExifGps } from '@/lib/exif'
+
+function pointInPolygon(lat: number, lng: number, polygon: number[][]): boolean {
+  let inside = false
+  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+    const [xi, yi] = polygon[i]
+    const [xj, yj] = polygon[j]
+    const intersect = yi > lat !== yj > lat && lng < ((xj - xi) * (lat - yi)) / (yj - yi) + xi
+    if (intersect) inside = !inside
+  }
+  return inside
+}
+
+async function tagFilesAgainstGeofences(
+  projectId: string,
+  newFiles: { id: string; latitude: number | null; longitude: number | null }[],
+) {
+  const filesWithCoords = newFiles.filter((f) => f.latitude != null && f.longitude != null)
+  if (filesWithCoords.length === 0) return
+
+  const allGeofences = await db
+    .select()
+    .from(geofences)
+    .where(eq(geofences.projectId, projectId))
+
+  if (allGeofences.length === 0) return
+
+  // Get existing tags to avoid duplicates
+  const fileIds = filesWithCoords.map((f) => f.id)
+  const existingTags = await db
+    .select()
+    .from(fileGeofenceTags)
+    .where(inArray(fileGeofenceTags.fileId, fileIds))
+
+  const existingSet = new Set(existingTags.map((t) => `${t.fileId}:${t.geofenceId}`))
+
+  const tags: { fileId: string; geofenceId: string }[] = []
+  for (const g of allGeofences) {
+    try {
+      const geom = JSON.parse(g.geometry)
+      const ring: number[][] = geom.coordinates[0]
+      for (const f of filesWithCoords) {
+        const key = `${f.id}:${g.id}`
+        if (!existingSet.has(key) && pointInPolygon(f.latitude!, f.longitude!, ring)) {
+          tags.push({ fileId: f.id, geofenceId: g.id })
+        }
+      }
+    } catch { /* skip malformed geofences */ }
+  }
+
+  if (tags.length > 0) {
+    await db.insert(fileGeofenceTags).values(tags)
+  }
+}
 
 const VALID_SPLITS = new Set<string>(['train', 'val', 'test'])
 
@@ -115,6 +168,7 @@ export async function syncFlightFiles(
       (f) => f.latitude === null && f.longitude === null &&
              (f.key.toLowerCase().endsWith('.jpg') || f.key.toLowerCase().endsWith('.jpeg'))
     )
+    const backfilledFiles: { id: string; latitude: number | null; longitude: number | null }[] = []
     for (const f of needsBackfill) {
       const coords = await extractExifGps(f.key)
       if (coords) {
@@ -122,7 +176,24 @@ export async function syncFlightFiles(
           .update(files)
           .set({ latitude: coords.latitude, longitude: coords.longitude })
           .where(eq(files.id, f.id))
+        backfilledFiles.push({ id: f.id, latitude: coords.latitude, longitude: coords.longitude })
       }
+    }
+
+    // Auto-tag new and backfilled files against existing geofences
+    if (added > 0 || backfilledFiles.length > 0) {
+      const newlyAdded = await db
+        .select({ id: files.id, latitude: files.latitude, longitude: files.longitude })
+        .from(files)
+        .where(and(
+          eq(files.flightId, flightId),
+          isNotNull(files.latitude),
+          isNotNull(files.longitude),
+        ))
+
+      await tagFilesAgainstGeofences(projectId, newlyAdded).catch((err) => {
+        console.error('Failed to auto-tag files against geofences:', err)
+      })
     }
 
     return { ok: true, added, removed }

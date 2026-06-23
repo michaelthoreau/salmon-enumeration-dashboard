@@ -16,6 +16,15 @@ import {
 import { createGeofence, deleteGeofence } from '@/app/actions/geofences'
 import 'maplibre-gl/dist/maplibre-gl.css'
 
+const popupCss = `
+.maplibregl-popup-close-button {
+  right: 8px !important;
+  top: 4px !important;
+  font-size: 18px;
+  padding: 2px 6px;
+}
+`
+
 interface RouteEntry {
   id: string
   name: string
@@ -234,6 +243,14 @@ export default function MapView({ projectId, timezone, routes, fileMarkers = [],
 
     return { type: 'FeatureCollection' as const, features: features as any[] }
   }, [geofences])
+
+  // Inject popup CSS
+  useEffect(() => {
+    const style = document.createElement('style')
+    style.textContent = popupCss
+    document.head.appendChild(style)
+    return () => { document.head.removeChild(style) }
+  }, [])
 
   // Initialize map
   useEffect(() => {

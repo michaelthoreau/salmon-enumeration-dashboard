@@ -146,3 +146,61 @@ export async function retagGeofence(
   revalidatePath(`/projects/${projectId}`)
   return { tagged: tags.length }
 }
+
+export async function retagAllGeofences(
+  projectId: string,
+): Promise<{ error?: string; tagged?: number }> {
+  const session = await getSession()
+  if (!session || session.role === 'read') return { error: 'Unauthorized.' }
+
+  const allGeofences = await db
+    .select()
+    .from(geofences)
+    .where(eq(geofences.projectId, projectId))
+
+  if (allGeofences.length === 0) return { tagged: 0 }
+
+  const plans = await db
+    .select({ id: flightPlans.id })
+    .from(flightPlans)
+    .where(and(eq(flightPlans.projectId, projectId), isNull(flightPlans.deletedAt)))
+
+  if (plans.length === 0) return { tagged: 0 }
+
+  const planIds = plans.map((p) => p.id)
+  const allFlights = await db
+    .select({ id: flights.id })
+    .from(flights)
+    .where(and(inArray(flights.flightPlanId, planIds), isNull(flights.deletedAt)))
+
+  if (allFlights.length === 0) return { tagged: 0 }
+
+  const flightIds = allFlights.map((f) => f.id)
+  const allFiles = await db
+    .select({ id: files.id, latitude: files.latitude, longitude: files.longitude })
+    .from(files)
+    .where(and(inArray(files.flightId, flightIds), isNotNull(files.latitude), isNotNull(files.longitude)))
+
+  // Clear all tags for this project's geofences
+  const geofenceIds = allGeofences.map((g) => g.id)
+  await db.delete(fileGeofenceTags).where(inArray(fileGeofenceTags.geofenceId, geofenceIds))
+
+  // Recompute all tags
+  let totalTagged = 0
+  for (const g of allGeofences) {
+    const geom = JSON.parse(g.geometry)
+    const ring: number[][] = geom.coordinates[0]
+
+    const tags = allFiles
+      .filter((f) => f.latitude != null && f.longitude != null && pointInPolygon(f.latitude!, f.longitude!, ring))
+      .map((f) => ({ fileId: f.id, geofenceId: g.id }))
+
+    if (tags.length > 0) {
+      await db.insert(fileGeofenceTags).values(tags)
+      totalTagged += tags.length
+    }
+  }
+
+  revalidatePath(`/projects/${projectId}`)
+  return { tagged: totalTagged }
+}
