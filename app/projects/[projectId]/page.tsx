@@ -1,7 +1,7 @@
 import React from 'react'
 import { notFound } from 'next/navigation'
 import { db } from '@/lib/db'
-import { projects, flightPlans, flights, files as filesTable, odmTasks, georefTasks, annotations } from '@/lib/schema'
+import { projects, flightPlans, flights, files as filesTable, odmTasks, georefTasks, annotations, geofences, fileGeofenceTags } from '@/lib/schema'
 import { eq, and, isNull, inArray, desc, sql } from 'drizzle-orm'
 import { getSession } from '@/lib/session'
 
@@ -109,19 +109,39 @@ export default async function ProjectTodayPage({ params }: PageProps) {
     .where(inArray(filesTable.flightId, flightIds))
     .groupBy(filesTable.flightId)
 
-  // Check which flights have files with coordinates
-  const flightsWithCoords = flightIds.length > 0
-    ? await db
-        .select({ flightId: filesTable.flightId })
-        .from(filesTable)
-        .where(and(
-          inArray(filesTable.flightId, flightIds),
-          sql`${filesTable.latitude} IS NOT NULL`,
-          sql`${filesTable.longitude} IS NOT NULL`,
-        ))
-        .groupBy(filesTable.flightId)
-    : []
-  const hasFileLocationSet = new Set(flightsWithCoords.map((r) => r.flightId))
+  // Fetch geofence tags per flight
+  const allGeofences = await db
+    .select()
+    .from(geofences)
+    .where(eq(geofences.projectId, projectId))
+
+  const geofenceNameMap = new Map(allGeofences.map((g) => [g.id, g.name]))
+  const flightLocationTags = new Map<string, string[]>()
+
+  if (flightIds.length > 0 && allGeofences.length > 0) {
+    const allFiles = await db
+      .select({ id: filesTable.id, flightId: filesTable.flightId })
+      .from(filesTable)
+      .where(inArray(filesTable.flightId, flightIds))
+
+    if (allFiles.length > 0) {
+      const fileIds = allFiles.map((f) => f.id)
+      const allTags = await db
+        .select()
+        .from(fileGeofenceTags)
+        .where(inArray(fileGeofenceTags.fileId, fileIds))
+
+      const fileToFlight = new Map(allFiles.map((f) => [f.id, f.flightId]))
+      for (const tag of allTags) {
+        const fId = fileToFlight.get(tag.fileId)
+        const gName = geofenceNameMap.get(tag.geofenceId)
+        if (!fId || !gName) continue
+        if (!flightLocationTags.has(fId)) flightLocationTags.set(fId, [])
+        const tags = flightLocationTags.get(fId)!
+        if (!tags.includes(gName)) tags.push(gName)
+      }
+    }
+  }
 
   const odmTaskRows = await db
     .select()
@@ -184,7 +204,10 @@ export default async function ProjectTodayPage({ params }: PageProps) {
       flightPlanId: flight.flightPlanId,
       flightPlanName: plan.displayName || plan.name,
       flightPlanLocation: plan.location,
-      hasFileLocations: hasFileLocationSet.has(flight.id),
+      locationTags: (flightLocationTags.get(flight.id) ?? []).map((name) => {
+        const g = allGeofences.find((gf) => gf.name === name)
+        return { name, color: g?.color ?? '#6b7280' }
+      }),
       timestamp: flight.timestamp,
       notes: flight.notes,
       fileCount: fileCountMap.get(flight.id) ?? 0,
