@@ -1,15 +1,13 @@
-import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { db } from '@/lib/db'
-import { projects, flightPlans } from '@/lib/schema'
-import { eq, desc } from 'drizzle-orm'
+import { projects, flightPlans, flights, files as filesTable, geofences, fileGeofenceTags } from '@/lib/schema'
+import { eq, desc, and, isNull, inArray } from 'drizzle-orm'
 import { getSession } from '@/lib/session'
-import { cn } from '@/lib/utils'
-import { buttonVariants } from '@/components/ui/button'
 import CreateFlightPlanForm from './create-flight-plan-form'
-import { DeleteFlightPlanButton, RestoreFlightPlanButton, EditFlightPlanButton } from './flight-plan-actions'
+import { RestoreFlightPlanButton } from './flight-plan-actions'
 import SyncProjectButton from './sync-project-button'
 import DjiSyncButton from './dji-sync-button'
+import FlightPlansView from './flight-plans-view'
 
 interface PageProps {
   params: Promise<{ projectId: string }>
@@ -33,6 +31,66 @@ export default async function FlightPlansPage({ params }: PageProps) {
   const active = allPlans.filter((p) => !p.deletedAt)
   const deleted = allPlans.filter((p) => p.deletedAt)
 
+  // Fetch geofence tags per flight plan
+  const allGeofences = await db
+    .select()
+    .from(geofences)
+    .where(eq(geofences.projectId, projectId))
+
+  const geofenceNameMap = new Map(allGeofences.map((g) => [g.id, g.name]))
+  const availableTags = [...new Set(allGeofences.map((g) => g.name))].sort()
+
+  const planTagsMap = new Map<string, string[]>()
+
+  if (active.length > 0 && allGeofences.length > 0) {
+    const planIds = active.map((p) => p.id)
+    const allFlights = await db
+      .select({ id: flights.id, flightPlanId: flights.flightPlanId })
+      .from(flights)
+      .where(and(inArray(flights.flightPlanId, planIds), isNull(flights.deletedAt)))
+
+    if (allFlights.length > 0) {
+      const flightIds = allFlights.map((f) => f.id)
+      const allFiles = await db
+        .select({ id: filesTable.id, flightId: filesTable.flightId })
+        .from(filesTable)
+        .where(inArray(filesTable.flightId, flightIds))
+
+      if (allFiles.length > 0) {
+        const fileIds = allFiles.map((f) => f.id)
+        const allTags = await db
+          .select()
+          .from(fileGeofenceTags)
+          .where(inArray(fileGeofenceTags.fileId, fileIds))
+
+        const fileToFlightPlan = new Map<string, string>()
+        const flightToPlan = new Map(allFlights.map((f) => [f.id, f.flightPlanId]))
+        for (const f of allFiles) {
+          const planId = flightToPlan.get(f.flightId)
+          if (planId) fileToFlightPlan.set(f.id, planId)
+        }
+
+        for (const tag of allTags) {
+          const planId = fileToFlightPlan.get(tag.fileId)
+          const gName = geofenceNameMap.get(tag.geofenceId)
+          if (!planId || !gName) continue
+          if (!planTagsMap.has(planId)) planTagsMap.set(planId, [])
+          const tags = planTagsMap.get(planId)!
+          if (!tags.includes(gName)) tags.push(gName)
+        }
+      }
+    }
+  }
+
+  const activePlansData = active.map((plan) => ({
+    id: plan.id,
+    name: plan.name,
+    displayName: plan.displayName,
+    description: plan.description,
+    createdAt: plan.createdAt.toISOString(),
+    locationTags: planTagsMap.get(plan.id) ?? [],
+  }))
+
   return (
     <div className="space-y-8">
       <section>
@@ -47,50 +105,12 @@ export default async function FlightPlansPage({ params }: PageProps) {
             {isAdmin && <CreateFlightPlanForm projectId={projectId} timezone={project.timezone} />}
           </div>
         </div>
-        <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-          {active.length === 0 ? (
-            <p className="text-sm text-gray-500 p-6">No flight routes yet.</p>
-          ) : (
-            <table className="w-full text-sm">
-              <thead className="bg-gray-50 border-b border-gray-200">
-                <tr>
-                  <th className="text-left px-6 py-3 font-medium text-gray-600">Name</th>
-                  <th className="text-left px-6 py-3 font-medium text-gray-600">Description</th>
-                  <th className="text-left px-6 py-3 font-medium text-gray-600">Created</th>
-                  {isAdmin && <th className="px-6 py-3" />}
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-100">
-                {active.map((plan) => (
-                  <tr key={plan.id}>
-                    <td className="px-6 py-3">
-                      <Link
-                        href={`/projects/${projectId}/flight-plans/${plan.id}/flights?from=list`}
-                        className={cn(buttonVariants({ variant: 'outline', size: 'sm' }))}
-                      >
-                        {plan.displayName || plan.name}
-                      </Link>
-                    </td>
-                    <td className="px-6 py-3 text-gray-500">
-                      {plan.description ?? '—'}
-                    </td>
-                    <td className="px-6 py-3 text-gray-500">
-                      {plan.createdAt.toLocaleDateString()}
-                    </td>
-                    {isAdmin && (
-                      <td className="px-6 py-3 text-right">
-                        <div className="flex items-center justify-end gap-1">
-                          <EditFlightPlanButton plan={plan} projectId={projectId} />
-                          <DeleteFlightPlanButton plan={plan} projectId={projectId} />
-                        </div>
-                      </td>
-                    )}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-        </div>
+        <FlightPlansView
+          plans={activePlansData}
+          projectId={projectId}
+          isAdmin={isAdmin}
+          availableLocationTags={availableTags}
+        />
       </section>
 
       {isAdmin && deleted.length > 0 && (

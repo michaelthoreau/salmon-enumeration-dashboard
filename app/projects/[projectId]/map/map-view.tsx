@@ -207,7 +207,7 @@ export default function MapView({ projectId, timezone, routes, geofences, canWri
       const map = new maplibre.Map({
         container: mapContainerRef.current,
         style: 'https://tiles.openfreemap.org/styles/liberty',
-        zoom: 11,
+        zoom: 10,
         center: [-158.55, 59.12],
         attributionControl: false,
         maxZoom: 26,
@@ -450,6 +450,10 @@ export default function MapView({ projectId, timezone, routes, geofences, canWri
         setIsDrawing(false)
         setDrawPoints([])
         setCursorCoord(null)
+      } else if (e.key === 'Enter' && drawPoints.length >= 3) {
+        setIsDrawing(false)
+        setCursorCoord(null)
+        setShowNameDialog(true)
       }
     }
     window.addEventListener('keydown', handleKeyDown)
@@ -606,7 +610,7 @@ export default function MapView({ projectId, timezone, routes, geofences, canWri
         {isDrawing && (
           <div className="absolute top-4 left-1/2 -translate-x-1/2 z-50 bg-blue-600 text-white px-4 py-2 rounded-xl shadow-lg flex items-center gap-3 select-none">
             <span className="text-xs font-semibold">
-              Click to place points ({drawPoints.length} placed) · Double-click to finish · Escape to cancel
+              Click to place points ({drawPoints.length} placed) · Enter or double-click to finish · Escape to cancel
             </span>
             <button
               type="button"

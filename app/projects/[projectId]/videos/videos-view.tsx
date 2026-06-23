@@ -2,7 +2,7 @@
 
 import { useState, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
-import { Video, Search, RefreshCw, Fish, NotebookPen } from 'lucide-react'
+import { Video, Search, RefreshCw, Fish, NotebookPen, MapPin } from 'lucide-react'
 import Link from 'next/link'
 import { cn } from '@/lib/utils'
 import { buttonVariants } from '@/components/ui/button'
@@ -20,6 +20,7 @@ interface VideoEntry {
   flightPlanId: string
   fishCount: number
   noteCount: number
+  locationTags: string[]
 }
 
 function formatBytes(bytes: number): string {
@@ -64,12 +65,14 @@ export interface VideosViewProps {
   timezone: string
   videos: VideoEntry[]
   canWrite: boolean
+  availableLocationTags?: string[]
 }
 
-export default function VideosView({ projectId, timezone, videos, canWrite }: VideosViewProps) {
+export default function VideosView({ projectId, timezone, videos, canWrite, availableLocationTags = [] }: VideosViewProps) {
   const router = useRouter()
   const [search, setSearch] = useState('')
   const [isRefreshing, setIsRefreshing] = useState(false)
+  const [locationFilter, setLocationFilter] = useState<string>('')
 
   const handleRefresh = () => {
     setIsRefreshing(true)
@@ -78,14 +81,20 @@ export default function VideosView({ projectId, timezone, videos, canWrite }: Vi
   }
 
   const filtered = useMemo(() => {
-    if (!search.trim()) return videos
-    const q = search.toLowerCase()
-    return videos.filter((v) => {
-      const filename = v.key.split('/').pop()?.toLowerCase() ?? ''
-      const notes = (v.flightNotes ?? '').toLowerCase()
-      return filename.includes(q) || notes.includes(q) || v.planName.toLowerCase().includes(q)
-    })
-  }, [videos, search])
+    let result = videos
+    if (locationFilter) {
+      result = result.filter((v) => v.locationTags.includes(locationFilter))
+    }
+    if (search.trim()) {
+      const q = search.toLowerCase()
+      result = result.filter((v) => {
+        const filename = v.key.split('/').pop()?.toLowerCase() ?? ''
+        const notes = (v.flightNotes ?? '').toLowerCase()
+        return filename.includes(q) || notes.includes(q) || v.planName.toLowerCase().includes(q)
+      })
+    }
+    return result
+  }, [videos, search, locationFilter])
 
   const grouped = useMemo(() => {
     const map = new Map<string, { label: string; videos: VideoEntry[] }>()
@@ -111,6 +120,21 @@ export default function VideosView({ projectId, timezone, videos, canWrite }: Vi
             <span className="text-sm font-normal text-gray-500">({videos.length})</span>
           </h2>
           <div className="flex items-center gap-3">
+            {availableLocationTags.length > 0 && (
+              <div className="relative">
+                <MapPin className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                <select
+                  value={locationFilter}
+                  onChange={(e) => setLocationFilter(e.target.value)}
+                  className="pl-9 pr-8 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent appearance-none bg-white cursor-pointer"
+                >
+                  <option value="">All locations</option>
+                  {availableLocationTags.map((tag) => (
+                    <option key={tag} value={tag}>{tag}</option>
+                  ))}
+                </select>
+              </div>
+            )}
             <div className="relative w-64">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
               <input

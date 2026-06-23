@@ -1,6 +1,6 @@
 import { notFound } from 'next/navigation'
 import { db } from '@/lib/db'
-import { projects, flightPlans, flights, files as filesTable, annotations } from '@/lib/schema'
+import { projects, flightPlans, flights, files as filesTable, annotations, geofences, fileGeofenceTags } from '@/lib/schema'
 import { eq, and, isNull, inArray, desc, sql } from 'drizzle-orm'
 import { getSession } from '@/lib/session'
 import VideosView from './videos-view'
@@ -97,6 +97,28 @@ export default async function VideosPage({ params }: PageProps) {
     }
   }
 
+  // Fetch geofence tags for video files
+  const allGeofences = await db
+    .select()
+    .from(geofences)
+    .where(eq(geofences.projectId, projectId))
+
+  const allTags = videoFileIds.length > 0
+    ? await db
+        .select()
+        .from(fileGeofenceTags)
+        .where(inArray(fileGeofenceTags.fileId, videoFileIds))
+    : []
+
+  const tagsByFileId = new Map<string, string[]>()
+  const geofenceMap = new Map(allGeofences.map((g) => [g.id, g]))
+  for (const tag of allTags) {
+    const g = geofenceMap.get(tag.geofenceId)
+    if (!g) continue
+    if (!tagsByFileId.has(tag.fileId)) tagsByFileId.set(tag.fileId, [])
+    tagsByFileId.get(tag.fileId)!.push(g.name)
+  }
+
   const videos = allFiles
     .filter((f) => {
       const ext = f.key.split('.').pop()?.toLowerCase() ?? ''
@@ -118,9 +140,12 @@ export default async function VideosPage({ params }: PageProps) {
         flightPlanId: flight.flightPlanId,
         fishCount: fishCountMap.get(f.id) ?? 0,
         noteCount: noteCountMap.get(f.id) ?? 0,
+        locationTags: tagsByFileId.get(f.id) ?? [],
       }
     })
     .sort((a, b) => new Date(b.flightTimestamp).getTime() - new Date(a.flightTimestamp).getTime())
+
+  const availableTags = [...new Set(allGeofences.map((g) => g.name))].sort()
 
   return (
     <VideosView
@@ -128,6 +153,7 @@ export default async function VideosPage({ params }: PageProps) {
       timezone={project.timezone}
       videos={videos}
       canWrite={canWrite}
+      availableLocationTags={availableTags}
     />
   )
 }

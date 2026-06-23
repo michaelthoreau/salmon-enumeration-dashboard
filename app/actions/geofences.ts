@@ -29,6 +29,13 @@ export async function createGeofence(
 
   if (!name.trim()) return { error: 'Name is required.' }
 
+  const [existing] = await db
+    .select()
+    .from(geofences)
+    .where(and(eq(geofences.projectId, projectId), eq(geofences.name, name.trim())))
+
+  if (existing) return { error: `A geofence named "${name.trim()}" already exists.` }
+
   const id = randomUUID()
   await db.insert(geofences).values({
     id,
