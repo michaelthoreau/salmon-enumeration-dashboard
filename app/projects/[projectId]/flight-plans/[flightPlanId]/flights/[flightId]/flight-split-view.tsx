@@ -117,6 +117,7 @@ interface FlightSplitViewProps {
   from?: string
   returnTo?: string
   initialFileId?: string
+  geofences?: { id: string; name: string; geometry: string; color: string }[]
 }
 
 export default function FlightSplitView({
@@ -144,6 +145,7 @@ export default function FlightSplitView({
   from,
   returnTo,
   initialFileId,
+  geofences: projectGeofences = [],
 }: FlightSplitViewProps) {
   const router = useRouter()
   const [sidebarWidth, setSidebarWidth] = useState(500)
@@ -211,6 +213,51 @@ export default function FlightSplitView({
             }
           }
         }
+
+        // Geofence layers
+        const geofenceFeatures = projectGeofences
+          .map((g) => {
+            try {
+              return {
+                type: 'Feature' as const,
+                geometry: JSON.parse(g.geometry),
+                properties: { name: g.name, color: g.color },
+              }
+            } catch { return null }
+          })
+          .filter(Boolean)
+
+        map.addSource('geofences-source', {
+          type: 'geojson',
+          data: { type: 'FeatureCollection', features: geofenceFeatures as any[] },
+        })
+        map.addLayer({
+          id: 'geofences-fill',
+          type: 'fill',
+          source: 'geofences-source',
+          paint: { 'fill-color': ['get', 'color'], 'fill-opacity': 0.15 },
+        })
+        map.addLayer({
+          id: 'geofences-line',
+          type: 'line',
+          source: 'geofences-source',
+          paint: { 'line-color': ['get', 'color'], 'line-width': 2, 'line-dasharray': [3, 2] },
+        })
+        map.addLayer({
+          id: 'geofences-label',
+          type: 'symbol',
+          source: 'geofences-source',
+          layout: {
+            'text-field': ['get', 'name'],
+            'text-size': 12,
+            'text-anchor': 'center',
+          },
+          paint: {
+            'text-color': ['get', 'color'],
+            'text-halo-color': '#ffffff',
+            'text-halo-width': 1.5,
+          },
+        })
 
         // Pin source
         map.addSource('pin-source', {

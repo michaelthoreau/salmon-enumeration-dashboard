@@ -69,11 +69,15 @@ export default async function MapPage({ params }: PageProps) {
     ? await db.select().from(filesTable).where(inArray(filesTable.flightId, flightIds))
     : []
 
-  // Build route data (plans with a location)
-  const plansWithLocation = new Set(allPlans.filter((p) => p.location).map((p) => p.id))
-
+  // Build route data — use plan location if set, otherwise derive from first image's coordinates
   const routes = allPlans
-    .filter((p) => p.location)
+    .filter((plan) => {
+      if (plan.location) return true
+      // Include plans without a location if they have files with coordinates
+      const planFlights = allFlights.filter((f) => f.flightPlanId === plan.id)
+      const planFlightIds = new Set(planFlights.map((f) => f.id))
+      return allFiles.some((f) => planFlightIds.has(f.flightId) && f.latitude != null && f.longitude != null && getFileType(f.key) === 'image')
+    })
     .map((plan) => {
       const planFlights = allFlights.filter((f) => f.flightPlanId === plan.id)
       const planFlightIds = new Set(planFlights.map((f) => f.id))
@@ -108,11 +112,20 @@ export default async function MapPage({ params }: PageProps) {
 
       const latestFlight = planFlights[0] ?? null
 
+      // Use plan location if set, otherwise derive from first image with coordinates
+      let location = plan.location
+      if (!location) {
+        const firstWithCoords = planFiles.find((f) => f.latitude != null && f.longitude != null && getFileType(f.key) === 'image')
+        if (firstWithCoords) {
+          location = JSON.stringify({ type: 'Point', coordinates: [firstWithCoords.longitude, firstWithCoords.latitude] })
+        }
+      }
+
       return {
         id: plan.id,
         name: plan.displayName || plan.name,
         description: plan.description,
-        location: plan.location!,
+        location: location!,
         imageCount,
         videoCount,
         flightCount: planFlights.length,
@@ -123,21 +136,15 @@ export default async function MapPage({ params }: PageProps) {
       }
     })
 
-  // Build individual file markers:
-  // - All videos with coordinates
-  // - Images from plans WITHOUT a route location that have coordinates
+  // Build individual file markers: only videos with coordinates
+  // Images are represented by their route point, not individually
   const flightToPlan = new Map(allFlights.map((f) => [f.id, f.flightPlanId]))
   const planNameMap = new Map(allPlans.map((p) => [p.id, p.displayName || p.name]))
 
   const fileMarkers = allFiles
     .filter((f) => {
       if (f.latitude == null || f.longitude == null) return false
-      const type = getFileType(f.key)
-      if (!type) return false
-      if (type === 'video') return true
-      // Images only shown individually if their plan has no route location
-      const planId = flightToPlan.get(f.flightId)
-      return planId ? !plansWithLocation.has(planId) : false
+      return getFileType(f.key) === 'video'
     })
     .map((f) => {
       const planId = flightToPlan.get(f.flightId) ?? ''

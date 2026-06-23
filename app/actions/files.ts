@@ -321,6 +321,21 @@ export async function updateFileLocation(
     .set({ latitude, longitude })
     .where(eq(files.id, fileId))
 
+  // Clear old tags and retag against geofences
+  const { fileGeofenceTags } = await import('@/lib/schema')
+  await db.delete(fileGeofenceTags).where(eq(fileGeofenceTags.fileId, fileId))
+
+  if (latitude != null && longitude != null) {
+    const [file] = await db.select({ id: files.id, flightId: files.flightId }).from(files).where(eq(files.id, fileId))
+    if (file) {
+      const { getProjectIdForFlight } = await import('@/lib/geofence-tagger')
+      const projectId = await getProjectIdForFlight(file.flightId)
+      if (projectId) {
+        await tagFilesAgainstGeofences(projectId, [{ id: fileId, latitude, longitude }])
+      }
+    }
+  }
+
   return { ok: true }
 }
 
@@ -338,6 +353,20 @@ export async function updateBulkFileLocation(
     .update(files)
     .set({ latitude, longitude })
     .where(inArray(files.id, fileIds))
+
+  // Clear old tags and retag against geofences
+  const { fileGeofenceTags } = await import('@/lib/schema')
+  await db.delete(fileGeofenceTags).where(inArray(fileGeofenceTags.fileId, fileIds))
+
+  const [firstFile] = await db.select({ flightId: files.flightId }).from(files).where(eq(files.id, fileIds[0]))
+  if (firstFile) {
+    const { getProjectIdForFlight } = await import('@/lib/geofence-tagger')
+    const projectId = await getProjectIdForFlight(firstFile.flightId)
+    if (projectId) {
+      const tagFiles = fileIds.map((id) => ({ id, latitude, longitude }))
+      await tagFilesAgainstGeofences(projectId, tagFiles)
+    }
+  }
 
   return { updated: fileIds.length }
 }

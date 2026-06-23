@@ -1,6 +1,6 @@
 import { notFound } from 'next/navigation'
 import { db } from '@/lib/db'
-import { flights, flightPlans, projects, files as filesTable, odmTasks, georefTasks, users } from '@/lib/schema'
+import { flights, flightPlans, projects, files as filesTable, odmTasks, georefTasks, users, geofences } from '@/lib/schema'
 import { eq, desc, inArray } from 'drizzle-orm'
 import { getSession } from '@/lib/session'
 import { listFlightObjects, createPresignedGetUrl } from '@/lib/s3'
@@ -195,6 +195,11 @@ export default async function FlightDetailPage({ params, searchParams }: PagePro
     for (const u of userRows) userEmailMap[u.id] = u.email
   }
 
+  const projectGeofences = await db
+    .select({ id: geofences.id, name: geofences.name, geometry: geofences.geometry, color: geofences.color })
+    .from(geofences)
+    .where(eq(geofences.projectId, projectId))
+
   return (
     <FlightSplitView
       projectId={projectId}
@@ -202,6 +207,7 @@ export default async function FlightDetailPage({ params, searchParams }: PagePro
       flightId={flightId}
       flight={flight}
       flightPlan={flightPlan}
+      geofences={projectGeofences}
       project={project}
       initialAnnotations={annotationsList}
       userEmailMap={userEmailMap}
