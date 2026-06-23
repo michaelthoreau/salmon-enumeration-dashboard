@@ -37,10 +37,24 @@ interface GeofenceEntry {
   color: string
 }
 
+interface FileMarker {
+  fileId: string
+  key: string
+  etag: string
+  latitude: number
+  longitude: number
+  type: 'video' | 'image'
+  planName: string
+  flightId: string
+  flightPlanId: string
+  filename: string
+}
+
 interface Props {
   projectId: string
   timezone: string
   routes: RouteEntry[]
+  fileMarkers?: FileMarker[]
   geofences: GeofenceEntry[]
   canWrite: boolean
 }
@@ -121,7 +135,7 @@ function buildPopupHtml(route: RouteEntry, projectId: string): string {
 
 const GEOFENCE_COLORS = ['#ef4444', '#f97316', '#eab308', '#22c55e', '#3b82f6', '#8b5cf6']
 
-export default function MapView({ projectId, timezone, routes, geofences, canWrite }: Props) {
+export default function MapView({ projectId, timezone, routes, fileMarkers = [], geofences, canWrite }: Props) {
   const router = useRouter()
   const mapContainerRef = useRef<HTMLDivElement>(null)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -146,6 +160,12 @@ export default function MapView({ projectId, timezone, routes, geofences, canWri
     if (filterType === 'images') return routes.filter((r) => r.imageCount > 0)
     return routes.filter((r) => r.videoCount > 0)
   }, [routes, filterType])
+
+  const filteredFileMarkers = useMemo(() => {
+    if (filterType === 'all') return fileMarkers
+    if (filterType === 'images') return fileMarkers.filter((f) => f.type === 'image')
+    return fileMarkers.filter((f) => f.type === 'video')
+  }, [fileMarkers, filterType])
 
   // Build GeoJSON for routes
   const routeGeojson = useMemo(() => {
@@ -174,6 +194,26 @@ export default function MapView({ projectId, timezone, routes, geofences, canWri
 
     return { type: 'FeatureCollection' as const, features: features as any[] }
   }, [filteredRoutes])
+
+  // Build GeoJSON for file markers
+  const fileMarkerGeojson = useMemo(() => {
+    const features = filteredFileMarkers.map((f) => ({
+      type: 'Feature' as const,
+      geometry: { type: 'Point' as const, coordinates: [f.longitude, f.latitude] },
+      properties: {
+        fileId: f.fileId,
+        filename: f.filename,
+        type: f.type,
+        planName: f.planName,
+        color: f.type === 'video' ? '#3b82f6' : '#22c55e',
+        flightId: f.flightId,
+        flightPlanId: f.flightPlanId,
+        key: f.key,
+        etag: f.etag,
+      },
+    }))
+    return { type: 'FeatureCollection' as const, features: features as any[] }
+  }, [filteredFileMarkers])
 
   // Build GeoJSON for geofences
   const geofenceGeojson = useMemo(() => {
@@ -287,6 +327,72 @@ export default function MapView({ projectId, timezone, routes, geofences, canWri
           filter: ['==', '$type', 'Point'],
         })
 
+        // File marker layers
+        map.addSource('file-markers-source', { type: 'geojson', data: fileMarkerGeojson as any })
+        map.addLayer({
+          id: 'file-markers-point',
+          type: 'circle',
+          source: 'file-markers-source',
+          paint: {
+            'circle-color': ['get', 'color'],
+            'circle-radius': 7,
+            'circle-stroke-color': '#ffffff',
+            'circle-stroke-width': 1.5,
+          },
+        })
+        map.addLayer({
+          id: 'file-markers-label',
+          type: 'symbol',
+          source: 'file-markers-source',
+          layout: {
+            'text-field': ['get', 'filename'],
+            'text-size': 10,
+            'text-anchor': 'top',
+            'text-offset': [0, 1],
+          },
+          paint: {
+            'text-color': '#374151',
+            'text-halo-color': '#ffffff',
+            'text-halo-width': 1,
+          },
+        })
+
+        // Click handler for file marker popups
+        map.on('click', 'file-markers-point', (e: any) => {
+          const feature = e.features[0]
+          const props = feature.properties
+          const isImage = props.type === 'image'
+          const thumbHtml = isImage
+            ? `<img src="/api/files/thumbnail?key=${encodeURIComponent(props.key)}&etag=${encodeURIComponent(props.etag)}&size=200" style="width:100%;max-width:200px;height:auto;border-radius:6px;margin-top:8px;border:1px solid #e5e7eb;" />`
+            : ''
+
+          const popupHtml = `
+            <div style="font-family:ui-sans-serif,system-ui,sans-serif;padding:12px;max-width:240px;">
+              <h3 style="font-weight:700;font-size:13px;color:#111827;margin:0;word-break:break-all;">${props.filename}</h3>
+              <p style="font-size:11px;color:#6b7280;margin:4px 0 0;">
+                <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${props.color};margin-right:4px;vertical-align:middle;"></span>
+                ${props.type === 'video' ? 'Video' : 'Image'} · ${props.planName}
+              </p>
+              ${thumbHtml}
+              <a href="/projects/${projectId}/flight-plans/${props.flightPlanId}/flights/${props.flightId}?file=${props.fileId}" style="display:inline-block;margin-top:10px;font-size:11px;font-weight:600;color:#2563eb;text-decoration:none;">
+                Open flight details →
+              </a>
+            </div>
+          `
+
+          new maplibre.Popup({ maxWidth: '280px' })
+            .setLngLat(e.lngLat)
+            .setHTML(popupHtml)
+            .addTo(map)
+        })
+
+        map.on('mouseenter', 'file-markers-point', () => {
+          map.getCanvas().style.cursor = 'pointer'
+        })
+        map.on('mouseleave', 'file-markers-point', () => {
+          map.getCanvas().style.cursor = ''
+        })
+
         // Click handler for route popups
         const clickLayers = ['routes-fill', 'routes-point']
         clickLayers.forEach((layerId) => {
@@ -336,6 +442,13 @@ export default function MapView({ projectId, timezone, routes, geofences, canWri
     const source = mapRef.current.getSource('routes-source')
     if (source) source.setData(routeGeojson)
   }, [routeGeojson, mapReady])
+
+  // Update file markers when filter changes
+  useEffect(() => {
+    if (!mapRef.current || !mapReady) return
+    const source = mapRef.current.getSource('file-markers-source')
+    if (source) source.setData(fileMarkerGeojson)
+  }, [fileMarkerGeojson, mapReady])
 
   // Sync basemap
   useEffect(() => {
@@ -458,7 +571,7 @@ export default function MapView({ projectId, timezone, routes, geofences, canWri
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [isDrawing])
+  }, [isDrawing, drawPoints.length])
 
   // Cursor style while drawing
   useEffect(() => {
@@ -755,6 +868,7 @@ function updateMapBasemap(map: any, currentBasemap: 'street' | 'satellite') {
       'esri-satellite-layer',
       'routes-fill', 'routes-line', 'routes-point',
       'geofences-fill', 'geofences-line',
+      'file-markers-point', 'file-markers-label',
       'draw-line-layer', 'draw-points-layer',
     ])
     for (const layer of style.layers) {

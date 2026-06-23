@@ -2063,7 +2063,7 @@ export default function FlightSplitView({
 
       {/* Set Location Dialog */}
       <Dialog open={showLocationDialog} onOpenChange={(open) => { if (!open) { setShowLocationDialog(false); setLocationPin(null) } }}>
-        <DialogContent className="sm:max-w-lg">
+        <DialogContent className="sm:max-w-3xl">
           <DialogHeader>
             <DialogTitle>Set file location</DialogTitle>
             <DialogDescription>
@@ -2072,7 +2072,7 @@ export default function FlightSplitView({
           </DialogHeader>
           <div
             ref={locationMapRef}
-            className="w-full h-64 rounded-lg border border-gray-200 overflow-hidden"
+            className="w-full h-[640px] rounded-lg border border-gray-200 overflow-hidden"
           />
           {locationPin && (
             <p className="text-xs text-gray-500 font-mono">

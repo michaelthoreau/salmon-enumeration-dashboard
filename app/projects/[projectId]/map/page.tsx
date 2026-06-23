@@ -69,7 +69,9 @@ export default async function MapPage({ params }: PageProps) {
     ? await db.select().from(filesTable).where(inArray(filesTable.flightId, flightIds))
     : []
 
-  // Build route data
+  // Build route data (plans with a location)
+  const plansWithLocation = new Set(allPlans.filter((p) => p.location).map((p) => p.id))
+
   const routes = allPlans
     .filter((p) => p.location)
     .map((plan) => {
@@ -121,11 +123,45 @@ export default async function MapPage({ params }: PageProps) {
       }
     })
 
+  // Build individual file markers:
+  // - All videos with coordinates
+  // - Images from plans WITHOUT a route location that have coordinates
+  const flightToPlan = new Map(allFlights.map((f) => [f.id, f.flightPlanId]))
+  const planNameMap = new Map(allPlans.map((p) => [p.id, p.displayName || p.name]))
+
+  const fileMarkers = allFiles
+    .filter((f) => {
+      if (f.latitude == null || f.longitude == null) return false
+      const type = getFileType(f.key)
+      if (!type) return false
+      if (type === 'video') return true
+      // Images only shown individually if their plan has no route location
+      const planId = flightToPlan.get(f.flightId)
+      return planId ? !plansWithLocation.has(planId) : false
+    })
+    .map((f) => {
+      const planId = flightToPlan.get(f.flightId) ?? ''
+      const flight = allFlights.find((fl) => fl.id === f.flightId)
+      return {
+        fileId: f.id,
+        key: f.key,
+        etag: f.etag,
+        latitude: f.latitude!,
+        longitude: f.longitude!,
+        type: getFileType(f.key)! as 'video' | 'image',
+        planName: planNameMap.get(planId) ?? '',
+        flightId: f.flightId,
+        flightPlanId: planId,
+        filename: f.key.split('/').pop() ?? f.key,
+      }
+    })
+
   return (
     <MapView
       projectId={projectId}
       timezone={project.timezone}
       routes={routes}
+      fileMarkers={fileMarkers}
       geofences={allGeofences.map((g) => ({
         id: g.id,
         name: g.name,

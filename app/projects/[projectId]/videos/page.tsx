@@ -149,6 +149,13 @@ export default async function VideosPage({ params }: PageProps) {
 
   const availableTags = [...new Set(allGeofences.map((g) => g.name))].sort()
 
+  const geofenceData = allGeofences.map((g) => ({
+    id: g.id,
+    name: g.name,
+    geometry: g.geometry,
+    color: g.color,
+  }))
+
   return (
     <VideosView
       projectId={projectId}
@@ -156,6 +163,7 @@ export default async function VideosPage({ params }: PageProps) {
       videos={videos}
       canWrite={canWrite}
       availableLocationTags={availableTags}
+      geofences={geofenceData}
     />
   )
 }

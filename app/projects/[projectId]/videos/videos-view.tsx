@@ -71,15 +71,23 @@ function getDateKey(iso: string, tz: string): string {
   return `${y}-${m}-${d}`
 }
 
+interface GeofenceEntry {
+  id: string
+  name: string
+  geometry: string
+  color: string
+}
+
 export interface VideosViewProps {
   projectId: string
   timezone: string
   videos: VideoEntry[]
   canWrite: boolean
   availableLocationTags?: string[]
+  geofences?: GeofenceEntry[]
 }
 
-export default function VideosView({ projectId, timezone, videos, canWrite, availableLocationTags = [] }: VideosViewProps) {
+export default function VideosView({ projectId, timezone, videos, canWrite, availableLocationTags = [], geofences = [] }: VideosViewProps) {
   const router = useRouter()
   const [search, setSearch] = useState('')
   const [isRefreshing, setIsRefreshing] = useState(false)
@@ -152,6 +160,53 @@ export default function VideosView({ projectId, timezone, videos, canWrite, avai
           }
         }
 
+        // Geofence layers
+        const geofenceFeatures = geofences
+          .map((g) => {
+            try {
+              return {
+                type: 'Feature' as const,
+                geometry: JSON.parse(g.geometry),
+                properties: { name: g.name, color: g.color },
+              }
+            } catch { return null }
+          })
+          .filter(Boolean)
+
+        map.addSource('geofences-source', {
+          type: 'geojson',
+          data: { type: 'FeatureCollection', features: geofenceFeatures as any[] },
+        })
+        map.addLayer({
+          id: 'geofences-fill',
+          type: 'fill',
+          source: 'geofences-source',
+          paint: { 'fill-color': ['get', 'color'], 'fill-opacity': 0.15 },
+        })
+        map.addLayer({
+          id: 'geofences-line',
+          type: 'line',
+          source: 'geofences-source',
+          paint: { 'line-color': ['get', 'color'], 'line-width': 2, 'line-dasharray': [3, 2] },
+        })
+        // Geofence name labels
+        map.addLayer({
+          id: 'geofences-label',
+          type: 'symbol',
+          source: 'geofences-source',
+          layout: {
+            'text-field': ['get', 'name'],
+            'text-size': 12,
+            'text-anchor': 'center',
+          },
+          paint: {
+            'text-color': ['get', 'color'],
+            'text-halo-color': '#ffffff',
+            'text-halo-width': 1.5,
+          },
+        })
+
+        // Pin layer
         map.addSource('pin-source', {
           type: 'geojson',
           data: {
@@ -371,13 +426,13 @@ export default function VideosView({ projectId, timezone, videos, canWrite, avai
                                 <button
                                   type="button"
                                   onClick={() => openLocationDialog(v)}
-                                  className="inline-flex items-center gap-1 text-amber-500 hover:text-amber-600 transition-colors text-xs"
+                                  className="inline-flex items-center gap-1 text-red-500 hover:text-red-600 transition-colors text-xs font-medium"
                                 >
                                   <MapPin className="w-3.5 h-3.5" />
-                                  <span>Set</span>
+                                  <span>Not set</span>
                                 </button>
                               ) : (
-                                <span className="text-gray-300">—</span>
+                                <span className="text-red-400 text-xs">Not set</span>
                               )}
                             </td>
                             <td className="px-6 py-3">
@@ -404,7 +459,7 @@ export default function VideosView({ projectId, timezone, videos, canWrite, avai
 
       {/* Set Location Dialog */}
       <Dialog open={!!locationDialogFileId} onOpenChange={(open) => { if (!open) closeLocationDialog() }}>
-        <DialogContent className="sm:max-w-lg">
+        <DialogContent className="sm:max-w-3xl">
           <DialogHeader>
             <DialogTitle>Set video location</DialogTitle>
             <DialogDescription>
@@ -413,7 +468,7 @@ export default function VideosView({ projectId, timezone, videos, canWrite, avai
           </DialogHeader>
           <div
             ref={locationMapRef}
-            className="w-full h-64 rounded-lg border border-gray-200 overflow-hidden"
+            className="w-full h-[640px] rounded-lg border border-gray-200 overflow-hidden"
           />
           {locationPin && (
             <p className="text-xs text-gray-500 font-mono">
