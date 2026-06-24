@@ -1136,7 +1136,7 @@ export default function FlightSplitView({
                       </span>
                       <span className="font-semibold text-gray-700 dark:text-slate-200">
                         {Math.round(progress)}%
-                      </span>
+                      </span> 
                     </div>
                     <div className="h-1.5 rounded-full bg-gray-200 dark:bg-slate-850 overflow-hidden relative">
                       <div
