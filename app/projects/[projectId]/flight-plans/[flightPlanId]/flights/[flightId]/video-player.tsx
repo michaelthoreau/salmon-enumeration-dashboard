@@ -50,6 +50,7 @@ export default function VideoPlayer({
   const [showAdvancedFps, setShowAdvancedFps] = useState(false)
   const [hoverTime, setHoverTime] = useState<number | null>(null)
   const [hoverX, setHoverX] = useState(0)
+  const [showMidline, setShowMidline] = useState(true)
 
   useEffect(() => {
     const video = videoRef.current
@@ -278,6 +279,13 @@ export default function VideoPlayer({
             </div>
           )}
 
+          {showMidline && (
+            <div
+              className="absolute left-0 right-0 pointer-events-none"
+              style={{ top: '50%', height: '2px', background: 'rgba(234,179,8,0.7)' }}
+            />
+          )}
+
           {!isPlaying && !isLoading && (
             <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
               <div className="w-16 h-16 rounded-full bg-black/50 backdrop-blur-sm flex items-center justify-center">
@@ -452,6 +460,18 @@ export default function VideoPlayer({
                             </button>
                           ))}
                         </div>
+                      </div>
+                      <div>
+                        <label className="text-[10px] text-white/40 uppercase tracking-wider block mb-1">Midline</label>
+                        <button
+                          onClick={() => setShowMidline(p => !p)}
+                          className={cn(
+                            "flex items-center gap-2 px-2 py-1 rounded text-xs transition-colors w-full",
+                            showMidline ? "bg-white text-black font-semibold" : "text-white/60 hover:text-white hover:bg-white/10"
+                          )}
+                        >
+                          {showMidline ? 'On' : 'Off'}
+                        </button>
                       </div>
                       <div>
                         <label className="text-[10px] text-white/40 uppercase tracking-wider block mb-1">Sound</label>
