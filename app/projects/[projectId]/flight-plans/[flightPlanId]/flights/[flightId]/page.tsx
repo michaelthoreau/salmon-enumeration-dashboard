@@ -220,6 +220,7 @@ export default async function FlightDetailPage({ params, searchParams }: PagePro
         split: splitByKey[o.key] ?? null,
         latitude: o.latitude,
         longitude: o.longitude,
+        durationSeconds: o.durationSeconds ?? null,
       }))}
       geotiffKey={geotiffKey ?? null}
       reportPdfKey={reportPdfKey ?? null}

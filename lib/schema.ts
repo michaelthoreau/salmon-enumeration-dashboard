@@ -80,6 +80,7 @@ export const files = sqliteTable('files', {
   size: integer('size'),
   latitude: real('latitude'),
   longitude: real('longitude'),
+  durationSeconds: real('duration_seconds'),
 })
 
 // ─── File Points ──────────────────────────────────────────────────────────────

@@ -195,6 +195,7 @@ export default async function MapPage({ params }: PageProps) {
         flightTimestamp: flightTimestampMap.get(f.flightId) ?? null,
         fishCount: fishCountMap.get(f.id) ?? 0,
         geofenceTags: geofenceTagsMap.get(f.id) ?? [],
+        durationSeconds: f.durationSeconds ?? null,
       }
     })
 

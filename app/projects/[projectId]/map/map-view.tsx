@@ -60,6 +60,7 @@ interface FileMarker {
   flightTimestamp: string | null
   fishCount: number
   geofenceTags: string[]
+  durationSeconds: number | null
 }
 
 interface Props {
@@ -175,6 +176,9 @@ export default function MapView({ projectId, timezone, routes, fileMarkers = [],
   const [statsEndDate, setStatsEndDate] = useState('')
   const [statsEndTime, setStatsEndTime] = useState('')
   const [selectedGeofences, setSelectedGeofences] = useState<string[]>([])
+  const [rateMode, setRateMode] = useState<'hourly' | 'daily'>('hourly')
+  const [bothBanks, setBothBanks] = useState(false)
+  const [statsExpanded, setStatsExpanded] = useState(true)
 
   const filteredRoutes = useMemo(() => {
     if (filterType === 'all') return routes
@@ -210,8 +214,15 @@ export default function MapView({ projectId, timezone, routes, fileMarkers = [],
     })
   }, [fileMarkers, statsStartDate, statsStartTime, statsEndDate, statsEndTime, selectedGeofences])
 
-  const statsCounted = useMemo(() => statsVideos?.filter((v) => v.fishCount > 0) ?? [], [statsVideos])
+  const statsCounted = useMemo(() => statsVideos?.filter((v) => v.fishCount > 0 && v.durationSeconds) ?? [], [statsVideos])
   const statsTotalFish = useMemo(() => statsCounted.reduce((s, v) => s + v.fishCount, 0), [statsCounted])
+
+  const computeRate = (v: typeof fileMarkers[0]) => {
+    if (!v.durationSeconds || v.durationSeconds <= 0 || v.fishCount <= 0) return null
+    const hourly = v.fishCount / (v.durationSeconds / 3600)
+    const rate = rateMode === 'daily' ? hourly * 24 : hourly
+    return bothBanks ? rate * 2 : rate
+  }
 
   // Build GeoJSON for routes
   const routeGeojson = useMemo(() => {
@@ -781,95 +792,6 @@ export default function MapView({ projectId, timezone, routes, fileMarkers = [],
             ))}
           </div>
 
-          {/* Stats panel — videos only */}
-          {filterType === 'videos' && (
-            <div className="bg-white/95 backdrop-blur-sm rounded-xl shadow-md border border-gray-200/80 p-3 space-y-3 select-none w-56">
-              <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400">Statistics</p>
-
-              {/* Start date + time slider */}
-              <div className="space-y-1.5">
-                <div className="flex items-center justify-between">
-                  <p className="text-[10px] text-gray-400 font-medium">Start</p>
-                  {statsStartTime && <span className="text-[10px] font-mono text-gray-500">{statsStartTime}</span>}
-                </div>
-                <input type="date" value={statsStartDate} onChange={(e) => setStatsStartDate(e.target.value)}
-                  className="w-full text-xs border border-gray-200 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500" />
-                <input
-                  type="range" min={0} max={1439} step={5}
-                  value={statsStartTime ? parseInt(statsStartTime.split(':')[0]) * 60 + parseInt(statsStartTime.split(':')[1]) : 0}
-                  onChange={(e) => {
-                    const mins = Number(e.target.value)
-                    const h = String(Math.floor(mins / 60)).padStart(2, '0')
-                    const m = String(mins % 60).padStart(2, '0')
-                    setStatsStartTime(`${h}:${m}`)
-                  }}
-                  className="w-full accent-blue-500"
-                />
-              </div>
-
-              {/* End date + time slider */}
-              <div className="space-y-1.5">
-                <div className="flex items-center justify-between">
-                  <p className="text-[10px] text-gray-400 font-medium">End</p>
-                  {statsEndTime && <span className="text-[10px] font-mono text-gray-500">{statsEndTime}</span>}
-                </div>
-                <input type="date" value={statsEndDate} onChange={(e) => setStatsEndDate(e.target.value)}
-                  className="w-full text-xs border border-gray-200 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500" />
-                <input
-                  type="range" min={0} max={1439} step={5}
-                  value={statsEndTime ? parseInt(statsEndTime.split(':')[0]) * 60 + parseInt(statsEndTime.split(':')[1]) : 1439}
-                  onChange={(e) => {
-                    const mins = Number(e.target.value)
-                    const h = String(Math.floor(mins / 60)).padStart(2, '0')
-                    const m = String(mins % 60).padStart(2, '0')
-                    setStatsEndTime(`${h}:${m}`)
-                  }}
-                  className="w-full accent-blue-500"
-                />
-              </div>
-
-              {/* Geofence checklist */}
-              {geofences.length > 0 && (
-                <div className="space-y-1">
-                  <p className="text-[10px] text-gray-400 font-medium">Locations</p>
-                  <div className="space-y-1 max-h-32 overflow-y-auto">
-                    {geofences.map((g) => (
-                      <label key={g.id} className="flex items-center gap-2 cursor-pointer group">
-                        <input
-                          type="checkbox"
-                          checked={selectedGeofences.includes(g.name)}
-                          onChange={(e) => setSelectedGeofences((prev) =>
-                            e.target.checked ? [...prev, g.name] : prev.filter((n) => n !== g.name)
-                          )}
-                          className="rounded"
-                        />
-                        <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: g.color }} />
-                        <span className="text-xs text-gray-700 truncate">{g.name}</span>
-                      </label>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* Results */}
-              {statsVideos !== null && (
-                <div className="border-t border-gray-100 pt-2 space-y-1">
-                  <div className="flex justify-between text-xs">
-                    <span className="text-gray-500">Videos matched</span>
-                    <span className="font-semibold text-gray-800">{statsVideos.length}</span>
-                  </div>
-                  <div className="flex justify-between text-xs">
-                    <span className="text-gray-500">Fish counted</span>
-                    <span className="font-semibold text-gray-800">{statsTotalFish}</span>
-                  </div>
-                  <p className="text-[10px] text-gray-400 leading-snug pt-0.5">
-                    {statsCounted.length} of {statsVideos.length} video{statsVideos.length !== 1 ? 's' : ''} with counts
-                  </p>
-                </div>
-              )}
-            </div>
-          )}
-
           {/* Legend */}
           <div className="bg-white/90 backdrop-blur-sm px-3 py-2 rounded-xl shadow-md border border-gray-200/80 select-none">
             <p className="text-[9px] font-bold uppercase tracking-wider text-gray-400 mb-1.5">Legend</p>
@@ -892,6 +814,138 @@ export default function MapView({ projectId, timezone, routes, fileMarkers = [],
               </div>
             </div>
           </div>
+
+          {/* Stats panel — videos only */}
+          {filterType === 'videos' && (
+            <div className="bg-white/95 backdrop-blur-sm rounded-xl shadow-md border border-gray-200/80 select-none w-56 overflow-hidden">
+              <div className="flex items-center justify-between px-3 py-2 border-b border-gray-100">
+                <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400">Statistics</p>
+                <button type="button" onClick={() => setStatsExpanded((v) => !v)}
+                  className="w-5 h-5 flex items-center justify-center rounded text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors text-sm font-bold leading-none">
+                  {statsExpanded ? '−' : '+'}
+                </button>
+              </div>
+              {statsExpanded && (
+                <div className="p-3 space-y-3">
+                  <div className="space-y-1.5">
+                    <div className="flex items-center justify-between">
+                      <p className="text-[10px] text-gray-400 font-medium">Start</p>
+                      {statsStartTime && <span className="text-[10px] font-mono text-gray-500">{statsStartTime}</span>}
+                    </div>
+                    <input type="date" value={statsStartDate} onChange={(e) => setStatsStartDate(e.target.value)}
+                      className="w-full text-xs border border-gray-200 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                    <input type="range" min={0} max={1439} step={5}
+                      value={statsStartTime ? parseInt(statsStartTime.split(':')[0]) * 60 + parseInt(statsStartTime.split(':')[1]) : 0}
+                      onChange={(e) => { const m = Number(e.target.value); setStatsStartTime(`${String(Math.floor(m/60)).padStart(2,'0')}:${String(m%60).padStart(2,'0')}`) }}
+                      className="w-full accent-blue-500" />
+                  </div>
+                  <div className="space-y-1.5">
+                    <div className="flex items-center justify-between">
+                      <p className="text-[10px] text-gray-400 font-medium">End</p>
+                      {statsEndTime && <span className="text-[10px] font-mono text-gray-500">{statsEndTime}</span>}
+                    </div>
+                    <input type="date" value={statsEndDate} onChange={(e) => setStatsEndDate(e.target.value)}
+                      className="w-full text-xs border border-gray-200 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                    <input type="range" min={0} max={1439} step={5}
+                      value={statsEndTime ? parseInt(statsEndTime.split(':')[0]) * 60 + parseInt(statsEndTime.split(':')[1]) : 1439}
+                      onChange={(e) => { const m = Number(e.target.value); setStatsEndTime(`${String(Math.floor(m/60)).padStart(2,'0')}:${String(m%60).padStart(2,'0')}`) }}
+                      className="w-full accent-blue-500" />
+                  </div>
+                  {geofences.length > 0 && (
+                    <div className="space-y-1">
+                      <p className="text-[10px] text-gray-400 font-medium">Locations</p>
+                      <div className="space-y-1 max-h-28 overflow-y-auto">
+                        {geofences.map((g) => (
+                          <label key={g.id} className="flex items-center gap-2 cursor-pointer">
+                            <input type="checkbox" checked={selectedGeofences.includes(g.name)}
+                              onChange={(e) => setSelectedGeofences((prev) => e.target.checked ? [...prev, g.name] : prev.filter((n) => n !== g.name))}
+                              className="rounded" />
+                            <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: g.color }} />
+                            <span className="text-xs text-gray-700 truncate">{g.name}</span>
+                          </label>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  <div className="space-y-1.5">
+                    <div className="flex gap-1">
+                      {(['hourly', 'daily'] as const).map((mode) => (
+                        <button key={mode} type="button" onClick={() => setRateMode(mode)}
+                          className={cn('flex-1 py-1 text-[10px] font-bold rounded-lg transition-all',
+                            rateMode === mode ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200')}>
+                          {mode === 'hourly' ? 'Hourly' : 'Daily'}
+                        </button>
+                      ))}
+                    </div>
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input type="checkbox" checked={bothBanks} onChange={(e) => setBothBanks(e.target.checked)} className="rounded" />
+                      <span className="text-xs text-gray-600">× 2 both banks</span>
+                    </label>
+                  </div>
+                  {statsVideos !== null && (
+                    <div className="border-t border-gray-100 pt-2 space-y-1">
+                      <div className="flex justify-between text-xs">
+                        <span className="text-gray-500">Matched</span>
+                        <span className="font-semibold text-gray-800">{statsVideos.length} videos</span>
+                      </div>
+                      <div className="flex justify-between text-xs">
+                        <span className="text-gray-500">Total fish</span>
+                        <span className="font-semibold text-gray-800">{statsTotalFish}</span>
+                      </div>
+                      {statsCounted.length > 0 && (() => {
+                        const rates = statsCounted.map((v) => computeRate(v)).filter((r): r is number => r !== null)
+                        const avg = rates.length > 0 ? rates.reduce((a, b) => a + b, 0) / rates.length : null
+                        return avg !== null ? (
+                          <div className="flex justify-between text-xs">
+                            <span className="text-gray-500">Avg {rateMode}</span>
+                            <span className="font-semibold text-gray-800">{Math.round(avg).toLocaleString()}{rateMode === 'hourly' ? '/hr' : '/day'}</span>
+                          </div>
+                        ) : null
+                      })()}
+                      <p className="text-[10px] text-gray-400 pt-0.5">{statsCounted.length} of {statsVideos.length} with duration</p>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Video table */}
+          {filterType === 'videos' && statsVideos !== null && statsVideos.length > 0 && (
+            <div className="bg-white/95 backdrop-blur-sm rounded-xl shadow-md border border-gray-200/80 w-56 overflow-hidden">
+              <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 px-3 py-2 border-b border-gray-100">Videos ({statsVideos.length})</p>
+              <div className="overflow-y-auto" style={{ maxHeight: '12rem', minHeight: '4rem' }}>
+                <table className="w-full text-[10px]">
+                  <thead className="bg-gray-50 sticky top-0">
+                    <tr>
+                      <th className="text-left px-2 py-1.5 font-medium text-gray-500">File</th>
+                      <th className="text-right px-2 py-1.5 font-medium text-gray-500">Fish</th>
+                      <th className="text-right px-2 py-1.5 font-medium text-gray-500">{rateMode === 'hourly' ? '/hr' : '/day'}</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {statsVideos.map((v) => {
+                      const rate = computeRate(v)
+                      return (
+                        <tr key={v.fileId} className="hover:bg-gray-50">
+                          <td className="px-2 py-1.5 max-w-[90px]">
+                            <p className="truncate text-gray-600" title={v.filename}>{v.filename.replace(/\.[^.]+$/, '')}</p>
+                            {v.geofenceTags.length > 0 && <p className="text-gray-400 truncate">{v.geofenceTags[0]}</p>}
+                          </td>
+                          <td className="px-2 py-1.5 text-right font-medium text-gray-700">
+                            {v.fishCount > 0 ? v.fishCount : <span className="text-gray-300">—</span>}
+                          </td>
+                          <td className="px-2 py-1.5 text-right font-medium text-blue-600">
+                            {rate !== null ? Math.round(rate).toLocaleString() : <span className="text-gray-300">—</span>}
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Geofence controls */}

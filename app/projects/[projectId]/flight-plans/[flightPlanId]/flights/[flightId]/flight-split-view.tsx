@@ -81,6 +81,7 @@ interface FileEntry {
   split: Split | null
   latitude?: number | null
   longitude?: number | null
+  durationSeconds?: number | null
 }
 
 interface FlightSplitViewProps {
@@ -1707,6 +1708,8 @@ export default function FlightSplitView({
                               onAddNote={(note) => handleAddNote(activeImage.id, note)}
                               onDeleteNote={handleDeleteNote}
                               onExpand={() => setIsFullscreenPlayer(true)}
+                              fileId={activeImage.id}
+                              existingDuration={activeImage.durationSeconds}
                             />
                           </div>
                         ) : (
@@ -2090,6 +2093,8 @@ export default function FlightSplitView({
                   notes={getVideoNotes(activeImage.id)}
                   onAddNote={(note) => handleAddNote(activeImage.id, note)}
                   onDeleteNote={handleDeleteNote}
+                  fileId={activeImage.id}
+                  existingDuration={activeImage.durationSeconds}
                 />
               </div>
             ) : (

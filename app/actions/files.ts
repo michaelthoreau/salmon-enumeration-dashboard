@@ -308,6 +308,15 @@ export async function getProjectFlightsForSync(
   }
 }
 
+export async function updateFileDuration(
+  fileId: string,
+  durationSeconds: number,
+): Promise<void> {
+  const session = await getSession()
+  if (!session) return
+  await db.update(files).set({ durationSeconds }).where(eq(files.id, fileId))
+}
+
 export async function updateFileLocation(
   fileId: string,
   latitude: number | null,

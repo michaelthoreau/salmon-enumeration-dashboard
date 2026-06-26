@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
 import { Play, Pause, ChevronLeft, ChevronRight, Volume2, VolumeX, Loader2, Minus, Plus, Settings, NotebookPen, X, Trash2, Maximize2, ChevronDown, ChevronUp, History, ExternalLink } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { updateFileDuration } from '@/app/actions/files'
 
 interface VideoNote {
   id: string
@@ -23,12 +24,15 @@ interface VideoPlayerProps {
   onAddNote?: (note: { time: number; frame: number; text: string }) => void
   onDeleteNote?: (id: string) => void
   onExpand?: () => void
+  fileId?: string
+  existingDuration?: number | null
 }
 
 export default function VideoPlayer({
   videoUrl, filename, fishCount = 0, canWrite = false,
   onIncrement, onDecrement,
   notes = [], onAddNote, onDeleteNote, onExpand,
+  fileId, existingDuration,
 }: VideoPlayerProps) {
   const videoRef = useRef<HTMLVideoElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
@@ -65,7 +69,12 @@ export default function VideoPlayer({
     const handlePlay = () => setIsPlaying(true)
     const handlePause = () => setIsPlaying(false)
     const handleTimeUpdate = () => setCurrentTime(video.currentTime)
-    const handleDurationChange = () => setDuration(video.duration)
+    const handleDurationChange = () => {
+      setDuration(video.duration)
+      if (fileId && video.duration > 0 && !existingDuration) {
+        updateFileDuration(fileId, video.duration).catch(() => {})
+      }
+    }
     const handleWaiting = () => setIsLoading(true)
     const handlePlaying = () => setIsLoading(false)
     const handleCanPlay = () => setIsLoading(false)
@@ -667,13 +676,22 @@ export default function VideoPlayer({
             <div className="border-b border-gray-800 bg-gray-900/60">
               <div className="flex items-center justify-between px-4 py-2">
                 <span className="text-[10px] font-bold uppercase tracking-wider text-orange-400">Fish Timeline</span>
-                <button
-                  onClick={() => setFishTimelinePopped((v) => !v)}
-                  className="text-gray-600 hover:text-white transition-colors"
-                  title="Pop out"
-                >
-                  <ExternalLink className="w-3 h-3" />
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => { setFishSnapshots([]); lastBucketRef.current = -1; countAtBucketStartRef.current = 0 }}
+                    className="text-[9px] text-gray-500 hover:text-red-400 transition-colors px-1.5 py-0.5 rounded hover:bg-gray-800"
+                    title="Reset timeline"
+                  >
+                    Reset
+                  </button>
+                  <button
+                    onClick={() => setFishTimelinePopped((v) => !v)}
+                    className="text-gray-600 hover:text-white transition-colors"
+                    title="Pop out"
+                  >
+                    <ExternalLink className="w-3 h-3" />
+                  </button>
+                </div>
               </div>
               {fishSnapshots.length === 0 ? (
                 <p className="px-4 pb-3 text-[10px] text-gray-600">No fish counted yet.</p>
