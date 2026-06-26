@@ -102,6 +102,7 @@ export async function syncFlightFiles(
         uploadedBy: session.userId,
         latitude: coords?.latitude ?? null,
         longitude: coords?.longitude ?? null,
+        durationSeconds: coords?.durationSeconds ?? null,
       })
       added++
     }
@@ -122,9 +123,22 @@ export async function syncFlightFiles(
       if (coords) {
         await db
           .update(files)
-          .set({ latitude: coords.latitude, longitude: coords.longitude })
+          .set({ latitude: coords.latitude, longitude: coords.longitude, durationSeconds: coords.durationSeconds ?? null })
           .where(eq(files.id, f.id))
         backfilledFiles.push({ id: f.id, latitude: coords.latitude, longitude: coords.longitude })
+      }
+    }
+
+    // Also backfill duration for video files that have GPS but no duration yet
+    const needsDuration = dbFiles.filter((f) => {
+      if (f.durationSeconds !== null) return false
+      const lower = f.key.toLowerCase()
+      return lower.endsWith('.mp4') || lower.endsWith('.mov')
+    })
+    for (const f of needsDuration) {
+      const meta = await extractExifGps(f.key)
+      if (meta?.durationSeconds) {
+        await db.update(files).set({ durationSeconds: meta.durationSeconds }).where(eq(files.id, f.id))
       }
     }
 
@@ -305,6 +319,47 @@ export async function getProjectFlightsForSync(
   } catch (err) {
     console.error('Failed to get project flights for sync:', err)
     return { ok: false, flights: [], error: String(err) }
+  }
+}
+
+export async function backfillVideoMetadata(
+  projectId: string,
+): Promise<{ ok: boolean; updated: number; error?: string }> {
+  const session = await getSession()
+  if (!session || (session.role !== 'read-write' && session.role !== 'admin')) {
+    return { ok: false, updated: 0, error: 'Unauthorized' }
+  }
+  try {
+    const projectFlights = await db
+      .select({ id: flights.id })
+      .from(flights)
+      .innerJoin(flightPlans, eq(flights.flightPlanId, flightPlans.id))
+      .where(and(eq(flightPlans.projectId, projectId), isNull(flights.deletedAt), isNull(flightPlans.deletedAt)))
+
+    if (projectFlights.length === 0) return { ok: true, updated: 0 }
+
+    const flightIds = projectFlights.map((f) => f.id)
+    const videoFiles = await db
+      .select({ id: files.id, key: files.key })
+      .from(files)
+      .where(and(inArray(files.flightId, flightIds)))
+
+    const needsDuration = videoFiles.filter((f) => {
+      const lower = f.key.toLowerCase()
+      return lower.endsWith('.mp4') || lower.endsWith('.mov')
+    })
+
+    let updated = 0
+    for (const f of needsDuration) {
+      const meta = await extractExifGps(f.key)
+      if (meta?.durationSeconds) {
+        await db.update(files).set({ durationSeconds: meta.durationSeconds }).where(eq(files.id, f.id))
+        updated++
+      }
+    }
+    return { ok: true, updated }
+  } catch (err) {
+    return { ok: false, updated: 0, error: String(err) }
   }
 }
 

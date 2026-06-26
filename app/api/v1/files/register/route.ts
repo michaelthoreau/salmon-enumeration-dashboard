@@ -45,6 +45,7 @@ export async function POST(request: NextRequest) {
       uploadedBy: `api:${apiKey.id}`,
       latitude: coords?.latitude ?? null,
       longitude: coords?.longitude ?? null,
+      durationSeconds: coords?.durationSeconds ?? null,
     })
     .onConflictDoUpdate({
       target: files.key,
@@ -55,6 +56,7 @@ export async function POST(request: NextRequest) {
         uploadedBy: `api:${apiKey.id}`,
         latitude: coords?.latitude ?? null,
         longitude: coords?.longitude ?? null,
+        durationSeconds: coords?.durationSeconds ?? null,
       },
     })
 

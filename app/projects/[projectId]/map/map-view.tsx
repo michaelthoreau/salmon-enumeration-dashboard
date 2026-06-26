@@ -187,10 +187,15 @@ export default function MapView({ projectId, timezone, routes, fileMarkers = [],
   }, [routes, filterType])
 
   const filteredFileMarkers = useMemo(() => {
-    if (filterType === 'all') return fileMarkers
-    if (filterType === 'images') return fileMarkers.filter((f) => f.type === 'image')
-    return fileMarkers.filter((f) => f.type === 'video')
-  }, [fileMarkers, filterType])
+    let base = filterType === 'all' ? fileMarkers
+      : filterType === 'images' ? fileMarkers.filter((f) => f.type === 'image')
+      : fileMarkers.filter((f) => f.type === 'video')
+    if (filterType === 'videos' && statsVideos !== null) {
+      const ids = new Set(statsVideos.map((v) => v.fileId))
+      base = base.filter((f) => ids.has(f.fileId))
+    }
+    return base
+  }, [fileMarkers, filterType, statsVideos])
 
   // Stats panel computation
   const statsVideos = useMemo(() => {
@@ -745,7 +750,7 @@ export default function MapView({ projectId, timezone, routes, fileMarkers = [],
         <div ref={mapContainerRef} className="w-full h-full absolute inset-0" />
 
         {/* Filter controls */}
-        <div className="absolute top-4 left-4 z-40 flex flex-col gap-2">
+        <div className="absolute top-4 left-4 z-40 flex flex-col gap-2 items-start">
           {/* File type filter */}
           <div className="bg-white/90 hover:bg-white backdrop-blur-sm p-1 rounded-xl shadow-md border border-gray-200/80 flex gap-1 select-none transition-all">
             {([
@@ -824,10 +829,18 @@ export default function MapView({ projectId, timezone, routes, fileMarkers = [],
               <div className="bg-white/95 backdrop-blur-sm rounded-xl shadow-md border border-gray-200/80 select-none w-52 overflow-hidden flex-shrink-0">
                 <div className="flex items-center justify-between px-3 py-2 border-b border-gray-100">
                   <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400">Statistics</p>
-                  <button type="button" onClick={() => setStatsExpanded((v) => !v)}
-                    className="w-5 h-5 flex items-center justify-center rounded text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors text-sm font-bold leading-none">
-                    {statsExpanded ? '−' : '+'}
-                  </button>
+                  <div className="flex items-center gap-1">
+                    {(statsStartDate || statsEndDate || selectedGeofences.length > 0) && (
+                      <button type="button" onClick={() => { setStatsStartDate(''); setStatsStartTime(''); setStatsEndDate(''); setStatsEndTime(''); setSelectedGeofences([]) }}
+                        className="text-[9px] text-gray-400 hover:text-red-500 px-1.5 py-0.5 rounded hover:bg-gray-100 transition-colors">
+                        Reset
+                      </button>
+                    )}
+                    <button type="button" onClick={() => setStatsExpanded((v) => !v)}
+                      className="w-5 h-5 flex items-center justify-center rounded text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors text-sm font-bold leading-none">
+                      {statsExpanded ? '−' : '+'}
+                    </button>
+                  </div>
                 </div>
                 {statsExpanded && (
                   <div className="p-3 space-y-2.5">
