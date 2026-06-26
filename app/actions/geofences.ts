@@ -84,6 +84,19 @@ export async function createGeofence(
   return { id }
 }
 
+export async function updateGeofenceColor(
+  geofenceId: string,
+  projectId: string,
+  color: string,
+): Promise<{ error?: string; ok?: boolean }> {
+  const session = await getSession()
+  if (!session || session.role === 'read') return { error: 'Unauthorized.' }
+
+  await db.update(geofences).set({ color }).where(eq(geofences.id, geofenceId))
+  revalidatePath(`/projects/${projectId}`)
+  return { ok: true }
+}
+
 export async function deleteGeofence(
   geofenceId: string,
   projectId: string,

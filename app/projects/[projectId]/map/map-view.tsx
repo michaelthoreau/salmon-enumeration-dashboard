@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
-import { Map, Layers, MapPin, Image, Video, Pentagon, Trash2, X } from 'lucide-react'
+import { Map, Layers, MapPin, Image, Video, Pentagon, Trash2, X, Pencil } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import {
@@ -13,7 +13,7 @@ import {
   DialogDescription,
   DialogFooter,
 } from '@/components/ui/dialog'
-import { createGeofence, deleteGeofence } from '@/app/actions/geofences'
+import { createGeofence, deleteGeofence, updateGeofenceColor } from '@/app/actions/geofences'
 import 'maplibre-gl/dist/maplibre-gl.css'
 
 const popupCss = `
@@ -163,6 +163,7 @@ export default function MapView({ projectId, timezone, routes, fileMarkers = [],
   const [isSaving, setIsSaving] = useState(false)
   const [showGeofenceList, setShowGeofenceList] = useState(false)
   const [deletingId, setDeletingId] = useState<string | null>(null)
+  const [editingColorId, setEditingColorId] = useState<string | null>(null)
 
   const filteredRoutes = useMemo(() => {
     if (filterType === 'all') return routes
@@ -644,6 +645,12 @@ export default function MapView({ projectId, timezone, routes, fileMarkers = [],
     router.refresh()
   }
 
+  async function handleUpdateColor(id: string, color: string) {
+    setEditingColorId(null)
+    await updateGeofenceColor(id, projectId, color)
+    router.refresh()
+  }
+
   return (
     <div className="fixed top-[100px] bottom-0 left-0 right-0 z-10 bg-gray-50">
       <div className="w-full h-full relative">
@@ -767,21 +774,49 @@ export default function MapView({ projectId, timezone, routes, fileMarkers = [],
             </div>
             <div className="p-2 space-y-1">
               {geofences.map((g) => (
-                <div key={g.id} className="flex items-center justify-between gap-2 px-2 py-1.5 rounded-lg hover:bg-gray-50 group">
-                  <div className="flex items-center gap-2 min-w-0">
-                    <span className="w-3 h-3 rounded-full flex-shrink-0" style={{ backgroundColor: g.color }} />
-                    <span className="text-xs font-medium text-gray-700 truncate">{g.name}</span>
+                <div key={g.id}>
+                  <div className="flex items-center justify-between gap-2 px-2 py-1.5 rounded-lg hover:bg-gray-50 group">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span className="w-3 h-3 rounded-full flex-shrink-0" style={{ backgroundColor: g.color }} />
+                      <span className="text-xs font-medium text-gray-700 truncate">{g.name}</span>
+                    </div>
+                    {canWrite && (
+                      <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-all">
+                        <button
+                          type="button"
+                          onClick={() => setEditingColorId(editingColorId === g.id ? null : g.id)}
+                          className="p-1 hover:bg-gray-100 rounded transition-colors text-gray-400 hover:text-gray-600"
+                          title="Change color"
+                        >
+                          <Pencil className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteGeofence(g.id)}
+                          disabled={deletingId === g.id}
+                          className="p-1 hover:bg-red-50 rounded transition-colors text-gray-400 hover:text-red-500"
+                          title="Delete geofence"
+                        >
+                          <Trash2 className={cn('w-3.5 h-3.5', deletingId === g.id && 'animate-spin')} />
+                        </button>
+                      </div>
+                    )}
                   </div>
-                  {canWrite && (
-                    <button
-                      type="button"
-                      onClick={() => handleDeleteGeofence(g.id)}
-                      disabled={deletingId === g.id}
-                      className="p-1 opacity-0 group-hover:opacity-100 hover:bg-red-50 rounded transition-all text-gray-400 hover:text-red-500"
-                      title="Delete geofence"
-                    >
-                      <Trash2 className={cn('w-3.5 h-3.5', deletingId === g.id && 'animate-spin')} />
-                    </button>
+                  {editingColorId === g.id && (
+                    <div className="flex gap-1.5 px-2 pb-2 pt-1">
+                      {GEOFENCE_COLORS.map((color) => (
+                        <button
+                          key={color}
+                          type="button"
+                          onClick={() => handleUpdateColor(g.id, color)}
+                          className={cn(
+                            'w-5 h-5 rounded-full border-2 transition-all hover:scale-110',
+                            g.color === color ? 'border-gray-900 scale-110' : 'border-transparent',
+                          )}
+                          style={{ backgroundColor: color }}
+                        />
+                      ))}
+                    </div>
                   )}
                 </div>
               ))}
