@@ -420,7 +420,7 @@ export default function VideosView({ projectId, timezone, videos, canWrite, avai
                                   title={`${v.latitude.toFixed(4)}, ${v.longitude.toFixed(4)}`}
                                 >
                                   <MapPin className="w-3.5 h-3.5" />
-                                  <span>Set</span>
+                                  <span>{v.locationTags.length > 0 ? v.locationTags.join(', ') : 'Set'}</span>
                                 </button>
                               ) : canWrite ? (
                                 <button
