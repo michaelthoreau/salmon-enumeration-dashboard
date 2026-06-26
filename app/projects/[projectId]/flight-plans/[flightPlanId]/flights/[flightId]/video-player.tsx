@@ -308,29 +308,41 @@ export default function VideoPlayer({
         )}
 
         {/* Fish Counter HUD — top left, always visible */}
-        <div className="absolute top-4 left-4 flex items-center gap-3 bg-black/60 backdrop-blur-sm rounded-xl px-4 py-2.5">
-          {canWrite && (
-            <button
-              onClick={onDecrement}
-              disabled={fishCount <= 0}
-              className="w-8 h-8 flex flex-col items-center justify-center rounded-lg text-white/70 hover:text-white hover:bg-white/10 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
-            >
-              <Minus className="w-4 h-4" />
-              <span className="text-[9px] text-white/30 mt-0.5">D</span>
-            </button>
-          )}
-          <div className="flex items-center gap-2">
-            <span className="text-2xl font-bold text-white tabular-nums">{fishCount}</span>
-            <span className="text-xs text-white/50 uppercase tracking-wider font-medium">fish</span>
+        <div className="absolute top-4 left-4 flex flex-col gap-1.5 bg-black/60 backdrop-blur-sm rounded-xl px-4 py-2.5">
+          <div className="flex items-center gap-3">
+            {canWrite && (
+              <button
+                onClick={onDecrement}
+                disabled={fishCount <= 0}
+                className="w-8 h-8 flex flex-col items-center justify-center rounded-lg text-white/70 hover:text-white hover:bg-white/10 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+              >
+                <Minus className="w-4 h-4" />
+                <span className="text-[9px] text-white/30 mt-0.5">D</span>
+              </button>
+            )}
+            <div className="flex items-center gap-2">
+              <span className="text-2xl font-bold text-white tabular-nums">{fishCount}</span>
+              <span className="text-xs text-white/50 uppercase tracking-wider font-medium">fish</span>
+            </div>
+            {canWrite && (
+              <button
+                onClick={onIncrement}
+                className="w-8 h-8 flex flex-col items-center justify-center rounded-lg text-white/70 hover:text-white hover:bg-white/10 transition-colors"
+              >
+                <Plus className="w-4 h-4" />
+                <span className="text-[9px] text-white/30 mt-0.5">F</span>
+              </button>
+            )}
           </div>
-          {canWrite && (
-            <button
-              onClick={onIncrement}
-              className="w-8 h-8 flex flex-col items-center justify-center rounded-lg text-white/70 hover:text-white hover:bg-white/10 transition-colors"
-            >
-              <Plus className="w-4 h-4" />
-              <span className="text-[9px] text-white/30 mt-0.5">F</span>
-            </button>
+          {duration > 0 && (
+            <div className="text-center border-t border-white/10 pt-1">
+              <span className="text-[11px] text-white/40 uppercase tracking-wider font-medium">Daily est.</span>
+              <span className="block text-sm font-bold text-white/80 tabular-nums">
+                {fishCount > 0
+                  ? Math.round(fishCount * (3600 / duration) * 24 * 2).toLocaleString()
+                  : '—'}
+              </span>
+            </div>
           )}
         </div>
 
