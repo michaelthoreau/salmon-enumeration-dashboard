@@ -154,7 +154,7 @@ export default function MapView({ projectId, timezone, routes, fileMarkers = [],
   const mapRef = useRef<any | null>(null)
   const [mapReady, setMapReady] = useState(false)
   const [basemap, setBasemap] = useState<'street' | 'satellite'>('satellite')
-  const [filterType, setFilterType] = useState<'images' | 'videos'>('videos')
+  const [filterType, setFilterType] = useState<'all' | 'images' | 'videos'>('videos')
 
   // Geofence drawing state
   const [isDrawing, setIsDrawing] = useState(false)
@@ -170,39 +170,45 @@ export default function MapView({ projectId, timezone, routes, fileMarkers = [],
   const [showImageLabels, setShowImageLabels] = useState(false)
   const [showVideoLabels, setShowVideoLabels] = useState(false)
   const [showGeofenceLabels, setShowGeofenceLabels] = useState(false)
-  const [statsDate, setStatsDate] = useState('')
-  const [statsTime, setStatsTime] = useState('')
+  const [statsStartDate, setStatsStartDate] = useState('')
+  const [statsStartTime, setStatsStartTime] = useState('')
+  const [statsEndDate, setStatsEndDate] = useState('')
+  const [statsEndTime, setStatsEndTime] = useState('')
   const [selectedGeofences, setSelectedGeofences] = useState<string[]>([])
 
   const filteredRoutes = useMemo(() => {
+    if (filterType === 'all') return routes
     if (filterType === 'images') return routes.filter((r) => r.imageCount > 0)
     return routes.filter((r) => r.videoCount > 0)
   }, [routes, filterType])
 
   const filteredFileMarkers = useMemo(() => {
+    if (filterType === 'all') return fileMarkers
     if (filterType === 'images') return fileMarkers.filter((f) => f.type === 'image')
     return fileMarkers.filter((f) => f.type === 'video')
   }, [fileMarkers, filterType])
 
   // Stats panel computation
   const statsVideos = useMemo(() => {
-    if (!statsDate) return null
-    const [year, month, day] = statsDate.split('-').map(Number)
+    if (!statsStartDate) return null
+    const toMs = (date: string, time: string) => {
+      const [y, mo, d] = date.split('-').map(Number)
+      const [h, m] = time ? time.split(':').map(Number) : [0, 0]
+      return new Date(y, mo - 1, d, h, m).getTime()
+    }
+    const startMs = toMs(statsStartDate, statsStartTime)
+    const endMs = statsEndDate
+      ? toMs(statsEndDate, statsEndTime || '23:59')
+      : toMs(statsStartDate, statsEndTime || '23:59')
+
     return fileMarkers.filter((f) => {
       if (f.type !== 'video' || !f.flightTimestamp) return false
-      const ts = new Date(f.flightTimestamp)
-      const inDate = ts.getFullYear() === year && ts.getMonth() + 1 === month && ts.getDate() === day
-      if (!inDate) return false
-      if (statsTime) {
-        const [h, m] = statsTime.split(':').map(Number)
-        const cutoff = new Date(ts)
-        cutoff.setHours(h, m, 0, 0)
-        if (ts > cutoff) return false
-      }
+      const ts = new Date(f.flightTimestamp).getTime()
+      if (ts < startMs || ts > endMs) return false
       if (selectedGeofences.length > 0 && !selectedGeofences.some((g) => f.geofenceTags.includes(g))) return false
       return true
     })
-  }, [fileMarkers, statsDate, statsTime, selectedGeofences])
+  }, [fileMarkers, statsStartDate, statsStartTime, statsEndDate, statsEndTime, selectedGeofences])
 
   const statsCounted = useMemo(() => statsVideos?.filter((v) => v.fishCount > 0) ?? [], [statsVideos])
   const statsTotalFish = useMemo(() => statsCounted.reduce((s, v) => s + v.fishCount, 0), [statsCounted])
@@ -730,6 +736,7 @@ export default function MapView({ projectId, timezone, routes, fileMarkers = [],
           {/* File type filter */}
           <div className="bg-white/90 hover:bg-white backdrop-blur-sm p-1 rounded-xl shadow-md border border-gray-200/80 flex gap-1 select-none transition-all">
             {([
+              { value: 'all', label: 'All', icon: Layers },
               { value: 'images', label: 'Images', icon: Image },
               { value: 'videos', label: 'Videos', icon: Video },
             ] as const).map(({ value, label, icon: Icon }) => (
@@ -776,41 +783,72 @@ export default function MapView({ projectId, timezone, routes, fileMarkers = [],
 
           {/* Stats panel — videos only */}
           {filterType === 'videos' && (
-            <div className="bg-white/95 backdrop-blur-sm rounded-xl shadow-md border border-gray-200/80 p-3 space-y-3 select-none min-w-[220px]">
+            <div className="bg-white/95 backdrop-blur-sm rounded-xl shadow-md border border-gray-200/80 p-3 space-y-3 select-none w-56">
               <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400">Statistics</p>
 
-              {/* Date + time */}
+              {/* Start date + time slider */}
               <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <p className="text-[10px] text-gray-400 font-medium">Start</p>
+                  {statsStartTime && <span className="text-[10px] font-mono text-gray-500">{statsStartTime}</span>}
+                </div>
+                <input type="date" value={statsStartDate} onChange={(e) => setStatsStartDate(e.target.value)}
+                  className="w-full text-xs border border-gray-200 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500" />
                 <input
-                  type="date"
-                  value={statsDate}
-                  onChange={(e) => setStatsDate(e.target.value)}
-                  className="w-full text-xs border border-gray-200 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
-                <input
-                  type="time"
-                  value={statsTime}
-                  onChange={(e) => setStatsTime(e.target.value)}
-                  placeholder="Filter by time (optional)"
-                  className="w-full text-xs border border-gray-200 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500 text-gray-600"
+                  type="range" min={0} max={1439} step={5}
+                  value={statsStartTime ? parseInt(statsStartTime.split(':')[0]) * 60 + parseInt(statsStartTime.split(':')[1]) : 0}
+                  onChange={(e) => {
+                    const mins = Number(e.target.value)
+                    const h = String(Math.floor(mins / 60)).padStart(2, '0')
+                    const m = String(mins % 60).padStart(2, '0')
+                    setStatsStartTime(`${h}:${m}`)
+                  }}
+                  className="w-full accent-blue-500"
                 />
               </div>
 
-              {/* Geofence multi-select */}
+              {/* End date + time slider */}
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <p className="text-[10px] text-gray-400 font-medium">End</p>
+                  {statsEndTime && <span className="text-[10px] font-mono text-gray-500">{statsEndTime}</span>}
+                </div>
+                <input type="date" value={statsEndDate} onChange={(e) => setStatsEndDate(e.target.value)}
+                  className="w-full text-xs border border-gray-200 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                <input
+                  type="range" min={0} max={1439} step={5}
+                  value={statsEndTime ? parseInt(statsEndTime.split(':')[0]) * 60 + parseInt(statsEndTime.split(':')[1]) : 1439}
+                  onChange={(e) => {
+                    const mins = Number(e.target.value)
+                    const h = String(Math.floor(mins / 60)).padStart(2, '0')
+                    const m = String(mins % 60).padStart(2, '0')
+                    setStatsEndTime(`${h}:${m}`)
+                  }}
+                  className="w-full accent-blue-500"
+                />
+              </div>
+
+              {/* Geofence checklist */}
               {geofences.length > 0 && (
-                <select
-                  multiple
-                  size={Math.min(geofences.length, 4)}
-                  value={selectedGeofences}
-                  onChange={(e) => setSelectedGeofences(Array.from(e.target.selectedOptions, (o) => o.value))}
-                  className="w-full text-xs border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                >
-                  {geofences.map((g) => (
-                    <option key={g.id} value={g.name} className="px-2 py-1">
-                      {g.name}
-                    </option>
-                  ))}
-                </select>
+                <div className="space-y-1">
+                  <p className="text-[10px] text-gray-400 font-medium">Locations</p>
+                  <div className="space-y-1 max-h-32 overflow-y-auto">
+                    {geofences.map((g) => (
+                      <label key={g.id} className="flex items-center gap-2 cursor-pointer group">
+                        <input
+                          type="checkbox"
+                          checked={selectedGeofences.includes(g.name)}
+                          onChange={(e) => setSelectedGeofences((prev) =>
+                            e.target.checked ? [...prev, g.name] : prev.filter((n) => n !== g.name)
+                          )}
+                          className="rounded"
+                        />
+                        <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: g.color }} />
+                        <span className="text-xs text-gray-700 truncate">{g.name}</span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
               )}
 
               {/* Results */}
@@ -826,7 +864,6 @@ export default function MapView({ projectId, timezone, routes, fileMarkers = [],
                   </div>
                   <p className="text-[10px] text-gray-400 leading-snug pt-0.5">
                     {statsCounted.length} of {statsVideos.length} video{statsVideos.length !== 1 ? 's' : ''} with counts
-                    {selectedGeofences.length > 0 && ` · ${selectedGeofences.join(', ')}`}
                   </p>
                 </div>
               )}
