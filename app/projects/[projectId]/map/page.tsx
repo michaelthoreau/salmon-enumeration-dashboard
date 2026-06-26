@@ -1,6 +1,6 @@
 import { notFound } from 'next/navigation'
 import { db } from '@/lib/db'
-import { projects, flightPlans, flights, files as filesTable, geofences, fileGeofenceTags } from '@/lib/schema'
+import { projects, flightPlans, flights, files as filesTable, geofences, fileGeofenceTags, annotations } from '@/lib/schema'
 import { eq, and, isNull, inArray, desc, sql } from 'drizzle-orm'
 import { getSession } from '@/lib/session'
 import MapView from './map-view'
@@ -139,7 +139,40 @@ export default async function MapPage({ params }: PageProps) {
   // Build individual file markers: only videos with coordinates
   // Images are represented by their route point, not individually
   const flightToPlan = new Map(allFlights.map((f) => [f.id, f.flightPlanId]))
+  const flightTimestampMap = new Map(allFlights.map((f) => [f.id, f.timestamp.toISOString()]))
   const planNameMap = new Map(allPlans.map((p) => [p.id, p.displayName || p.name]))
+
+  const videoFileIds = allFiles
+    .filter((f) => f.latitude != null && f.longitude != null && getFileType(f.key) === 'video')
+    .map((f) => f.id)
+
+  // Fish counts from video-count annotations
+  const fishCountMap = new Map<string, number>()
+  if (videoFileIds.length > 0) {
+    const fishAnnotations = await db
+      .select({ fileId: annotations.fileId, fishCount: annotations.fishCount })
+      .from(annotations)
+      .where(and(inArray(annotations.fileId, videoFileIds), eq(annotations.label, 'video-count')))
+    for (const a of fishAnnotations) {
+      if (a.fileId) fishCountMap.set(a.fileId, (fishCountMap.get(a.fileId) ?? 0) + (a.fishCount ?? 0))
+    }
+  }
+
+  // Geofence tags per file
+  const geofenceTagsMap = new Map<string, string[]>()
+  if (videoFileIds.length > 0) {
+    const geofenceNameMap = new Map(allGeofences.map((g) => [g.id, g.name]))
+    const tags = await db
+      .select({ fileId: fileGeofenceTags.fileId, geofenceId: fileGeofenceTags.geofenceId })
+      .from(fileGeofenceTags)
+      .where(inArray(fileGeofenceTags.fileId, videoFileIds))
+    for (const t of tags) {
+      const name = geofenceNameMap.get(t.geofenceId)
+      if (!name) continue
+      if (!geofenceTagsMap.has(t.fileId)) geofenceTagsMap.set(t.fileId, [])
+      geofenceTagsMap.get(t.fileId)!.push(name)
+    }
+  }
 
   const fileMarkers = allFiles
     .filter((f) => {
@@ -148,7 +181,6 @@ export default async function MapPage({ params }: PageProps) {
     })
     .map((f) => {
       const planId = flightToPlan.get(f.flightId) ?? ''
-      const flight = allFlights.find((fl) => fl.id === f.flightId)
       return {
         fileId: f.id,
         key: f.key,
@@ -160,6 +192,9 @@ export default async function MapPage({ params }: PageProps) {
         flightId: f.flightId,
         flightPlanId: planId,
         filename: f.key.split('/').pop() ?? f.key,
+        flightTimestamp: flightTimestampMap.get(f.flightId) ?? null,
+        fishCount: fishCountMap.get(f.id) ?? 0,
+        geofenceTags: geofenceTagsMap.get(f.id) ?? [],
       }
     })
 

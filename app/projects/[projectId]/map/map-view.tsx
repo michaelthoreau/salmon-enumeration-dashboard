@@ -57,6 +57,9 @@ interface FileMarker {
   flightId: string
   flightPlanId: string
   filename: string
+  flightTimestamp: string | null
+  fishCount: number
+  geofenceTags: string[]
 }
 
 interface Props {
@@ -167,6 +170,9 @@ export default function MapView({ projectId, timezone, routes, fileMarkers = [],
   const [showImageLabels, setShowImageLabels] = useState(false)
   const [showVideoLabels, setShowVideoLabels] = useState(false)
   const [showGeofenceLabels, setShowGeofenceLabels] = useState(false)
+  const [statsDate, setStatsDate] = useState('')
+  const [statsTime, setStatsTime] = useState('')
+  const [selectedGeofences, setSelectedGeofences] = useState<string[]>([])
 
   const filteredRoutes = useMemo(() => {
     if (filterType === 'images') return routes.filter((r) => r.imageCount > 0)
@@ -177,6 +183,29 @@ export default function MapView({ projectId, timezone, routes, fileMarkers = [],
     if (filterType === 'images') return fileMarkers.filter((f) => f.type === 'image')
     return fileMarkers.filter((f) => f.type === 'video')
   }, [fileMarkers, filterType])
+
+  // Stats panel computation
+  const statsVideos = useMemo(() => {
+    if (!statsDate) return null
+    const [year, month, day] = statsDate.split('-').map(Number)
+    return fileMarkers.filter((f) => {
+      if (f.type !== 'video' || !f.flightTimestamp) return false
+      const ts = new Date(f.flightTimestamp)
+      const inDate = ts.getFullYear() === year && ts.getMonth() + 1 === month && ts.getDate() === day
+      if (!inDate) return false
+      if (statsTime) {
+        const [h, m] = statsTime.split(':').map(Number)
+        const cutoff = new Date(ts)
+        cutoff.setHours(h, m, 0, 0)
+        if (ts > cutoff) return false
+      }
+      if (selectedGeofences.length > 0 && !selectedGeofences.some((g) => f.geofenceTags.includes(g))) return false
+      return true
+    })
+  }, [fileMarkers, statsDate, statsTime, selectedGeofences])
+
+  const statsCounted = useMemo(() => statsVideos?.filter((v) => v.fishCount > 0) ?? [], [statsVideos])
+  const statsTotalFish = useMemo(() => statsCounted.reduce((s, v) => s + v.fishCount, 0), [statsCounted])
 
   // Build GeoJSON for routes
   const routeGeojson = useMemo(() => {
@@ -744,6 +773,65 @@ export default function MapView({ projectId, timezone, routes, fileMarkers = [],
               </button>
             ))}
           </div>
+
+          {/* Stats panel — videos only */}
+          {filterType === 'videos' && (
+            <div className="bg-white/95 backdrop-blur-sm rounded-xl shadow-md border border-gray-200/80 p-3 space-y-3 select-none min-w-[220px]">
+              <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400">Statistics</p>
+
+              {/* Date + time */}
+              <div className="space-y-1.5">
+                <input
+                  type="date"
+                  value={statsDate}
+                  onChange={(e) => setStatsDate(e.target.value)}
+                  className="w-full text-xs border border-gray-200 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+                <input
+                  type="time"
+                  value={statsTime}
+                  onChange={(e) => setStatsTime(e.target.value)}
+                  placeholder="Filter by time (optional)"
+                  className="w-full text-xs border border-gray-200 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500 text-gray-600"
+                />
+              </div>
+
+              {/* Geofence multi-select */}
+              {geofences.length > 0 && (
+                <select
+                  multiple
+                  size={Math.min(geofences.length, 4)}
+                  value={selectedGeofences}
+                  onChange={(e) => setSelectedGeofences(Array.from(e.target.selectedOptions, (o) => o.value))}
+                  className="w-full text-xs border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                  {geofences.map((g) => (
+                    <option key={g.id} value={g.name} className="px-2 py-1">
+                      {g.name}
+                    </option>
+                  ))}
+                </select>
+              )}
+
+              {/* Results */}
+              {statsVideos !== null && (
+                <div className="border-t border-gray-100 pt-2 space-y-1">
+                  <div className="flex justify-between text-xs">
+                    <span className="text-gray-500">Videos matched</span>
+                    <span className="font-semibold text-gray-800">{statsVideos.length}</span>
+                  </div>
+                  <div className="flex justify-between text-xs">
+                    <span className="text-gray-500">Fish counted</span>
+                    <span className="font-semibold text-gray-800">{statsTotalFish}</span>
+                  </div>
+                  <p className="text-[10px] text-gray-400 leading-snug pt-0.5">
+                    {statsCounted.length} of {statsVideos.length} video{statsVideos.length !== 1 ? 's' : ''} with counts
+                    {selectedGeofences.length > 0 && ` · ${selectedGeofences.join(', ')}`}
+                  </p>
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Legend */}
           <div className="bg-white/90 backdrop-blur-sm px-3 py-2 rounded-xl shadow-md border border-gray-200/80 select-none">
