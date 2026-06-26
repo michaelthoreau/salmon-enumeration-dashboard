@@ -40,26 +40,29 @@ async function extractImageGps(
   return null
 }
 
+function parseDjiGps(text: string): { latitude: number; longitude: number } | null {
+  const latMatch = text.match(/\[latitude:\s*([-\d.]+)\]/)
+  const lngMatch = text.match(/\[longitude:\s*([-\d.]+)\]/)
+  if (!latMatch || !lngMatch) return null
+  const latitude = parseFloat(latMatch[1])
+  const longitude = parseFloat(lngMatch[1])
+  if (isNaN(latitude) || isNaN(longitude) || latitude === 0 || longitude === 0) return null
+  return { latitude, longitude }
+}
+
 async function extractVideoGps(
   key: string,
 ): Promise<{ latitude: number; longitude: number } | null> {
   try {
-    // DJI embeds telemetry in the first ~200KB of the video file
-    const { body } = await getObjectRange(key, 'bytes=0-262143')
-    const buf = Buffer.from(body)
-    const text = buf.toString('ascii')
+    // Try first 256 KB — works for original DJI files (plain-text telemetry near start)
+    const { body: body256 } = await getObjectRange(key, 'bytes=0-262143')
+    const result256 = parseDjiGps(Buffer.from(body256).toString('ascii'))
+    if (result256) return result256
 
-    // DJI telemetry format: [latitude: 59.214246] [longitude: -158.539621]
-    const latMatch = text.match(/\[latitude:\s*([-\d.]+)\]/)
-    const lngMatch = text.match(/\[longitude:\s*([-\d.]+)\]/)
-
-    if (latMatch && lngMatch) {
-      const latitude = parseFloat(latMatch[1])
-      const longitude = parseFloat(lngMatch[1])
-      if (!isNaN(latitude) && !isNaN(longitude) && latitude !== 0 && longitude !== 0) {
-        return { latitude, longitude }
-      }
-    }
+    // Fallback to 2 MB — needed for FFmpeg-re-encoded files where high-bitrate video
+    // keyframes push the first mov_text subtitle sample past the 256 KB mark
+    const { body: body2m } = await getObjectRange(key, 'bytes=0-2097151')
+    return parseDjiGps(Buffer.from(body2m).toString('ascii'))
   } catch (err) {
     console.warn(`[VIDEO GPS] Failed to parse GPS for key ${key}:`, err)
   }

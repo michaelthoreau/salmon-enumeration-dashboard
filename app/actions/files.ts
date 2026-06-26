@@ -370,3 +370,53 @@ export async function updateBulkFileLocation(
 
   return { updated: fileIds.length }
 }
+
+export async function backfillVideoGps(
+  projectId: string,
+): Promise<{ ok: boolean; updated: number; failed: number; error?: string }> {
+  const session = await getSession()
+  if (!session || (session.role !== 'read-write' && session.role !== 'admin')) {
+    return { ok: false, updated: 0, failed: 0, error: 'Unauthorized' }
+  }
+
+  try {
+    const projectFlights = await db
+      .select({ id: flights.id })
+      .from(flights)
+      .innerJoin(flightPlans, eq(flights.flightPlanId, flightPlans.id))
+      .where(and(eq(flightPlans.projectId, projectId), isNull(flights.deletedAt), isNull(flightPlans.deletedAt)))
+
+    if (projectFlights.length === 0) return { ok: true, updated: 0, failed: 0 }
+
+    const flightIds = projectFlights.map((f) => f.id)
+    const videoFiles = await db
+      .select({ id: files.id, key: files.key, flightId: files.flightId })
+      .from(files)
+      .where(and(isNull(files.latitude), isNull(files.longitude), inArray(files.flightId, flightIds)))
+
+    const videos = videoFiles.filter((f) => {
+      const lower = f.key.toLowerCase()
+      return lower.endsWith('.mp4') || lower.endsWith('.mov')
+    })
+
+    let updated = 0
+    let failed = 0
+    const toTag: { id: string; latitude: number; longitude: number }[] = []
+
+    for (const file of videos) {
+      const coords = await extractExifGps(file.key)
+      if (!coords) { failed++; continue }
+      await db.update(files).set({ latitude: coords.latitude, longitude: coords.longitude }).where(eq(files.id, file.id))
+      toTag.push({ id: file.id, latitude: coords.latitude, longitude: coords.longitude })
+      updated++
+    }
+
+    if (toTag.length > 0) {
+      await tagFilesAgainstGeofences(projectId, toTag).catch(() => {})
+    }
+
+    return { ok: true, updated, failed }
+  } catch (err) {
+    return { ok: false, updated: 0, failed: 0, error: String(err) }
+  }
+}

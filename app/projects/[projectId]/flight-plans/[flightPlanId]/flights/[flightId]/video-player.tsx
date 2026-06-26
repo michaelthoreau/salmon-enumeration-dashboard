@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useRef, useState, useCallback } from 'react'
-import { Play, Pause, ChevronLeft, ChevronRight, Volume2, VolumeX, Loader2, Minus, Plus, Settings, NotebookPen, X, Trash2, Maximize2 } from 'lucide-react'
+import { Play, Pause, ChevronLeft, ChevronRight, Volume2, VolumeX, Loader2, Minus, Plus, Settings, NotebookPen, X, Trash2, Maximize2, ChevronDown, ChevronUp } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 interface VideoNote {
@@ -51,6 +51,7 @@ export default function VideoPlayer({
   const [hoverTime, setHoverTime] = useState<number | null>(null)
   const [hoverX, setHoverX] = useState(0)
   const [showMidline, setShowMidline] = useState(true)
+  const [showEscapement, setShowEscapement] = useState(false)
 
   useEffect(() => {
     const video = videoRef.current
@@ -333,8 +334,17 @@ export default function VideoPlayer({
                 <span className="text-[9px] text-white/30 mt-0.5">F</span>
               </button>
             )}
+            {duration > 0 && (
+              <button
+                onClick={() => setShowEscapement((v) => !v)}
+                className="w-6 h-6 flex items-center justify-center rounded text-white/30 hover:text-white/70 hover:bg-white/10 transition-colors"
+                title={showEscapement ? 'Hide daily escapement' : 'Show daily escapement'}
+              >
+                {showEscapement ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+              </button>
+            )}
           </div>
-          {duration > 0 && (
+          {duration > 0 && showEscapement && (
             <div className="text-center border-t border-white/10 pt-1">
               <span className="text-[11px] text-white/40 uppercase tracking-wider font-medium">Daily est.</span>
               <span className="block text-sm font-bold text-white/80 tabular-nums">

@@ -9,6 +9,7 @@ if (ffmpegPath && ffmpegPath.includes('app.asar')) {
   ffmpegPath = ffmpegPath.replace('app.asar', 'app.asar.unpacked')
 }
 
+
 let mainWindow
 
 function createWindow() {
