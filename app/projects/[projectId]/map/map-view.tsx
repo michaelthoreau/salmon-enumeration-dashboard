@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
-import { Map, Layers, MapPin, Image, Video, Pentagon, Trash2, X, Pencil } from 'lucide-react'
+import { Map, Layers, Image, Video, Pentagon, Trash2, X, Pencil } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import {
@@ -151,7 +151,7 @@ export default function MapView({ projectId, timezone, routes, fileMarkers = [],
   const mapRef = useRef<any | null>(null)
   const [mapReady, setMapReady] = useState(false)
   const [basemap, setBasemap] = useState<'street' | 'satellite'>('satellite')
-  const [filterType, setFilterType] = useState<'all' | 'images' | 'videos'>('all')
+  const [filterType, setFilterType] = useState<'images' | 'videos'>('videos')
 
   // Geofence drawing state
   const [isDrawing, setIsDrawing] = useState(false)
@@ -164,15 +164,16 @@ export default function MapView({ projectId, timezone, routes, fileMarkers = [],
   const [showGeofenceList, setShowGeofenceList] = useState(false)
   const [deletingId, setDeletingId] = useState<string | null>(null)
   const [editingColorId, setEditingColorId] = useState<string | null>(null)
+  const [showImageLabels, setShowImageLabels] = useState(false)
+  const [showVideoLabels, setShowVideoLabels] = useState(false)
+  const [showGeofenceLabels, setShowGeofenceLabels] = useState(false)
 
   const filteredRoutes = useMemo(() => {
-    if (filterType === 'all') return routes
     if (filterType === 'images') return routes.filter((r) => r.imageCount > 0)
     return routes.filter((r) => r.videoCount > 0)
   }, [routes, filterType])
 
   const filteredFileMarkers = useMemo(() => {
-    if (filterType === 'all') return fileMarkers
     if (filterType === 'images') return fileMarkers.filter((f) => f.type === 'image')
     return fileMarkers.filter((f) => f.type === 'video')
   }, [fileMarkers, filterType])
@@ -367,11 +368,30 @@ export default function MapView({ projectId, timezone, routes, fileMarkers = [],
             'text-size': 10,
             'text-anchor': 'top',
             'text-offset': [0, 1],
+            'visibility': 'none',
           },
           paint: {
             'text-color': '#374151',
             'text-halo-color': '#ffffff',
             'text-halo-width': 1,
+          },
+        })
+
+        // Geofence label layer
+        map.addLayer({
+          id: 'geofences-label',
+          type: 'symbol',
+          source: 'geofences-source',
+          layout: {
+            'text-field': ['get', 'name'],
+            'text-size': 12,
+            'text-anchor': 'center',
+            'visibility': 'none',
+          },
+          paint: {
+            'text-color': ['get', 'color'],
+            'text-halo-color': '#ffffff',
+            'text-halo-width': 1.5,
           },
         })
 
@@ -480,6 +500,26 @@ export default function MapView({ projectId, timezone, routes, fileMarkers = [],
     const source = mapRef.current.getSource('geofences-source')
     if (source) source.setData(geofenceGeojson)
   }, [geofenceGeojson, mapReady])
+
+  // Label visibility
+  useEffect(() => {
+    if (!mapRef.current || !mapReady) return
+    const map = mapRef.current
+    if (map.getLayer('geofences-label')) {
+      map.setLayoutProperty('geofences-label', 'visibility', showGeofenceLabels ? 'visible' : 'none')
+    }
+    if (map.getLayer('file-markers-label')) {
+      const types: string[] = []
+      if (showImageLabels) types.push('image')
+      if (showVideoLabels) types.push('video')
+      if (types.length === 0) {
+        map.setLayoutProperty('file-markers-label', 'visibility', 'none')
+      } else {
+        map.setLayoutProperty('file-markers-label', 'visibility', 'visible')
+        map.setFilter('file-markers-label', ['in', ['get', 'type'], ['literal', types]])
+      }
+    }
+  }, [showImageLabels, showVideoLabels, showGeofenceLabels, mapReady])
 
   // Drawing polygon preview layer
   useEffect(() => {
@@ -661,7 +701,6 @@ export default function MapView({ projectId, timezone, routes, fileMarkers = [],
           {/* File type filter */}
           <div className="bg-white/90 hover:bg-white backdrop-blur-sm p-1 rounded-xl shadow-md border border-gray-200/80 flex gap-1 select-none transition-all">
             {([
-              { value: 'all', label: 'All', icon: MapPin },
               { value: 'images', label: 'Images', icon: Image },
               { value: 'videos', label: 'Videos', icon: Video },
             ] as const).map(({ value, label, icon: Icon }) => (
@@ -678,6 +717,30 @@ export default function MapView({ projectId, timezone, routes, fileMarkers = [],
               >
                 <Icon className="w-3.5 h-3.5" />
                 <span>{label}</span>
+              </button>
+            ))}
+          </div>
+
+          {/* Label toggles */}
+          <div className="bg-white/90 hover:bg-white backdrop-blur-sm p-1 rounded-xl shadow-md border border-gray-200/80 flex gap-1 select-none transition-all">
+            <span className="px-2 flex items-center text-[10px] font-bold text-gray-400 uppercase tracking-wider">Labels</span>
+            {([
+              { label: 'Images', active: showImageLabels, toggle: () => setShowImageLabels((v) => !v) },
+              { label: 'Videos', active: showVideoLabels, toggle: () => setShowVideoLabels((v) => !v) },
+              { label: 'Geofences', active: showGeofenceLabels, toggle: () => setShowGeofenceLabels((v) => !v) },
+            ]).map(({ label, active, toggle }) => (
+              <button
+                key={label}
+                type="button"
+                onClick={toggle}
+                className={cn(
+                  'px-2.5 py-1.5 rounded-lg text-[10px] font-bold transition-all h-7',
+                  active
+                    ? 'bg-blue-600 text-white shadow-sm'
+                    : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100',
+                )}
+              >
+                {label}
               </button>
             ))}
           </div>
@@ -919,7 +982,7 @@ function updateMapBasemap(map: any, currentBasemap: 'street' | 'satellite') {
     const skipIds = new Set([
       'esri-satellite-layer',
       'routes-fill', 'routes-line', 'routes-point',
-      'geofences-fill', 'geofences-line',
+      'geofences-fill', 'geofences-line', 'geofences-label',
       'file-markers-point', 'file-markers-label',
       'draw-line-layer', 'draw-points-layer',
     ])
