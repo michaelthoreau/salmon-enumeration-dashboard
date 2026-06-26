@@ -378,11 +378,12 @@ export default function VideosView({ projectId, timezone, videos, canWrite, avai
                   <th className="text-left px-6 py-3 font-medium text-gray-600">Notes</th>
                 </tr>
               </thead>
-              {grouped.map(([dateKey, group]) => (
+              {grouped.map(([dateKey, group], i) => (
                 <tbody key={dateKey} className="divide-y divide-gray-100">
-                  <tr className="bg-gray-50/60">
-                    <td colSpan={7} className="px-6 py-2 text-xs font-medium text-gray-500 border-t border-gray-200">
-                      {group.label}
+                  <tr className="bg-gray-100/70">
+                    <td colSpan={7} className={`px-6 py-2.5 ${i > 0 ? 'border-t-2 border-gray-300' : 'border-t border-gray-200'}`}>
+                      <span className="text-sm font-semibold text-gray-700">{group.label}</span>
+                      <span className="ml-2 text-xs text-gray-400">{group.videos.length} video{group.videos.length !== 1 ? 's' : ''}</span>
                     </td>
                   </tr>
                   {group.videos.map((v) => {
