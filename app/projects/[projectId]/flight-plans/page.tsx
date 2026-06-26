@@ -37,10 +37,10 @@ export default async function FlightPlansPage({ params }: PageProps) {
     .from(geofences)
     .where(eq(geofences.projectId, projectId))
 
-  const geofenceNameMap = new Map(allGeofences.map((g) => [g.id, g.name]))
+  const geofenceMap = new Map(allGeofences.map((g) => [g.id, { name: g.name, color: g.color }]))
   const availableTags = [...new Set(allGeofences.map((g) => g.name))].sort()
 
-  const planTagsMap = new Map<string, string[]>()
+  const planTagsMap = new Map<string, { name: string; color: string }[]>()
 
   if (active.length > 0 && allGeofences.length > 0) {
     const planIds = active.map((p) => p.id)
@@ -72,11 +72,11 @@ export default async function FlightPlansPage({ params }: PageProps) {
 
         for (const tag of allTags) {
           const planId = fileToFlightPlan.get(tag.fileId)
-          const gName = geofenceNameMap.get(tag.geofenceId)
-          if (!planId || !gName) continue
+          const gInfo = geofenceMap.get(tag.geofenceId)
+          if (!planId || !gInfo) continue
           if (!planTagsMap.has(planId)) planTagsMap.set(planId, [])
           const tags = planTagsMap.get(planId)!
-          if (!tags.includes(gName)) tags.push(gName)
+          if (!tags.find((t) => t.name === gInfo.name)) tags.push(gInfo)
         }
       }
     }

@@ -13,7 +13,7 @@ interface PlanEntry {
   displayName: string | null
   description: string | null
   createdAt: string
-  locationTags: string[]
+  locationTags: { name: string; color: string }[]
 }
 
 interface Props {
@@ -28,7 +28,7 @@ export default function FlightPlansView({ plans, projectId, isAdmin, availableLo
 
   const filtered = useMemo(() => {
     if (!locationFilter) return plans
-    return plans.filter((p) => p.locationTags.includes(locationFilter))
+    return plans.filter((p) => p.locationTags.some((t) => t.name === locationFilter))
   }, [plans, locationFilter])
 
   return (
@@ -90,11 +90,15 @@ export default function FlightPlansView({ plans, projectId, isAdmin, availableLo
                       <div className="flex flex-wrap gap-1">
                         {plan.locationTags.map((tag) => (
                           <span
-                            key={tag}
-                            className="inline-flex items-center gap-1 rounded-md bg-blue-50 border border-blue-200 px-2 py-0.5 text-[11px] text-blue-700 font-medium"
+                            key={tag.name}
+                            className="inline-flex items-center rounded px-1.5 py-px text-[10px] font-medium border"
+                            style={{
+                              backgroundColor: tag.color + '22',
+                              borderColor: tag.color + '66',
+                              color: tag.color,
+                            }}
                           >
-                            <MapPin className="w-3 h-3" />
-                            {tag}
+                            {tag.name}
                           </span>
                         ))}
                       </div>
