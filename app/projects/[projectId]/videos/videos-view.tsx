@@ -29,7 +29,7 @@ interface VideoEntry {
   flightPlanId: string
   fishCount: number
   noteCount: number
-  locationTags: string[]
+  locationTags: { name: string; color: string }[]
   latitude: number | null
   longitude: number | null
 }
@@ -277,7 +277,7 @@ export default function VideosView({ projectId, timezone, videos, canWrite, avai
   const filtered = useMemo(() => {
     let result = videos
     if (locationFilter) {
-      result = result.filter((v) => v.locationTags.includes(locationFilter))
+      result = result.filter((v) => v.locationTags.some((t) => t.name === locationFilter))
     }
     if (search.trim()) {
       const q = search.toLowerCase()
@@ -365,94 +365,112 @@ export default function VideosView({ projectId, timezone, videos, canWrite, avai
             </div>
           </div>
         ) : (
-          <div className="space-y-6">
-            {grouped.map(([dateKey, group]) => (
-              <div key={dateKey}>
-                <h3 className="text-sm font-medium text-gray-500 mb-2">{group.label}</h3>
-                <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-                  <table className="w-full text-sm">
-                    <thead className="bg-gray-50 border-b border-gray-200">
-                      <tr>
-                        <th className="text-left px-6 py-3 font-medium text-gray-600">Filename</th>
-                        <th className="text-left px-6 py-3 font-medium text-gray-600">Route</th>
-                        <th className="text-left px-6 py-3 font-medium text-gray-600">Time</th>
-                        <th className="text-left px-6 py-3 font-medium text-gray-600">Size</th>
-                        <th className="text-left px-6 py-3 font-medium text-gray-600">Fish</th>
-                        <th className="text-left px-6 py-3 font-medium text-gray-600">Location</th>
-                        <th className="text-left px-6 py-3 font-medium text-gray-600">Notes</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-gray-100">
-                      {group.videos.map((v) => {
-                        const filename = v.key.split('/').pop() ?? v.key
-
-                        return (
-                          <tr key={v.fileId} className="hover:bg-gray-50 transition-colors">
-                            <td className="px-6 py-3">
-                              <Link
-                                href={`/projects/${projectId}/flight-plans/${v.flightPlanId}/flights/${v.flightId}?file=${v.fileId}`}
-                                className={cn(buttonVariants({ variant: 'outline', size: 'sm' }), "truncate max-w-[220px]")}
-                              >
-                                {filename}
-                              </Link>
-                            </td>
-                            <td className="px-6 py-3 text-gray-500">{v.planName}</td>
-                            <td className="px-6 py-3 text-gray-500 font-mono text-xs">
-                              {formatTime(v.flightTimestamp, timezone)}
-                            </td>
-                            <td className="px-6 py-3 text-gray-500">{formatBytes(v.size)}</td>
-                            <td className="px-6 py-3">
-                              {v.fishCount > 0 ? (
-                                <span className="inline-flex items-center gap-1 text-red-500">
-                                  <Fish className="w-3.5 h-3.5" />
-                                  {v.fishCount}
-                                </span>
-                              ) : (
-                                <span className="text-gray-300">—</span>
-                              )}
-                            </td>
-                            <td className="px-6 py-3">
-                              {v.latitude != null && v.longitude != null ? (
+          <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+            <table className="w-full text-sm">
+              <thead className="bg-gray-50 border-b border-gray-200">
+                <tr>
+                  <th className="text-left px-6 py-3 font-medium text-gray-600">Filename</th>
+                  <th className="text-left px-6 py-3 font-medium text-gray-600">Route</th>
+                  <th className="text-left px-6 py-3 font-medium text-gray-600">Time</th>
+                  <th className="text-left px-6 py-3 font-medium text-gray-600">Size</th>
+                  <th className="text-left px-6 py-3 font-medium text-gray-600">Fish</th>
+                  <th className="text-left px-6 py-3 font-medium text-gray-600">Location</th>
+                  <th className="text-left px-6 py-3 font-medium text-gray-600">Notes</th>
+                </tr>
+              </thead>
+              {grouped.map(([dateKey, group]) => (
+                <tbody key={dateKey} className="divide-y divide-gray-100">
+                  <tr className="bg-gray-50/60">
+                    <td colSpan={7} className="px-6 py-2 text-xs font-medium text-gray-500 border-t border-gray-200">
+                      {group.label}
+                    </td>
+                  </tr>
+                  {group.videos.map((v) => {
+                    const filename = v.key.split('/').pop() ?? v.key
+                    return (
+                      <tr key={v.fileId} className="hover:bg-gray-50 transition-colors">
+                        <td className="px-6 py-3">
+                          <Link
+                            href={`/projects/${projectId}/flight-plans/${v.flightPlanId}/flights/${v.flightId}?file=${v.fileId}`}
+                            className={cn(buttonVariants({ variant: 'outline', size: 'sm' }), "truncate max-w-[220px]")}
+                          >
+                            {filename}
+                          </Link>
+                        </td>
+                        <td className="px-6 py-3 text-gray-500">{v.planName}</td>
+                        <td className="px-6 py-3 text-gray-500 font-mono text-xs">
+                          {formatTime(v.flightTimestamp, timezone)}
+                        </td>
+                        <td className="px-6 py-3 text-gray-500">{formatBytes(v.size)}</td>
+                        <td className="px-6 py-3">
+                          {v.fishCount > 0 ? (
+                            <span className="inline-flex items-center gap-1 text-red-500">
+                              <Fish className="w-3.5 h-3.5" />
+                              {v.fishCount}
+                            </span>
+                          ) : (
+                            <span className="text-gray-300">—</span>
+                          )}
+                        </td>
+                        <td className="px-6 py-3">
+                          {v.latitude != null && v.longitude != null ? (
+                            <div className="flex flex-wrap gap-1">
+                              {v.locationTags.length > 0 ? v.locationTags.map((tag) => (
+                                <button
+                                  key={tag.name}
+                                  type="button"
+                                  onClick={() => openLocationDialog(v)}
+                                  className="inline-flex items-center rounded px-1.5 py-px text-[10px] font-medium border transition-opacity hover:opacity-80"
+                                  style={{
+                                    backgroundColor: tag.color + '22',
+                                    borderColor: tag.color + '66',
+                                    color: tag.color,
+                                  }}
+                                  title={`${v.latitude!.toFixed(4)}, ${v.longitude!.toFixed(4)}`}
+                                >
+                                  {tag.name}
+                                </button>
+                              )) : (
                                 <button
                                   type="button"
                                   onClick={() => openLocationDialog(v)}
                                   className="inline-flex items-center gap-1 text-green-600 hover:text-green-700 transition-colors text-xs"
-                                  title={`${v.latitude.toFixed(4)}, ${v.longitude.toFixed(4)}`}
+                                  title={`${v.latitude!.toFixed(4)}, ${v.longitude!.toFixed(4)}`}
                                 >
                                   <MapPin className="w-3.5 h-3.5" />
-                                  <span>{v.locationTags.length > 0 ? v.locationTags.join(', ') : 'Set'}</span>
+                                  <span>Set</span>
                                 </button>
-                              ) : canWrite ? (
-                                <button
-                                  type="button"
-                                  onClick={() => openLocationDialog(v)}
-                                  className="inline-flex items-center gap-1 text-red-500 hover:text-red-600 transition-colors text-xs font-medium"
-                                >
-                                  <MapPin className="w-3.5 h-3.5" />
-                                  <span>Not set</span>
-                                </button>
-                              ) : (
-                                <span className="text-red-400 text-xs">Not set</span>
                               )}
-                            </td>
-                            <td className="px-6 py-3">
-                              {v.noteCount > 0 ? (
-                                <span className="inline-flex items-center gap-1 text-yellow-600">
-                                  <NotebookPen className="w-3.5 h-3.5" />
-                                  {v.noteCount}
-                                </span>
-                              ) : (
-                                <span className="text-gray-300">—</span>
-                              )}
-                            </td>
-                          </tr>
-                        )
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            ))}
+                            </div>
+                          ) : canWrite ? (
+                            <button
+                              type="button"
+                              onClick={() => openLocationDialog(v)}
+                              className="inline-flex items-center gap-1 text-red-500 hover:text-red-600 transition-colors text-xs font-medium"
+                            >
+                              <MapPin className="w-3.5 h-3.5" />
+                              <span>Not set</span>
+                            </button>
+                          ) : (
+                            <span className="text-red-400 text-xs">Not set</span>
+                          )}
+                        </td>
+                        <td className="px-6 py-3">
+                          {v.noteCount > 0 ? (
+                            <span className="inline-flex items-center gap-1 text-yellow-600">
+                              <NotebookPen className="w-3.5 h-3.5" />
+                              {v.noteCount}
+                            </span>
+                          ) : (
+                            <span className="text-gray-300">—</span>
+                          )}
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              ))}
+            </table>
           </div>
         )}
       </section>

@@ -110,13 +110,14 @@ export default async function VideosPage({ params }: PageProps) {
         .where(inArray(fileGeofenceTags.fileId, videoFileIds))
     : []
 
-  const tagsByFileId = new Map<string, string[]>()
+  const tagsByFileId = new Map<string, { name: string; color: string }[]>()
   const geofenceMap = new Map(allGeofences.map((g) => [g.id, g]))
   for (const tag of allTags) {
     const g = geofenceMap.get(tag.geofenceId)
     if (!g) continue
     if (!tagsByFileId.has(tag.fileId)) tagsByFileId.set(tag.fileId, [])
-    tagsByFileId.get(tag.fileId)!.push(g.name)
+    const tags = tagsByFileId.get(tag.fileId)!
+    if (!tags.find((t) => t.name === g.name)) tags.push({ name: g.name, color: g.color })
   }
 
   const videos = allFiles
