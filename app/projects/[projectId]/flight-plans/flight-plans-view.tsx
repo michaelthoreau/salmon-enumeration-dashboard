@@ -23,6 +23,10 @@ interface Props {
   availableLocationTags: string[]
 }
 
+function formatDate(iso: string): string {
+  return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+}
+
 export default function FlightPlansView({ plans, projectId, isAdmin, availableLocationTags }: Props) {
   const [locationFilter, setLocationFilter] = useState<string>('')
 
@@ -64,28 +68,28 @@ export default function FlightPlansView({ plans, projectId, isAdmin, availableLo
           <table className="w-full text-sm">
             <thead className="bg-gray-50 border-b border-gray-200">
               <tr>
-                <th className="text-left px-6 py-3 font-medium text-gray-600">Name</th>
-                <th className="text-left px-6 py-3 font-medium text-gray-600">Description</th>
-                <th className="text-left px-6 py-3 font-medium text-gray-600">Location</th>
-                <th className="text-left px-6 py-3 font-medium text-gray-600">Created</th>
-                {isAdmin && <th className="px-6 py-3" />}
+                <th className="text-left px-4 py-3 font-medium text-gray-600">Name</th>
+                <th className="text-left px-4 py-3 font-medium text-gray-600">Description</th>
+                <th className="text-left px-4 py-3 font-medium text-gray-600">Location</th>
+                <th className="text-left px-4 py-3 font-medium text-gray-600 whitespace-nowrap">Created</th>
+                {isAdmin && <th className="px-4 py-3" />}
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
               {filtered.map((plan) => (
                 <tr key={plan.id}>
-                  <td className="px-6 py-3">
+                  <td className="px-4 py-3">
                     <Link
                       href={`/projects/${projectId}/flight-plans/${plan.id}/flights?from=list`}
-                      className={cn(buttonVariants({ variant: 'outline', size: 'sm' }))}
+                      className={cn(buttonVariants({ variant: 'outline', size: 'sm' }), 'max-w-[200px] truncate')}
                     >
                       {plan.displayName || plan.name}
                     </Link>
                   </td>
-                  <td className="px-6 py-3 text-gray-500">
+                  <td className="px-4 py-3 text-gray-500">
                     {plan.description ?? '—'}
                   </td>
-                  <td className="px-6 py-3">
+                  <td className="px-4 py-3">
                     {plan.locationTags.length > 0 ? (
                       <div className="flex flex-wrap gap-1">
                         {plan.locationTags.map((tag) => (
@@ -106,11 +110,11 @@ export default function FlightPlansView({ plans, projectId, isAdmin, availableLo
                       <span className="text-gray-300">—</span>
                     )}
                   </td>
-                  <td className="px-6 py-3 text-gray-500">
-                    {plan.createdAt}
+                  <td className="px-4 py-3 text-gray-500 whitespace-nowrap">
+                    {formatDate(plan.createdAt)}
                   </td>
                   {isAdmin && (
-                    <td className="px-6 py-3 text-right">
+                    <td className="px-4 py-3 text-right whitespace-nowrap">
                       <div className="flex items-center justify-end gap-1">
                         <EditFlightPlanButton plan={plan} projectId={projectId} />
                         <DeleteFlightPlanButton plan={plan as any} projectId={projectId} />
