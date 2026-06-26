@@ -186,18 +186,7 @@ export default function MapView({ projectId, timezone, routes, fileMarkers = [],
     return routes.filter((r) => r.videoCount > 0)
   }, [routes, filterType])
 
-  const filteredFileMarkers = useMemo(() => {
-    let base = filterType === 'all' ? fileMarkers
-      : filterType === 'images' ? fileMarkers.filter((f) => f.type === 'image')
-      : fileMarkers.filter((f) => f.type === 'video')
-    if (filterType === 'videos' && statsVideos !== null) {
-      const ids = new Set(statsVideos.map((v) => v.fileId))
-      base = base.filter((f) => ids.has(f.fileId))
-    }
-    return base
-  }, [fileMarkers, filterType, statsVideos])
-
-  // Stats panel computation
+  // Stats panel computation — must be before filteredFileMarkers
   const statsVideos = useMemo(() => {
     if (!statsStartDate) return null
     const toMs = (date: string, time: string) => {
@@ -218,6 +207,17 @@ export default function MapView({ projectId, timezone, routes, fileMarkers = [],
       return true
     })
   }, [fileMarkers, statsStartDate, statsStartTime, statsEndDate, statsEndTime, selectedGeofences])
+
+  const filteredFileMarkers = useMemo(() => {
+    let base = filterType === 'all' ? fileMarkers
+      : filterType === 'images' ? fileMarkers.filter((f) => f.type === 'image')
+      : fileMarkers.filter((f) => f.type === 'video')
+    if (filterType === 'videos' && statsVideos !== null) {
+      const ids = new Set(statsVideos.map((v) => v.fileId))
+      base = base.filter((f) => ids.has(f.fileId))
+    }
+    return base
+  }, [fileMarkers, filterType, statsVideos])
 
   const statsWithFish = useMemo(() => statsVideos?.filter((v) => v.fishCount > 0) ?? [], [statsVideos])
   const statsCounted = useMemo(() => statsVideos?.filter((v) => v.fishCount > 0 && v.durationSeconds) ?? [], [statsVideos])
