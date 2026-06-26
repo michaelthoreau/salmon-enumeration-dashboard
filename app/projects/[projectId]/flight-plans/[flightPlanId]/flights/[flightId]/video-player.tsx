@@ -245,7 +245,21 @@ export default function VideoPlayer({
     noteInputRef.current?.focus()
   }
 
-  // Snapshot fish count at every 5-second boundary
+  // Initialize fish timeline from persisted __ft__ notes on mount
+  useEffect(() => {
+    const existing = notes
+      .filter((n) => n.text.startsWith('__ft__:'))
+      .map((n) => {
+        const [, d, t] = n.text.split(':')
+        return { time: n.time, delta: parseInt(d), total: parseInt(t) }
+      })
+      .filter((n) => !isNaN(n.delta) && !isNaN(n.total))
+      .sort((a, b) => a.time - b.time)
+    if (existing.length > 0) setFishSnapshots(existing)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // Snapshot fish count at every 5-second boundary and persist as video-note
   useEffect(() => {
     const bucket = Math.floor(currentTime / 5)
     if (lastBucketRef.current === -1) {
@@ -257,6 +271,7 @@ export default function VideoPlayer({
       const delta = fishCount - countAtBucketStartRef.current
       if (delta !== 0) {
         const snapTime = lastBucketRef.current * 5
+        const snapFrame = Math.round(snapTime * fps)
         setFishSnapshots((prev) => {
           const existing = prev.findIndex((s) => s.time === snapTime)
           if (existing >= 0) {
@@ -266,6 +281,7 @@ export default function VideoPlayer({
           }
           return [...prev, { time: snapTime, delta, total: fishCount }]
         })
+        onAddNote?.({ time: snapTime, frame: snapFrame, text: `__ft__:${delta}:${fishCount}` })
       }
       lastBucketRef.current = bucket
       countAtBucketStartRef.current = fishCount
@@ -290,7 +306,9 @@ export default function VideoPlayer({
   const currentFrame = Math.round(currentTime * fps)
   const totalFrames = Math.round(duration * fps)
   const progressPct = duration > 0 ? (currentTime / duration) * 100 : 0
-  const sortedNotes = [...notes].sort((a, b) => a.time - b.time)
+
+  const visibleNotes = notes.filter((n) => !n.text.startsWith('__ft__:'))
+  const sortedNotes = [...visibleNotes].sort((a, b) => a.time - b.time)
 
   return (
     <div className="flex w-full h-full">
@@ -652,8 +670,8 @@ export default function VideoPlayer({
             <div className="flex items-center gap-2">
               <NotebookPen className="w-4 h-4 text-yellow-400" />
               <span className="text-sm font-semibold text-white">Notes</span>
-              {notes.length > 0 && (
-                <span className="text-[10px] text-gray-500 bg-gray-800 rounded-full px-1.5 py-0.5">{notes.length}</span>
+              {visibleNotes.length > 0 && (
+                <span className="text-[10px] text-gray-500 bg-gray-800 rounded-full px-1.5 py-0.5">{visibleNotes.length}</span>
               )}
             </div>
             <div className="flex items-center gap-2">
@@ -678,7 +696,12 @@ export default function VideoPlayer({
                 <span className="text-[10px] font-bold uppercase tracking-wider text-orange-400">Fish Timeline</span>
                 <div className="flex items-center gap-2">
                   <button
-                    onClick={() => { setFishSnapshots([]); lastBucketRef.current = -1; countAtBucketStartRef.current = 0 }}
+                    onClick={() => {
+                      notes.filter((n) => n.text.startsWith('__ft__:')).forEach((n) => onDeleteNote?.(n.id))
+                      setFishSnapshots([])
+                      lastBucketRef.current = -1
+                      countAtBucketStartRef.current = 0
+                    }}
                     className="text-[9px] text-gray-500 hover:text-red-400 transition-colors px-1.5 py-0.5 rounded hover:bg-gray-800"
                     title="Reset timeline"
                   >
