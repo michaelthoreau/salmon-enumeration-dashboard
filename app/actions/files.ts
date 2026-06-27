@@ -7,7 +7,7 @@ import { getSession } from '@/lib/session'
 import { headObject, listFlightObjects } from '@/lib/s3'
 import { randomUUID } from 'crypto'
 import type { Split } from '@/lib/schema'
-import { extractExifGps } from '@/lib/exif'
+import { extractExifGps, extractVideoDurationOnly } from '@/lib/exif'
 import { tagFilesAgainstGeofences } from '@/lib/geofence-tagger'
 
 const VALID_SPLITS = new Set<string>(['train', 'val', 'test'])
@@ -351,9 +351,9 @@ export async function backfillVideoMetadata(
 
     let updated = 0
     for (const f of needsDuration) {
-      const meta = await extractExifGps(f.key)
-      if (meta?.durationSeconds) {
-        await db.update(files).set({ durationSeconds: meta.durationSeconds }).where(eq(files.id, f.id))
+      const durationSeconds = await extractVideoDurationOnly(f.key)
+      if (durationSeconds) {
+        await db.update(files).set({ durationSeconds }).where(eq(files.id, f.id))
         updated++
       }
     }
