@@ -111,6 +111,74 @@ export async function deleteGeofence(
   return { success: 'Geofence deleted.' }
 }
 
+export async function updateGeofence(
+  geofenceId: string,
+  projectId: string,
+  fields: { name?: string; color?: string; geometry?: string },
+): Promise<{ error?: string; ok?: boolean }> {
+  const session = await getSession()
+  if (!session || session.role === 'read') return { error: 'Unauthorized.' }
+
+  if (fields.name !== undefined) {
+    const trimmed = fields.name.trim()
+    if (!trimmed) return { error: 'Name is required.' }
+    const [conflict] = await db
+      .select({ id: geofences.id })
+      .from(geofences)
+      .where(and(eq(geofences.projectId, projectId), eq(geofences.name, trimmed)))
+    if (conflict && conflict.id !== geofenceId) {
+      return { error: `A geofence named "${trimmed}" already exists.` }
+    }
+  }
+
+  const updateData: Record<string, string> = {}
+  if (fields.name !== undefined) updateData.name = fields.name.trim()
+  if (fields.color !== undefined) updateData.color = fields.color
+  if (fields.geometry !== undefined) updateData.geometry = fields.geometry
+
+  await db.update(geofences).set(updateData).where(eq(geofences.id, geofenceId))
+
+  // Re-tag files if geometry changed
+  if (fields.geometry !== undefined) {
+    const geom = JSON.parse(fields.geometry)
+    const ring: number[][] = geom.coordinates[0]
+
+    await db.delete(fileGeofenceTags).where(eq(fileGeofenceTags.geofenceId, geofenceId))
+
+    const plans = await db
+      .select({ id: flightPlans.id })
+      .from(flightPlans)
+      .where(and(eq(flightPlans.projectId, projectId), isNull(flightPlans.deletedAt)))
+
+    if (plans.length > 0) {
+      const planIds = plans.map((p) => p.id)
+      const allFlights = await db
+        .select({ id: flights.id })
+        .from(flights)
+        .where(and(inArray(flights.flightPlanId, planIds), isNull(flights.deletedAt)))
+
+      if (allFlights.length > 0) {
+        const flightIds = allFlights.map((f) => f.id)
+        const allFiles = await db
+          .select({ id: files.id, latitude: files.latitude, longitude: files.longitude })
+          .from(files)
+          .where(and(inArray(files.flightId, flightIds), isNotNull(files.latitude), isNotNull(files.longitude)))
+
+        const tags = allFiles
+          .filter((f) => f.latitude != null && f.longitude != null && pointInPolygon(f.latitude!, f.longitude!, ring))
+          .map((f) => ({ fileId: f.id, geofenceId }))
+
+        if (tags.length > 0) {
+          await db.insert(fileGeofenceTags).values(tags)
+        }
+      }
+    }
+  }
+
+  revalidatePath(`/projects/${projectId}`)
+  return { ok: true }
+}
+
 export async function retagGeofence(
   geofenceId: string,
   projectId: string,

@@ -13,7 +13,7 @@ import {
   DialogDescription,
   DialogFooter,
 } from '@/components/ui/dialog'
-import { createGeofence, deleteGeofence, updateGeofenceColor } from '@/app/actions/geofences'
+import { createGeofence, deleteGeofence, updateGeofenceColor, updateGeofence } from '@/app/actions/geofences'
 import 'maplibre-gl/dist/maplibre-gl.css'
 
 const popupCss = `
@@ -73,10 +73,10 @@ interface Props {
 }
 
 function getRouteColor(route: RouteEntry): string {
-  if (route.videoCount > 0 && route.imageCount > 0) return '#8b5cf6' // purple — both
-  if (route.videoCount > 0) return '#3b82f6' // blue — videos
-  if (route.imageCount > 0) return '#22c55e' // green — images
-  return '#6b7280' // gray — no files
+  if (route.videoCount > 0 && route.imageCount > 0) return '#8b5cf6'
+  if (route.videoCount > 0) return '#3b82f6'
+  if (route.imageCount > 0) return '#22c55e'
+  return '#6b7280'
 }
 
 function getBounds(routes: RouteEntry[]): [number, number, number, number] | null {
@@ -167,6 +167,14 @@ export default function MapView({ projectId, timezone, routes, fileMarkers = [],
   const [showGeofenceList, setShowGeofenceList] = useState(false)
   const [deletingId, setDeletingId] = useState<string | null>(null)
   const [editingColorId, setEditingColorId] = useState<string | null>(null)
+
+  // Geofence editing (from map click)
+  const [selectedGeofenceId, setSelectedGeofenceId] = useState<string | null>(null)
+  const [editGeofenceName, setEditGeofenceName] = useState('')
+  const [editGeofenceColor, setEditGeofenceColor] = useState(GEOFENCE_COLORS[0])
+  const [isSavingGeofence, setIsSavingGeofence] = useState(false)
+  const [redrawingGeofenceId, setRedrawingGeofenceId] = useState<string | null>(null)
+
   const [showVideoLabels, setShowVideoLabels] = useState(false)
   const [showGeofenceLabels, setShowGeofenceLabels] = useState(false)
   const [statsStartDate, setStatsStartDate] = useState('')
@@ -182,7 +190,7 @@ export default function MapView({ projectId, timezone, routes, fileMarkers = [],
   const infoButtonRef = useRef<HTMLDivElement>(null)
   const [showInfoPanel, setShowInfoPanel] = useState(false)
 
-  // Stats panel computation — must be before filteredFileMarkers
+  // Stats panel computation
   const statsVideos = useMemo(() => {
     if (!statsStartDate) return null
     const toMs = (date: string, time: string) => {
@@ -224,7 +232,6 @@ export default function MapView({ projectId, timezone, routes, fileMarkers = [],
     return bothBanks ? rate * 2 : rate
   }
 
-  // Build GeoJSON for routes
   const routeGeojson = useMemo(() => {
     const features = routes
       .map((route) => {
@@ -252,7 +259,6 @@ export default function MapView({ projectId, timezone, routes, fileMarkers = [],
     return { type: 'FeatureCollection' as const, features: features as any[] }
   }, [routes])
 
-  // Build GeoJSON for file markers
   const fileMarkerGeojson = useMemo(() => {
     const features = filteredFileMarkers.map((f) => ({
       type: 'Feature' as const,
@@ -272,7 +278,6 @@ export default function MapView({ projectId, timezone, routes, fileMarkers = [],
     return { type: 'FeatureCollection' as const, features: features as any[] }
   }, [filteredFileMarkers])
 
-  // Build GeoJSON for geofences
   const geofenceGeojson = useMemo(() => {
     const features = geofences
       .map((g) => {
@@ -326,7 +331,6 @@ export default function MapView({ projectId, timezone, routes, fileMarkers = [],
         if (cancelled) return
         setMapReady(true)
 
-        // Satellite basemap
         map.addSource('esri-satellite', {
           type: 'raster',
           tiles: ['https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'],
@@ -361,6 +365,21 @@ export default function MapView({ projectId, timezone, routes, fileMarkers = [],
           type: 'line',
           source: 'geofences-source',
           paint: { 'line-color': ['get', 'color'], 'line-width': 2, 'line-dasharray': [3, 2] },
+        })
+        // Highlight layers for selected geofence (initially match nothing)
+        map.addLayer({
+          id: 'geofences-highlight-fill',
+          type: 'fill',
+          source: 'geofences-source',
+          paint: { 'fill-color': ['get', 'color'], 'fill-opacity': 0.3 },
+          filter: ['==', 'id', ''],
+        })
+        map.addLayer({
+          id: 'geofences-highlight-line',
+          type: 'line',
+          source: 'geofences-source',
+          paint: { 'line-color': ['get', 'color'], 'line-width': 3 },
+          filter: ['==', 'id', ''],
         })
 
         // Route layers
@@ -423,7 +442,6 @@ export default function MapView({ projectId, timezone, routes, fileMarkers = [],
           },
         })
 
-        // Geofence label layer
         map.addLayer({
           id: 'geofences-label',
           type: 'symbol',
@@ -441,7 +459,13 @@ export default function MapView({ projectId, timezone, routes, fileMarkers = [],
           },
         })
 
-        // Click handler for file marker popups
+        // Cursor for geofence hover (edit mode only)
+        if (canWrite) {
+          map.on('mouseenter', 'geofences-fill', () => { map.getCanvas().style.cursor = 'pointer' })
+          map.on('mouseleave', 'geofences-fill', () => { map.getCanvas().style.cursor = '' })
+        }
+
+        // File marker popup
         map.on('click', 'file-markers-point', (e: any) => {
           const feature = e.features[0]
           const props = feature.properties
@@ -470,14 +494,10 @@ export default function MapView({ projectId, timezone, routes, fileMarkers = [],
             .addTo(map)
         })
 
-        map.on('mouseenter', 'file-markers-point', () => {
-          map.getCanvas().style.cursor = 'pointer'
-        })
-        map.on('mouseleave', 'file-markers-point', () => {
-          map.getCanvas().style.cursor = ''
-        })
+        map.on('mouseenter', 'file-markers-point', () => { map.getCanvas().style.cursor = 'pointer' })
+        map.on('mouseleave', 'file-markers-point', () => { map.getCanvas().style.cursor = '' })
 
-        // Click handler for route popups
+        // Route popups
         const clickLayers = ['routes-fill', 'routes-point']
         clickLayers.forEach((layerId) => {
           map.on('click', layerId, (e: any) => {
@@ -492,12 +512,8 @@ export default function MapView({ projectId, timezone, routes, fileMarkers = [],
               .addTo(map)
           })
 
-          map.on('mouseenter', layerId, () => {
-            map.getCanvas().style.cursor = 'pointer'
-          })
-          map.on('mouseleave', layerId, () => {
-            map.getCanvas().style.cursor = ''
-          })
+          map.on('mouseenter', layerId, () => { map.getCanvas().style.cursor = 'pointer' })
+          map.on('mouseleave', layerId, () => { map.getCanvas().style.cursor = '' })
         })
 
         // Zoom to bounds
@@ -520,14 +536,59 @@ export default function MapView({ projectId, timezone, routes, fileMarkers = [],
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // Update route data when routes change
+  // Geofence click → open edit panel
+  useEffect(() => {
+    if (!mapRef.current || !mapReady || !canWrite) return
+    const map = mapRef.current
+
+    const handleGeofenceClick = (e: any) => {
+      e.stopPropagation()
+      if (isDrawing) return
+      const feature = e.features[0]
+      const id = feature.properties.id
+      const geofence = geofences.find((g) => g.id === id)
+      if (!geofence) return
+      setSelectedGeofenceId(id)
+      setEditGeofenceName(geofence.name)
+      setEditGeofenceColor(geofence.color)
+      setShowGeofenceList(false)
+    }
+
+    map.on('click', 'geofences-fill', handleGeofenceClick)
+    return () => { map.off('click', 'geofences-fill', handleGeofenceClick) }
+  }, [isDrawing, geofences, mapReady, canWrite])
+
+  // Click on empty map → deselect geofence
+  useEffect(() => {
+    if (!mapRef.current || !mapReady || !selectedGeofenceId) return
+    const map = mapRef.current
+
+    const handleMapClick = () => { setSelectedGeofenceId(null) }
+    map.on('click', handleMapClick)
+    return () => { map.off('click', handleMapClick) }
+  }, [selectedGeofenceId, mapReady])
+
+  // Sync highlight layers with selected geofence
+  useEffect(() => {
+    if (!mapRef.current || !mapReady) return
+    const map = mapRef.current
+    const id = selectedGeofenceId ?? ''
+    if (map.getLayer('geofences-highlight-fill')) {
+      map.setFilter('geofences-highlight-fill', ['==', 'id', id])
+    }
+    if (map.getLayer('geofences-highlight-line')) {
+      map.setFilter('geofences-highlight-line', ['==', 'id', id])
+    }
+  }, [selectedGeofenceId, mapReady])
+
+  // Update route data
   useEffect(() => {
     if (!mapRef.current || !mapReady) return
     const source = mapRef.current.getSource('routes-source')
     if (source) source.setData(routeGeojson)
   }, [routeGeojson, mapReady])
 
-  // Update file markers when filter changes
+  // Update file markers
   useEffect(() => {
     if (!mapRef.current || !mapReady) return
     const source = mapRef.current.getSource('file-markers-source')
@@ -559,7 +620,7 @@ export default function MapView({ projectId, timezone, routes, fileMarkers = [],
     }
   }, [showVideoLabels, showGeofenceLabels, mapReady])
 
-  // Drawing polygon preview layer
+  // Drawing polygon preview
   useEffect(() => {
     if (!mapRef.current || !mapReady) return
     const map = mapRef.current
@@ -651,7 +712,7 @@ export default function MapView({ projectId, timezone, routes, fileMarkers = [],
     }
   }, [isDrawing, drawPoints, mapReady])
 
-  // Escape to cancel drawing
+  // Keyboard shortcuts for drawing
   useEffect(() => {
     if (!isDrawing) return
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -659,6 +720,7 @@ export default function MapView({ projectId, timezone, routes, fileMarkers = [],
         setIsDrawing(false)
         setDrawPoints([])
         setCursorCoord(null)
+        setRedrawingGeofenceId(null)
       } else if (e.key === 'Enter' && drawPoints.length >= 3) {
         setIsDrawing(false)
         setCursorCoord(null)
@@ -675,7 +737,7 @@ export default function MapView({ projectId, timezone, routes, fileMarkers = [],
     mapRef.current.getCanvas().style.cursor = isDrawing ? 'crosshair' : ''
   }, [isDrawing])
 
-  // Click outside to close info panel
+  // Click outside info panel to close
   useEffect(() => {
     if (!showInfoPanel) return
     const handleClickOutside = (e: MouseEvent) => {
@@ -695,12 +757,24 @@ export default function MapView({ projectId, timezone, routes, fileMarkers = [],
     setIsDrawing(true)
   }
 
+  function startRedrawing() {
+    if (!selectedGeofenceId) return
+    setGeofenceName(editGeofenceName)
+    setGeofenceColor(editGeofenceColor)
+    setRedrawingGeofenceId(selectedGeofenceId)
+    setSelectedGeofenceId(null)
+    setDrawPoints([])
+    setCursorCoord(null)
+    setIsDrawing(true)
+  }
+
   function cancelDrawing() {
     setIsDrawing(false)
     setDrawPoints([])
     setCursorCoord(null)
     setShowNameDialog(false)
     setGeofenceName('')
+    setRedrawingGeofenceId(null)
   }
 
   async function saveGeofence() {
@@ -710,12 +784,19 @@ export default function MapView({ projectId, timezone, routes, fileMarkers = [],
     const ring = [...drawPoints, drawPoints[0]]
     const geometry = JSON.stringify({ type: 'Polygon', coordinates: [ring] })
 
-    const result = await createGeofence(projectId, geofenceName.trim(), geometry, geofenceColor)
-    setIsSaving(false)
-
-    if (result.error) {
-      alert(result.error)
-      return
+    if (redrawingGeofenceId) {
+      const result = await updateGeofence(redrawingGeofenceId, projectId, {
+        name: geofenceName.trim(),
+        color: geofenceColor,
+        geometry,
+      })
+      setIsSaving(false)
+      if (result.error) { alert(result.error); return }
+      setRedrawingGeofenceId(null)
+    } else {
+      const result = await createGeofence(projectId, geofenceName.trim(), geometry, geofenceColor)
+      setIsSaving(false)
+      if (result.error) { alert(result.error); return }
     }
 
     setShowNameDialog(false)
@@ -724,14 +805,25 @@ export default function MapView({ projectId, timezone, routes, fileMarkers = [],
     router.refresh()
   }
 
+  async function saveGeofenceEdit() {
+    if (!selectedGeofenceId) return
+    setIsSavingGeofence(true)
+    const result = await updateGeofence(selectedGeofenceId, projectId, {
+      name: editGeofenceName.trim(),
+      color: editGeofenceColor,
+    })
+    setIsSavingGeofence(false)
+    if (result.error) { alert(result.error); return }
+    setSelectedGeofenceId(null)
+    router.refresh()
+  }
+
   async function handleDeleteGeofence(id: string) {
     setDeletingId(id)
     const result = await deleteGeofence(id, projectId)
     setDeletingId(null)
-    if (result.error) {
-      alert(result.error)
-      return
-    }
+    if (result.error) { alert(result.error); return }
+    if (selectedGeofenceId === id) setSelectedGeofenceId(null)
     router.refresh()
   }
 
@@ -764,7 +856,6 @@ export default function MapView({ projectId, timezone, routes, fileMarkers = [],
 
             {showInfoPanel && (
               <div className="absolute top-10 left-0 z-50 bg-white/95 backdrop-blur-sm rounded-xl shadow-lg border border-gray-200/80 w-44 p-3 space-y-3">
-                {/* Labels */}
                 <div>
                   <p className="text-[9px] font-bold uppercase tracking-wider text-gray-400 mb-1.5">Labels</p>
                   <div className="flex flex-col gap-1">
@@ -773,9 +864,7 @@ export default function MapView({ projectId, timezone, routes, fileMarkers = [],
                       onClick={() => setShowVideoLabels((v) => !v)}
                       className={cn(
                         'px-2.5 py-1.5 rounded-lg text-[10px] font-bold transition-all text-left',
-                        showVideoLabels
-                          ? 'bg-blue-600 text-white'
-                          : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100',
+                        showVideoLabels ? 'bg-blue-600 text-white' : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100',
                       )}
                     >
                       Video labels
@@ -785,9 +874,7 @@ export default function MapView({ projectId, timezone, routes, fileMarkers = [],
                       onClick={() => setShowGeofenceLabels((v) => !v)}
                       className={cn(
                         'px-2.5 py-1.5 rounded-lg text-[10px] font-bold transition-all text-left',
-                        showGeofenceLabels
-                          ? 'bg-blue-600 text-white'
-                          : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100',
+                        showGeofenceLabels ? 'bg-blue-600 text-white' : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100',
                       )}
                     >
                       Geofence labels
@@ -795,7 +882,6 @@ export default function MapView({ projectId, timezone, routes, fileMarkers = [],
                   </div>
                 </div>
 
-                {/* Legend */}
                 <div>
                   <p className="text-[9px] font-bold uppercase tracking-wider text-gray-400 mb-1.5">Legend</p>
                   <div className="space-y-1">
@@ -813,9 +899,8 @@ export default function MapView({ projectId, timezone, routes, fileMarkers = [],
             )}
           </div>
 
-          {/* Stats + Video table side by side */}
+          {/* Stats + video table */}
           <div className="flex gap-2 items-start">
-            {/* Stats panel */}
             <div className="bg-white/95 backdrop-blur-sm rounded-xl shadow-md border border-gray-200/80 select-none w-52 overflow-hidden flex-shrink-0">
               <div className="flex items-center justify-between px-3 py-2 border-b border-gray-100">
                 <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400">Statistics</p>
@@ -834,7 +919,6 @@ export default function MapView({ projectId, timezone, routes, fileMarkers = [],
               </div>
               {statsExpanded && (
                 <div className="p-3 space-y-2.5">
-                  {/* Start */}
                   <div className="space-y-1">
                     <p className="text-[10px] text-gray-400 font-medium">Start</p>
                     <div className="flex gap-1">
@@ -844,7 +928,6 @@ export default function MapView({ projectId, timezone, routes, fileMarkers = [],
                         className="w-20 text-[11px] border border-gray-200 rounded-lg px-1.5 py-1 focus:outline-none focus:ring-2 focus:ring-blue-500" />
                     </div>
                   </div>
-                  {/* End */}
                   <div className="space-y-1">
                     <p className="text-[10px] text-gray-400 font-medium">End</p>
                     <div className="flex gap-1">
@@ -854,7 +937,6 @@ export default function MapView({ projectId, timezone, routes, fileMarkers = [],
                         className="w-20 text-[11px] border border-gray-200 rounded-lg px-1.5 py-1 focus:outline-none focus:ring-2 focus:ring-blue-500" />
                     </div>
                   </div>
-                  {/* Geofence checklist */}
                   {geofences.length > 0 && (
                     <div className="space-y-1">
                       <p className="text-[10px] text-gray-400 font-medium">Locations</p>
@@ -871,7 +953,6 @@ export default function MapView({ projectId, timezone, routes, fileMarkers = [],
                       </div>
                     </div>
                   )}
-                  {/* Rate toggle + both banks */}
                   <div className="space-y-1.5">
                     <div className="flex gap-1">
                       {(['hourly', 'daily'] as const).map((mode) => (
@@ -887,7 +968,6 @@ export default function MapView({ projectId, timezone, routes, fileMarkers = [],
                       <span className="text-xs text-gray-600">× 2 both banks</span>
                     </label>
                   </div>
-                  {/* Summary */}
                   {statsVideos !== null && (
                     <div className="border-t border-gray-100 pt-2 space-y-1">
                       <div className="flex justify-between text-xs">
@@ -914,7 +994,6 @@ export default function MapView({ projectId, timezone, routes, fileMarkers = [],
               )}
             </div>
 
-            {/* Video table alongside */}
             {sortedStatsVideos !== null && sortedStatsVideos.length > 0 && (
               <div className="bg-white/95 backdrop-blur-sm rounded-xl shadow-md border border-gray-200/80 w-52 overflow-hidden flex-shrink-0">
                 <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 px-3 py-2 border-b border-gray-100">
@@ -955,13 +1034,13 @@ export default function MapView({ projectId, timezone, routes, fileMarkers = [],
           </div>
         </div>
 
-        {/* Geofence controls */}
+        {/* Geofence controls (top right) */}
         {canWrite && (
           <div className="absolute top-4 right-16 z-40 flex items-center gap-2">
             {geofences.length > 0 && (
               <button
                 type="button"
-                onClick={() => setShowGeofenceList((v) => !v)}
+                onClick={() => { setShowGeofenceList((v) => !v); setSelectedGeofenceId(null) }}
                 className={cn(
                   'bg-white/90 hover:bg-white backdrop-blur-sm px-3 py-1.5 rounded-xl shadow-md border border-gray-200/80 text-xs font-semibold transition-all',
                   showGeofenceList ? 'text-blue-600 border-blue-300' : 'text-gray-700',
@@ -983,7 +1062,7 @@ export default function MapView({ projectId, timezone, routes, fileMarkers = [],
           </div>
         )}
 
-        {/* Route count badge */}
+        {/* Route count badge (read-only users) */}
         {!canWrite && (
           <div className="absolute top-4 right-16 z-40 bg-white/90 backdrop-blur-sm px-3 py-1.5 rounded-xl shadow-md border border-gray-200/80 select-none">
             <span className="text-xs font-semibold text-gray-700">
@@ -996,13 +1075,12 @@ export default function MapView({ projectId, timezone, routes, fileMarkers = [],
         {isDrawing && (
           <div className="absolute top-4 left-1/2 -translate-x-1/2 z-50 bg-blue-600 text-white px-4 py-2 rounded-xl shadow-lg flex items-center gap-3 select-none">
             <span className="text-xs font-semibold">
-              Click to place points ({drawPoints.length} placed) · Enter or double-click to finish · Escape to cancel
+              {redrawingGeofenceId
+                ? `Redrawing · ${drawPoints.length} point${drawPoints.length !== 1 ? 's' : ''} placed · Enter or double-click to finish · Escape to cancel`
+                : `Click to place points (${drawPoints.length} placed) · Enter or double-click to finish · Escape to cancel`
+              }
             </span>
-            <button
-              type="button"
-              onClick={cancelDrawing}
-              className="p-1 hover:bg-blue-500 rounded transition-colors"
-            >
+            <button type="button" onClick={cancelDrawing} className="p-1 hover:bg-blue-500 rounded transition-colors">
               <X className="w-4 h-4" />
             </button>
           </div>
@@ -1013,11 +1091,7 @@ export default function MapView({ projectId, timezone, routes, fileMarkers = [],
           <div className="absolute top-16 right-16 z-40 bg-white/95 backdrop-blur-sm rounded-xl shadow-lg border border-gray-200/80 w-64 max-h-80 overflow-y-auto">
             <div className="px-3 py-2 border-b border-gray-100 flex items-center justify-between">
               <span className="text-xs font-bold uppercase tracking-wider text-gray-400">Geofences</span>
-              <button
-                type="button"
-                onClick={() => setShowGeofenceList(false)}
-                className="p-0.5 hover:bg-gray-100 rounded transition-colors"
-              >
+              <button type="button" onClick={() => setShowGeofenceList(false)} className="p-0.5 hover:bg-gray-100 rounded transition-colors">
                 <X className="w-3.5 h-3.5 text-gray-400" />
               </button>
             </div>
@@ -1073,6 +1147,72 @@ export default function MapView({ projectId, timezone, routes, fileMarkers = [],
           </div>
         )}
 
+        {/* Geofence edit panel (appears when a geofence is clicked on the map) */}
+        {selectedGeofenceId && canWrite && (
+          <div className="absolute top-16 right-16 z-40 bg-white/95 backdrop-blur-sm rounded-xl shadow-lg border border-gray-200/80 w-60">
+            <div className="px-3 py-2 border-b border-gray-100 flex items-center justify-between">
+              <span className="text-xs font-bold uppercase tracking-wider text-gray-400">Edit Geofence</span>
+              <button type="button" onClick={() => setSelectedGeofenceId(null)} className="p-0.5 hover:bg-gray-100 rounded transition-colors">
+                <X className="w-3.5 h-3.5 text-gray-400" />
+              </button>
+            </div>
+            <div className="p-3 space-y-3">
+              <div>
+                <label className="text-[10px] font-medium text-gray-500 block mb-1">Name</label>
+                <input
+                  type="text"
+                  value={editGeofenceName}
+                  onChange={(e) => setEditGeofenceName(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter' && editGeofenceName.trim()) saveGeofenceEdit() }}
+                  className="w-full px-2.5 py-1.5 text-xs border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+              <div>
+                <label className="text-[10px] font-medium text-gray-500 block mb-1">Color</label>
+                <div className="flex gap-1.5">
+                  {GEOFENCE_COLORS.map((color) => (
+                    <button
+                      key={color}
+                      type="button"
+                      onClick={() => setEditGeofenceColor(color)}
+                      className={cn(
+                        'w-6 h-6 rounded-full border-2 transition-all hover:scale-110',
+                        editGeofenceColor === color ? 'border-gray-900 scale-110' : 'border-transparent',
+                      )}
+                      style={{ backgroundColor: color }}
+                    />
+                  ))}
+                </div>
+              </div>
+              <div className="flex gap-2 pt-0.5">
+                <button
+                  type="button"
+                  onClick={startRedrawing}
+                  className="flex-1 py-1.5 text-[11px] font-semibold rounded-lg border border-gray-200 text-gray-700 hover:bg-gray-50 transition-colors"
+                >
+                  Redraw Bounds
+                </button>
+                <button
+                  type="button"
+                  onClick={saveGeofenceEdit}
+                  disabled={isSavingGeofence || !editGeofenceName.trim()}
+                  className="flex-1 py-1.5 text-[11px] font-semibold rounded-lg bg-blue-600 text-white hover:bg-blue-700 transition-colors disabled:opacity-50"
+                >
+                  {isSavingGeofence ? 'Saving…' : 'Save'}
+                </button>
+              </div>
+              <button
+                type="button"
+                onClick={() => handleDeleteGeofence(selectedGeofenceId)}
+                disabled={deletingId === selectedGeofenceId}
+                className="w-full py-1.5 text-[11px] font-semibold rounded-lg text-red-500 hover:bg-red-50 transition-colors disabled:opacity-50"
+              >
+                {deletingId === selectedGeofenceId ? 'Deleting…' : 'Delete Geofence'}
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* Basemap switcher */}
         <div className="absolute bottom-6 right-4 z-40 bg-white/90 hover:bg-white backdrop-blur-sm p-1 rounded-xl shadow-md border border-gray-200/80 flex gap-1 select-none transition-all">
           <button
@@ -1080,9 +1220,7 @@ export default function MapView({ projectId, timezone, routes, fileMarkers = [],
             onClick={() => setBasemap('street')}
             className={cn(
               'px-2.5 py-1.5 rounded-lg text-[10px] font-bold transition-all flex items-center gap-1.5 h-7',
-              basemap === 'street'
-                ? 'bg-blue-600 text-white shadow-sm'
-                : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100',
+              basemap === 'street' ? 'bg-blue-600 text-white shadow-sm' : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100',
             )}
           >
             <Map className="w-3.5 h-3.5" />
@@ -1093,9 +1231,7 @@ export default function MapView({ projectId, timezone, routes, fileMarkers = [],
             onClick={() => setBasemap('satellite')}
             className={cn(
               'px-2.5 py-1.5 rounded-lg text-[10px] font-bold transition-all flex items-center gap-1.5 h-7',
-              basemap === 'satellite'
-                ? 'bg-blue-600 text-white shadow-sm'
-                : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100',
+              basemap === 'satellite' ? 'bg-blue-600 text-white shadow-sm' : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100',
             )}
           >
             <Layers className="w-3.5 h-3.5" />
@@ -1104,13 +1240,15 @@ export default function MapView({ projectId, timezone, routes, fileMarkers = [],
         </div>
       </div>
 
-      {/* Name geofence dialog */}
+      {/* Create / update geofence dialog */}
       <Dialog open={showNameDialog} onOpenChange={(open) => { if (!open) cancelDrawing() }}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Name this geofence</DialogTitle>
+            <DialogTitle>{redrawingGeofenceId ? 'Update geofence' : 'Name this geofence'}</DialogTitle>
             <DialogDescription>
-              Files with coordinates inside this area will be tagged with this name.
+              {redrawingGeofenceId
+                ? 'Confirm the name and color for the redrawn area.'
+                : 'Files with coordinates inside this area will be tagged with this name.'}
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-2">
@@ -1147,7 +1285,7 @@ export default function MapView({ projectId, timezone, routes, fileMarkers = [],
           <DialogFooter>
             <Button variant="outline" onClick={cancelDrawing}>Cancel</Button>
             <Button onClick={saveGeofence} disabled={!geofenceName.trim() || isSaving}>
-              {isSaving ? 'Saving...' : 'Save Geofence'}
+              {isSaving ? 'Saving…' : redrawingGeofenceId ? 'Update Geofence' : 'Save Geofence'}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -1168,7 +1306,7 @@ function updateMapBasemap(map: any, currentBasemap: 'street' | 'satellite') {
     const skipIds = new Set([
       'esri-satellite-layer',
       'routes-fill', 'routes-line', 'routes-point',
-      'geofences-fill', 'geofences-line', 'geofences-label',
+      'geofences-fill', 'geofences-line', 'geofences-highlight-fill', 'geofences-highlight-line', 'geofences-label',
       'file-markers-point', 'file-markers-label',
       'draw-line-layer', 'draw-points-layer',
     ])
