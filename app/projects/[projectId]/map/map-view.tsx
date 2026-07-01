@@ -804,10 +804,6 @@ export default function MapView({ projectId, timezone, routes, fileMarkers = [],
                       <span>Ortho map</span>
                     </div>
                     <div className="flex items-center gap-2 text-[10px] text-gray-600">
-                      <span className="w-2.5 h-2.5 rounded-full bg-[#8b5cf6] flex-shrink-0" />
-                      <span>Ortho map + videos</span>
-                    </div>
-                    <div className="flex items-center gap-2 text-[10px] text-gray-600">
                       <span className="w-2.5 h-2.5 rounded-full bg-[#3b82f6] flex-shrink-0" />
                       <span>Video file</span>
                     </div>
