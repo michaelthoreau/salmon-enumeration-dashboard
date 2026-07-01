@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
-import { Map, Layers, Image, Video, Pentagon, Trash2, X, Pencil } from 'lucide-react'
+import { Map, Layers, Pentagon, Trash2, X, Pencil, Info } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import {
@@ -155,7 +155,6 @@ export default function MapView({ projectId, timezone, routes, fileMarkers = [],
   const mapRef = useRef<any | null>(null)
   const [mapReady, setMapReady] = useState(false)
   const [basemap, setBasemap] = useState<'street' | 'satellite'>('satellite')
-  const [filterType, setFilterType] = useState<'all' | 'images' | 'videos'>('videos')
 
   // Geofence drawing state
   const [isDrawing, setIsDrawing] = useState(false)
@@ -168,7 +167,6 @@ export default function MapView({ projectId, timezone, routes, fileMarkers = [],
   const [showGeofenceList, setShowGeofenceList] = useState(false)
   const [deletingId, setDeletingId] = useState<string | null>(null)
   const [editingColorId, setEditingColorId] = useState<string | null>(null)
-  const [showImageLabels, setShowImageLabels] = useState(false)
   const [showVideoLabels, setShowVideoLabels] = useState(false)
   const [showGeofenceLabels, setShowGeofenceLabels] = useState(false)
   const [statsStartDate, setStatsStartDate] = useState('')
@@ -180,11 +178,9 @@ export default function MapView({ projectId, timezone, routes, fileMarkers = [],
   const [bothBanks, setBothBanks] = useState(false)
   const [statsExpanded, setStatsExpanded] = useState(true)
 
-  const filteredRoutes = useMemo(() => {
-    if (filterType === 'all') return routes
-    if (filterType === 'images') return routes.filter((r) => r.imageCount > 0)
-    return routes.filter((r) => r.videoCount > 0)
-  }, [routes, filterType])
+  // Info panel
+  const infoButtonRef = useRef<HTMLDivElement>(null)
+  const [showInfoPanel, setShowInfoPanel] = useState(false)
 
   // Stats panel computation — must be before filteredFileMarkers
   const statsVideos = useMemo(() => {
@@ -209,15 +205,12 @@ export default function MapView({ projectId, timezone, routes, fileMarkers = [],
   }, [fileMarkers, statsStartDate, statsStartTime, statsEndDate, statsEndTime, selectedGeofences])
 
   const filteredFileMarkers = useMemo(() => {
-    let base = filterType === 'all' ? fileMarkers
-      : filterType === 'images' ? fileMarkers.filter((f) => f.type === 'image')
-      : fileMarkers.filter((f) => f.type === 'video')
-    if (filterType === 'videos' && statsVideos !== null) {
+    if (statsVideos !== null) {
       const ids = new Set(statsVideos.map((v) => v.fileId))
-      base = base.filter((f) => ids.has(f.fileId))
+      return fileMarkers.filter((f) => ids.has(f.fileId))
     }
-    return base
-  }, [fileMarkers, filterType, statsVideos])
+    return fileMarkers
+  }, [fileMarkers, statsVideos])
 
   const statsWithFish = useMemo(() => statsVideos?.filter((v) => v.fishCount > 0) ?? [], [statsVideos])
   const statsCounted = useMemo(() => statsVideos?.filter((v) => v.fishCount > 0 && v.durationSeconds) ?? [], [statsVideos])
@@ -233,7 +226,7 @@ export default function MapView({ projectId, timezone, routes, fileMarkers = [],
 
   // Build GeoJSON for routes
   const routeGeojson = useMemo(() => {
-    const features = filteredRoutes
+    const features = routes
       .map((route) => {
         try {
           const geom = JSON.parse(route.location)
@@ -257,7 +250,7 @@ export default function MapView({ projectId, timezone, routes, fileMarkers = [],
       .filter(Boolean)
 
     return { type: 'FeatureCollection' as const, features: features as any[] }
-  }, [filteredRoutes])
+  }, [routes])
 
   // Build GeoJSON for file markers
   const fileMarkerGeojson = useMemo(() => {
@@ -527,7 +520,7 @@ export default function MapView({ projectId, timezone, routes, fileMarkers = [],
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // Update route data when filter changes
+  // Update route data when routes change
   useEffect(() => {
     if (!mapRef.current || !mapReady) return
     const source = mapRef.current.getSource('routes-source')
@@ -562,17 +555,9 @@ export default function MapView({ projectId, timezone, routes, fileMarkers = [],
       map.setLayoutProperty('geofences-label', 'visibility', showGeofenceLabels ? 'visible' : 'none')
     }
     if (map.getLayer('file-markers-label')) {
-      const types: string[] = []
-      if (showImageLabels) types.push('image')
-      if (showVideoLabels) types.push('video')
-      if (types.length === 0) {
-        map.setLayoutProperty('file-markers-label', 'visibility', 'none')
-      } else {
-        map.setLayoutProperty('file-markers-label', 'visibility', 'visible')
-        map.setFilter('file-markers-label', ['in', ['get', 'type'], ['literal', types]])
-      }
+      map.setLayoutProperty('file-markers-label', 'visibility', showVideoLabels ? 'visible' : 'none')
     }
-  }, [showImageLabels, showVideoLabels, showGeofenceLabels, mapReady])
+  }, [showVideoLabels, showGeofenceLabels, mapReady])
 
   // Drawing polygon preview layer
   useEffect(() => {
@@ -690,6 +675,18 @@ export default function MapView({ projectId, timezone, routes, fileMarkers = [],
     mapRef.current.getCanvas().style.cursor = isDrawing ? 'crosshair' : ''
   }, [isDrawing])
 
+  // Click outside to close info panel
+  useEffect(() => {
+    if (!showInfoPanel) return
+    const handleClickOutside = (e: MouseEvent) => {
+      if (infoButtonRef.current && !infoButtonRef.current.contains(e.target as Node)) {
+        setShowInfoPanel(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [showInfoPanel])
+
   function startDrawing() {
     setDrawPoints([])
     setCursorCoord(null)
@@ -749,221 +746,217 @@ export default function MapView({ projectId, timezone, routes, fileMarkers = [],
       <div className="w-full h-full relative">
         <div ref={mapContainerRef} className="w-full h-full absolute inset-0" />
 
-        {/* Filter controls */}
+        {/* Controls — top left */}
         <div className="absolute top-4 left-4 z-40 flex flex-col gap-2 items-start">
-          {/* File type filter */}
-          <div className="bg-white/90 hover:bg-white backdrop-blur-sm p-1 rounded-xl shadow-md border border-gray-200/80 flex gap-1 select-none transition-all">
-            {([
-              { value: 'all', label: 'All', icon: Layers },
-              { value: 'images', label: 'Images', icon: Image },
-              { value: 'videos', label: 'Videos', icon: Video },
-            ] as const).map(({ value, label, icon: Icon }) => (
-              <button
-                key={value}
-                type="button"
-                onClick={() => setFilterType(value)}
-                className={cn(
-                  'px-2.5 py-1.5 rounded-lg text-[10px] font-bold transition-all flex items-center gap-1.5 h-7',
-                  filterType === value
-                    ? 'bg-blue-600 text-white shadow-sm'
-                    : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100',
-                )}
-              >
-                <Icon className="w-3.5 h-3.5" />
-                <span>{label}</span>
-              </button>
-            ))}
-          </div>
+          {/* Info button */}
+          <div className="relative" ref={infoButtonRef}>
+            <button
+              type="button"
+              onClick={() => setShowInfoPanel((v) => !v)}
+              className={cn(
+                'w-8 h-8 bg-white/90 hover:bg-white backdrop-blur-sm rounded-full shadow-md border border-gray-200/80 flex items-center justify-center transition-all',
+                showInfoPanel ? 'text-blue-600 border-blue-300' : 'text-gray-600 hover:text-gray-900',
+              )}
+              title="Legend & labels"
+            >
+              <Info className="w-4 h-4" />
+            </button>
 
-          {/* Label toggles */}
-          <div className="bg-white/90 hover:bg-white backdrop-blur-sm p-1 rounded-xl shadow-md border border-gray-200/80 flex gap-1 select-none transition-all">
-            <span className="px-2 flex items-center text-[10px] font-bold text-gray-400 uppercase tracking-wider">Labels</span>
-            {([
-              { label: 'Images', active: showImageLabels, toggle: () => setShowImageLabels((v) => !v) },
-              { label: 'Videos', active: showVideoLabels, toggle: () => setShowVideoLabels((v) => !v) },
-              { label: 'Geofences', active: showGeofenceLabels, toggle: () => setShowGeofenceLabels((v) => !v) },
-            ]).map(({ label, active, toggle }) => (
-              <button
-                key={label}
-                type="button"
-                onClick={toggle}
-                className={cn(
-                  'px-2.5 py-1.5 rounded-lg text-[10px] font-bold transition-all h-7',
-                  active
-                    ? 'bg-blue-600 text-white shadow-sm'
-                    : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100',
-                )}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
-
-          {/* Legend */}
-          <div className="bg-white/90 backdrop-blur-sm px-3 py-2 rounded-xl shadow-md border border-gray-200/80 select-none">
-            <p className="text-[9px] font-bold uppercase tracking-wider text-gray-400 mb-1.5">Legend</p>
-            <div className="space-y-1">
-              <div className="flex items-center gap-2 text-[10px] text-gray-600">
-                <span className="w-2.5 h-2.5 rounded-full bg-[#22c55e] flex-shrink-0" />
-                <span>Images only</span>
-              </div>
-              <div className="flex items-center gap-2 text-[10px] text-gray-600">
-                <span className="w-2.5 h-2.5 rounded-full bg-[#3b82f6] flex-shrink-0" />
-                <span>Videos only</span>
-              </div>
-              <div className="flex items-center gap-2 text-[10px] text-gray-600">
-                <span className="w-2.5 h-2.5 rounded-full bg-[#8b5cf6] flex-shrink-0" />
-                <span>Both</span>
-              </div>
-              <div className="flex items-center gap-2 text-[10px] text-gray-600">
-                <span className="w-2.5 h-2.5 rounded-full bg-[#6b7280] flex-shrink-0" />
-                <span>No files</span>
-              </div>
-            </div>
-          </div>
-
-          {/* Stats + Video table side by side */}
-          {filterType === 'videos' && (
-            <div className="flex gap-2 items-start">
-              {/* Stats panel */}
-              <div className="bg-white/95 backdrop-blur-sm rounded-xl shadow-md border border-gray-200/80 select-none w-52 overflow-hidden flex-shrink-0">
-                <div className="flex items-center justify-between px-3 py-2 border-b border-gray-100">
-                  <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400">Statistics</p>
-                  <div className="flex items-center gap-1">
-                    {(statsStartDate || statsEndDate || selectedGeofences.length > 0) && (
-                      <button type="button" onClick={() => { setStatsStartDate(''); setStatsStartTime(''); setStatsEndDate(''); setStatsEndTime(''); setSelectedGeofences([]) }}
-                        className="text-[9px] text-gray-400 hover:text-red-500 px-1.5 py-0.5 rounded hover:bg-gray-100 transition-colors">
-                        Reset
-                      </button>
-                    )}
-                    <button type="button" onClick={() => setStatsExpanded((v) => !v)}
-                      className="w-5 h-5 flex items-center justify-center rounded text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors text-sm font-bold leading-none">
-                      {statsExpanded ? '−' : '+'}
+            {showInfoPanel && (
+              <div className="absolute top-10 left-0 z-50 bg-white/95 backdrop-blur-sm rounded-xl shadow-lg border border-gray-200/80 w-44 p-3 space-y-3">
+                {/* Labels */}
+                <div>
+                  <p className="text-[9px] font-bold uppercase tracking-wider text-gray-400 mb-1.5">Labels</p>
+                  <div className="flex flex-col gap-1">
+                    <button
+                      type="button"
+                      onClick={() => setShowVideoLabels((v) => !v)}
+                      className={cn(
+                        'px-2.5 py-1.5 rounded-lg text-[10px] font-bold transition-all text-left',
+                        showVideoLabels
+                          ? 'bg-blue-600 text-white'
+                          : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100',
+                      )}
+                    >
+                      Video labels
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setShowGeofenceLabels((v) => !v)}
+                      className={cn(
+                        'px-2.5 py-1.5 rounded-lg text-[10px] font-bold transition-all text-left',
+                        showGeofenceLabels
+                          ? 'bg-blue-600 text-white'
+                          : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100',
+                      )}
+                    >
+                      Geofence labels
                     </button>
                   </div>
                 </div>
-                {statsExpanded && (
-                  <div className="p-3 space-y-2.5">
-                    {/* Start */}
-                    <div className="space-y-1">
-                      <p className="text-[10px] text-gray-400 font-medium">Start</p>
-                      <div className="flex gap-1">
-                        <input type="date" value={statsStartDate} onChange={(e) => setStatsStartDate(e.target.value)}
-                          className="flex-1 min-w-0 text-[11px] border border-gray-200 rounded-lg px-1.5 py-1 focus:outline-none focus:ring-2 focus:ring-blue-500" />
-                        <input type="time" value={statsStartTime} onChange={(e) => setStatsStartTime(e.target.value)}
-                          className="w-20 text-[11px] border border-gray-200 rounded-lg px-1.5 py-1 focus:outline-none focus:ring-2 focus:ring-blue-500" />
-                      </div>
+
+                {/* Legend */}
+                <div>
+                  <p className="text-[9px] font-bold uppercase tracking-wider text-gray-400 mb-1.5">Legend</p>
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-2 text-[10px] text-gray-600">
+                      <span className="w-2.5 h-2.5 rounded-full bg-[#22c55e] flex-shrink-0" />
+                      <span>Ortho map</span>
                     </div>
-                    {/* End */}
-                    <div className="space-y-1">
-                      <p className="text-[10px] text-gray-400 font-medium">End</p>
-                      <div className="flex gap-1">
-                        <input type="date" value={statsEndDate} onChange={(e) => setStatsEndDate(e.target.value)}
-                          className="flex-1 min-w-0 text-[11px] border border-gray-200 rounded-lg px-1.5 py-1 focus:outline-none focus:ring-2 focus:ring-blue-500" />
-                        <input type="time" value={statsEndTime} onChange={(e) => setStatsEndTime(e.target.value)}
-                          className="w-20 text-[11px] border border-gray-200 rounded-lg px-1.5 py-1 focus:outline-none focus:ring-2 focus:ring-blue-500" />
-                      </div>
+                    <div className="flex items-center gap-2 text-[10px] text-gray-600">
+                      <span className="w-2.5 h-2.5 rounded-full bg-[#8b5cf6] flex-shrink-0" />
+                      <span>Ortho map + videos</span>
                     </div>
-                    {/* Geofence checklist */}
-                    {geofences.length > 0 && (
-                      <div className="space-y-1">
-                        <p className="text-[10px] text-gray-400 font-medium">Locations</p>
-                        <div className="space-y-1 max-h-24 overflow-y-auto">
-                          {geofences.map((g) => (
-                            <label key={g.id} className="flex items-center gap-2 cursor-pointer">
-                              <input type="checkbox" checked={selectedGeofences.includes(g.name)}
-                                onChange={(e) => setSelectedGeofences((prev) => e.target.checked ? [...prev, g.name] : prev.filter((n) => n !== g.name))}
-                                className="rounded" />
-                              <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: g.color }} />
-                              <span className="text-xs text-gray-700 truncate">{g.name}</span>
-                            </label>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                    {/* Rate toggle + both banks */}
-                    <div className="space-y-1.5">
-                      <div className="flex gap-1">
-                        {(['hourly', 'daily'] as const).map((mode) => (
-                          <button key={mode} type="button" onClick={() => setRateMode(mode)}
-                            className={cn('flex-1 py-1 text-[10px] font-bold rounded-lg transition-all',
-                              rateMode === mode ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200')}>
-                            {mode === 'hourly' ? 'Hourly' : 'Daily'}
-                          </button>
+                    <div className="flex items-center gap-2 text-[10px] text-gray-600">
+                      <span className="w-2.5 h-2.5 rounded-full bg-[#3b82f6] flex-shrink-0" />
+                      <span>Video file</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Stats + Video table side by side */}
+          <div className="flex gap-2 items-start">
+            {/* Stats panel */}
+            <div className="bg-white/95 backdrop-blur-sm rounded-xl shadow-md border border-gray-200/80 select-none w-52 overflow-hidden flex-shrink-0">
+              <div className="flex items-center justify-between px-3 py-2 border-b border-gray-100">
+                <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400">Statistics</p>
+                <div className="flex items-center gap-1">
+                  {(statsStartDate || statsEndDate || selectedGeofences.length > 0) && (
+                    <button type="button" onClick={() => { setStatsStartDate(''); setStatsStartTime(''); setStatsEndDate(''); setStatsEndTime(''); setSelectedGeofences([]) }}
+                      className="text-[9px] text-gray-400 hover:text-red-500 px-1.5 py-0.5 rounded hover:bg-gray-100 transition-colors">
+                      Reset
+                    </button>
+                  )}
+                  <button type="button" onClick={() => setStatsExpanded((v) => !v)}
+                    className="w-5 h-5 flex items-center justify-center rounded text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors text-sm font-bold leading-none">
+                    {statsExpanded ? '−' : '+'}
+                  </button>
+                </div>
+              </div>
+              {statsExpanded && (
+                <div className="p-3 space-y-2.5">
+                  {/* Start */}
+                  <div className="space-y-1">
+                    <p className="text-[10px] text-gray-400 font-medium">Start</p>
+                    <div className="flex gap-1">
+                      <input type="date" value={statsStartDate} onChange={(e) => setStatsStartDate(e.target.value)}
+                        className="flex-1 min-w-0 text-[11px] border border-gray-200 rounded-lg px-1.5 py-1 focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                      <input type="time" value={statsStartTime} onChange={(e) => setStatsStartTime(e.target.value)}
+                        className="w-20 text-[11px] border border-gray-200 rounded-lg px-1.5 py-1 focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                    </div>
+                  </div>
+                  {/* End */}
+                  <div className="space-y-1">
+                    <p className="text-[10px] text-gray-400 font-medium">End</p>
+                    <div className="flex gap-1">
+                      <input type="date" value={statsEndDate} onChange={(e) => setStatsEndDate(e.target.value)}
+                        className="flex-1 min-w-0 text-[11px] border border-gray-200 rounded-lg px-1.5 py-1 focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                      <input type="time" value={statsEndTime} onChange={(e) => setStatsEndTime(e.target.value)}
+                        className="w-20 text-[11px] border border-gray-200 rounded-lg px-1.5 py-1 focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                    </div>
+                  </div>
+                  {/* Geofence checklist */}
+                  {geofences.length > 0 && (
+                    <div className="space-y-1">
+                      <p className="text-[10px] text-gray-400 font-medium">Locations</p>
+                      <div className="space-y-1 max-h-24 overflow-y-auto">
+                        {geofences.map((g) => (
+                          <label key={g.id} className="flex items-center gap-2 cursor-pointer">
+                            <input type="checkbox" checked={selectedGeofences.includes(g.name)}
+                              onChange={(e) => setSelectedGeofences((prev) => e.target.checked ? [...prev, g.name] : prev.filter((n) => n !== g.name))}
+                              className="rounded" />
+                            <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: g.color }} />
+                            <span className="text-xs text-gray-700 truncate">{g.name}</span>
+                          </label>
                         ))}
                       </div>
-                      <label className="flex items-center gap-2 cursor-pointer">
-                        <input type="checkbox" checked={bothBanks} onChange={(e) => setBothBanks(e.target.checked)} className="rounded" />
-                        <span className="text-xs text-gray-600">× 2 both banks</span>
-                      </label>
                     </div>
-                    {/* Summary */}
-                    {statsVideos !== null && (
-                      <div className="border-t border-gray-100 pt-2 space-y-1">
-                        <div className="flex justify-between text-xs">
-                          <span className="text-gray-500">Matched</span>
-                          <span className="font-semibold text-gray-800">{statsVideos.length} videos</span>
-                        </div>
-                        <div className="flex justify-between text-xs">
-                          <span className="text-gray-500">Total fish</span>
-                          <span className="font-semibold text-gray-800">{statsTotalFish}</span>
-                        </div>
-                        {statsCounted.length > 0 && (() => {
-                          const rates = statsCounted.map((v) => computeRate(v)).filter((r): r is number => r !== null)
-                          const avg = rates.length > 0 ? rates.reduce((a, b) => a + b, 0) / rates.length : null
-                          return avg !== null ? (
-                            <div className="flex justify-between text-xs">
-                              <span className="text-gray-500">Avg {rateMode}</span>
-                              <span className="font-semibold text-gray-800">{Math.round(avg).toLocaleString()}{rateMode === 'hourly' ? '/hr' : '/day'}</span>
-                            </div>
-                          ) : null
-                        })()}
+                  )}
+                  {/* Rate toggle + both banks */}
+                  <div className="space-y-1.5">
+                    <div className="flex gap-1">
+                      {(['hourly', 'daily'] as const).map((mode) => (
+                        <button key={mode} type="button" onClick={() => setRateMode(mode)}
+                          className={cn('flex-1 py-1 text-[10px] font-bold rounded-lg transition-all',
+                            rateMode === mode ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200')}>
+                          {mode === 'hourly' ? 'Hourly' : 'Daily'}
+                        </button>
+                      ))}
+                    </div>
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input type="checkbox" checked={bothBanks} onChange={(e) => setBothBanks(e.target.checked)} className="rounded" />
+                      <span className="text-xs text-gray-600">× 2 both banks</span>
+                    </label>
+                  </div>
+                  {/* Summary */}
+                  {statsVideos !== null && (
+                    <div className="border-t border-gray-100 pt-2 space-y-1">
+                      <div className="flex justify-between text-xs">
+                        <span className="text-gray-500">Matched</span>
+                        <span className="font-semibold text-gray-800">{statsVideos.length} videos</span>
                       </div>
-                    )}
-                  </div>
-                )}
-              </div>
-
-              {/* Video table alongside */}
-              {sortedStatsVideos !== null && sortedStatsVideos.length > 0 && (
-                <div className="bg-white/95 backdrop-blur-sm rounded-xl shadow-md border border-gray-200/80 w-52 overflow-hidden flex-shrink-0">
-                  <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 px-3 py-2 border-b border-gray-100">
-                    Videos ({sortedStatsVideos.length})
-                  </p>
-                  <div className="overflow-y-auto" style={{ maxHeight: '16rem' }}>
-                    <table className="w-full text-[10px]">
-                      <thead className="bg-gray-50 sticky top-0">
-                        <tr>
-                          <th className="text-left px-2 py-1.5 font-medium text-gray-500">File</th>
-                          <th className="text-right px-2 py-1.5 font-medium text-gray-500">Fish</th>
-                          <th className="text-right px-2 py-1.5 font-medium text-gray-500">{rateMode === 'hourly' ? '/hr' : '/day'}</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-gray-100">
-                        {sortedStatsVideos.map((v) => {
-                          const rate = computeRate(v)
-                          return (
-                            <tr key={v.fileId} className="hover:bg-gray-50">
-                              <td className="px-2 py-1.5 max-w-[80px]">
-                                <p className="truncate text-gray-600" title={v.filename}>{v.filename.replace(/\.[^.]+$/, '')}</p>
-                                {v.geofenceTags.length > 0 && <p className="text-gray-400 truncate">{v.geofenceTags[0]}</p>}
-                              </td>
-                              <td className="px-2 py-1.5 text-right font-medium text-gray-700">
-                                {v.fishCount > 0 ? v.fishCount : <span className="text-gray-300">—</span>}
-                              </td>
-                              <td className="px-2 py-1.5 text-right font-medium text-blue-600">
-                                {rate !== null ? Math.round(rate).toLocaleString() : <span className="text-gray-300">—</span>}
-                              </td>
-                            </tr>
-                          )
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
+                      <div className="flex justify-between text-xs">
+                        <span className="text-gray-500">Total fish</span>
+                        <span className="font-semibold text-gray-800">{statsTotalFish}</span>
+                      </div>
+                      {statsCounted.length > 0 && (() => {
+                        const rates = statsCounted.map((v) => computeRate(v)).filter((r): r is number => r !== null)
+                        const avg = rates.length > 0 ? rates.reduce((a, b) => a + b, 0) / rates.length : null
+                        return avg !== null ? (
+                          <div className="flex justify-between text-xs">
+                            <span className="text-gray-500">Avg {rateMode}</span>
+                            <span className="font-semibold text-gray-800">{Math.round(avg).toLocaleString()}{rateMode === 'hourly' ? '/hr' : '/day'}</span>
+                          </div>
+                        ) : null
+                      })()}
+                    </div>
+                  )}
                 </div>
               )}
             </div>
-          )}
+
+            {/* Video table alongside */}
+            {sortedStatsVideos !== null && sortedStatsVideos.length > 0 && (
+              <div className="bg-white/95 backdrop-blur-sm rounded-xl shadow-md border border-gray-200/80 w-52 overflow-hidden flex-shrink-0">
+                <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 px-3 py-2 border-b border-gray-100">
+                  Videos ({sortedStatsVideos.length})
+                </p>
+                <div className="overflow-y-auto" style={{ maxHeight: '16rem' }}>
+                  <table className="w-full text-[10px]">
+                    <thead className="bg-gray-50 sticky top-0">
+                      <tr>
+                        <th className="text-left px-2 py-1.5 font-medium text-gray-500">File</th>
+                        <th className="text-right px-2 py-1.5 font-medium text-gray-500">Fish</th>
+                        <th className="text-right px-2 py-1.5 font-medium text-gray-500">{rateMode === 'hourly' ? '/hr' : '/day'}</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-100">
+                      {sortedStatsVideos.map((v) => {
+                        const rate = computeRate(v)
+                        return (
+                          <tr key={v.fileId} className="hover:bg-gray-50">
+                            <td className="px-2 py-1.5 max-w-[80px]">
+                              <p className="truncate text-gray-600" title={v.filename}>{v.filename.replace(/\.[^.]+$/, '')}</p>
+                              {v.geofenceTags.length > 0 && <p className="text-gray-400 truncate">{v.geofenceTags[0]}</p>}
+                            </td>
+                            <td className="px-2 py-1.5 text-right font-medium text-gray-700">
+                              {v.fishCount > 0 ? v.fishCount : <span className="text-gray-300">—</span>}
+                            </td>
+                            <td className="px-2 py-1.5 text-right font-medium text-blue-600">
+                              {rate !== null ? Math.round(rate).toLocaleString() : <span className="text-gray-300">—</span>}
+                            </td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+          </div>
         </div>
 
         {/* Geofence controls */}
@@ -998,7 +991,7 @@ export default function MapView({ projectId, timezone, routes, fileMarkers = [],
         {!canWrite && (
           <div className="absolute top-4 right-16 z-40 bg-white/90 backdrop-blur-sm px-3 py-1.5 rounded-xl shadow-md border border-gray-200/80 select-none">
             <span className="text-xs font-semibold text-gray-700">
-              {filteredRoutes.length} route{filteredRoutes.length !== 1 ? 's' : ''}
+              {routes.length} route{routes.length !== 1 ? 's' : ''}
             </span>
           </div>
         )}

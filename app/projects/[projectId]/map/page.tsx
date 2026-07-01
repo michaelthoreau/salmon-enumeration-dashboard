@@ -1,6 +1,6 @@
 import { notFound } from 'next/navigation'
 import { db } from '@/lib/db'
-import { projects, flightPlans, flights, files as filesTable, geofences, fileGeofenceTags, annotations } from '@/lib/schema'
+import { projects, flightPlans, flights, files as filesTable, geofences, fileGeofenceTags, annotations, odmTasks, georefTasks } from '@/lib/schema'
 import { eq, and, isNull, inArray, desc, sql } from 'drizzle-orm'
 import { getSession } from '@/lib/session'
 import MapView from './map-view'
@@ -69,11 +69,33 @@ export default async function MapPage({ params }: PageProps) {
     ? await db.select().from(filesTable).where(inArray(filesTable.flightId, flightIds))
     : []
 
-  // Build route data — use plan location if set, otherwise derive from first image's coordinates
+  // Find flights with a completed orthophoto (either ODM or georef pipeline)
+  const [completedOdm, completedGeoref] = flightIds.length > 0
+    ? await Promise.all([
+        db.select({ flightId: odmTasks.flightId })
+          .from(odmTasks)
+          .where(and(inArray(odmTasks.flightId, flightIds), eq(odmTasks.status, 'completed'))),
+        db.select({ flightId: georefTasks.flightId })
+          .from(georefTasks)
+          .where(and(inArray(georefTasks.flightId, flightIds), eq(georefTasks.status, 'completed'))),
+      ])
+    : [[], []]
+
+  const orthoFlightIds = new Set([
+    ...completedOdm.map((r) => r.flightId),
+    ...completedGeoref.map((r) => r.flightId),
+  ])
+
+  const orthoFlightPlanIds = new Set(
+    allFlights.filter((f) => orthoFlightIds.has(f.id)).map((f) => f.flightPlanId)
+  )
+
+  // Build route data — only flight plans with a completed ortho map
   const routes = allPlans
     .filter((plan) => {
+      if (!orthoFlightPlanIds.has(plan.id)) return false
       if (plan.location) return true
-      // Include plans without a location if they have files with coordinates
+      // Need a map location — derive from image files with coordinates
       const planFlights = allFlights.filter((f) => f.flightPlanId === plan.id)
       const planFlightIds = new Set(planFlights.map((f) => f.id))
       return allFiles.some((f) => planFlightIds.has(f.flightId) && f.latitude != null && f.longitude != null && getFileType(f.key) === 'image')
