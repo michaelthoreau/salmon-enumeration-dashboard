@@ -25,17 +25,6 @@ const popupCss = `
 }
 `
 
-const LOOKBACK_OPTIONS = [
-  { hours: 1,   label: '1 hr'   },
-  { hours: 3,   label: '3 hr'   },
-  { hours: 6,   label: '6 hr'   },
-  { hours: 12,  label: '12 hr'  },
-  { hours: 24,  label: '24 hr'  },
-  { hours: 48,  label: '2 days' },
-  { hours: 72,  label: '3 days' },
-  { hours: 168, label: '7 days' },
-]
-const DEFAULT_LOOKBACK = 4 // index → 24 hr
 
 interface RouteEntry {
   id: string
@@ -175,10 +164,14 @@ export default function MapView({ projectId, timezone, routes, fileMarkers = [],
   const infoButtonRef = useRef<HTMLDivElement>(null)
   const [showInfoPanel, setShowInfoPanel] = useState(false)
   const [showVideoLabels, setShowVideoLabels] = useState(true)
-  const [showGeofenceLabels, setShowGeofenceLabels] = useState(false)
+  const [showGeofenceLabels, setShowGeofenceLabels] = useState(true)
+  const [showAllPoints, setShowAllPoints] = useState(false)
 
   // Bottom bar controls
-  const [lookbackIndex, setLookbackIndex] = useState(DEFAULT_LOOKBACK)
+  const [startDate, setStartDate] = useState('')
+  const [startTime, setStartTime] = useState('')
+  const [endDate, setEndDate] = useState('')
+  const [endTime, setEndTime] = useState('')
   const [rateMode, setRateMode] = useState<'hourly' | 'daily'>('hourly')
   const [selectedGeofences, setSelectedGeofences] = useState<string[]>([])
 
@@ -188,17 +181,27 @@ export default function MapView({ projectId, timezone, routes, fileMarkers = [],
     )
   }
 
-  // Filter video markers by time window + geofence
+  // Filter video markers by date/time range + geofence + fish-only flag
   const filteredFileMarkers = useMemo(() => {
-    const { hours } = LOOKBACK_OPTIONS[lookbackIndex]
-    const cutoff = Date.now() - hours * 3600 * 1000
+    const toMs = (date: string, time: string) => {
+      const [y, mo, d] = date.split('-').map(Number)
+      const [h, m] = time ? time.split(':').map(Number) : [0, 0]
+      return new Date(y, mo - 1, d, h, m).getTime()
+    }
+    const startMs = startDate ? toMs(startDate, startTime) : null
+    const endMs = endDate ? toMs(endDate, endTime || '23:59') : null
+
     return fileMarkers.filter((f) => {
-      if (!f.flightTimestamp) return false
-      if (new Date(f.flightTimestamp).getTime() < cutoff) return false
+      if (!showAllPoints && f.fishCount === 0) return false
+      if (f.flightTimestamp) {
+        const ts = new Date(f.flightTimestamp).getTime()
+        if (startMs !== null && ts < startMs) return false
+        if (endMs !== null && ts > endMs) return false
+      }
       if (selectedGeofences.length > 0 && !f.geofenceTags.some((t) => selectedGeofences.includes(t))) return false
       return true
     })
-  }, [fileMarkers, lookbackIndex, selectedGeofences])
+  }, [fileMarkers, startDate, startTime, endDate, endTime, selectedGeofences, showAllPoints])
 
   const routeGeojson = useMemo(() => {
     const features = routes
@@ -619,6 +622,14 @@ export default function MapView({ projectId, timezone, routes, fileMarkers = [],
                 </div>
               </div>
               <div>
+                <p className="text-[9px] font-bold uppercase tracking-wider text-gray-400 mb-1.5">Points</p>
+                <button type="button" onClick={() => setShowAllPoints((v) => !v)}
+                  className={cn('px-2.5 py-1.5 rounded-lg text-[10px] font-bold transition-all text-left w-full',
+                    showAllPoints ? 'bg-blue-600 text-white' : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100')}>
+                  Show zero-fish points
+                </button>
+              </div>
+              <div>
                 <p className="text-[9px] font-bold uppercase tracking-wider text-gray-400 mb-1.5">Legend</p>
                 <div className="space-y-1">
                   <div className="flex items-center gap-2 text-[10px] text-gray-600">
@@ -781,22 +792,24 @@ export default function MapView({ projectId, timezone, routes, fileMarkers = [],
 
         {/* Bottom control bar */}
         <div className="absolute bottom-0 left-0 right-0 z-40 bg-white/95 backdrop-blur-sm border-t border-gray-200/80">
-          <div className="flex items-center gap-4 px-4 py-2.5 min-h-[48px]">
-            {/* Time window slider */}
-            <div className="flex items-center gap-2.5 flex-shrink-0">
-              <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider whitespace-nowrap">Last</span>
-              <input
-                type="range"
-                min={0}
-                max={LOOKBACK_OPTIONS.length - 1}
-                step={1}
-                value={lookbackIndex}
-                onChange={(e) => setLookbackIndex(Number(e.target.value))}
-                className="w-28 accent-blue-600"
-              />
-              <span className="text-xs font-semibold text-gray-700 w-12 whitespace-nowrap">
-                {LOOKBACK_OPTIONS[lookbackIndex].label}
-              </span>
+          <div className="flex items-center gap-3 px-4 py-2.5 min-h-[48px]">
+            {/* Date/time range */}
+            <div className="flex items-center gap-1.5 flex-shrink-0">
+              <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)}
+                className="text-[11px] border border-gray-200 rounded-lg px-1.5 py-1 focus:outline-none focus:ring-2 focus:ring-blue-500 w-32" />
+              <input type="time" value={startTime} onChange={(e) => setStartTime(e.target.value)}
+                className="text-[11px] border border-gray-200 rounded-lg px-1.5 py-1 focus:outline-none focus:ring-2 focus:ring-blue-500 w-24" />
+              <span className="text-[10px] text-gray-400 font-medium">→</span>
+              <input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)}
+                className="text-[11px] border border-gray-200 rounded-lg px-1.5 py-1 focus:outline-none focus:ring-2 focus:ring-blue-500 w-32" />
+              <input type="time" value={endTime} onChange={(e) => setEndTime(e.target.value)}
+                className="text-[11px] border border-gray-200 rounded-lg px-1.5 py-1 focus:outline-none focus:ring-2 focus:ring-blue-500 w-24" />
+              {(startDate || endDate) && (
+                <button type="button" onClick={() => { setStartDate(''); setStartTime(''); setEndDate(''); setEndTime('') }}
+                  className="text-[10px] text-gray-400 hover:text-red-500 px-1.5 py-0.5 rounded hover:bg-gray-100 transition-colors whitespace-nowrap">
+                  Reset
+                </button>
+              )}
             </div>
 
             <div className="h-5 w-px bg-gray-200 flex-shrink-0" />
