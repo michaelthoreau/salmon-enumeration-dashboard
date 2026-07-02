@@ -521,7 +521,6 @@ export default function VideosView({
                   <th className="text-left px-6 py-3 font-medium text-gray-600">Fish/hr</th>
                   <th className="text-left px-6 py-3 font-medium text-gray-600">Length</th>
                   <th className="text-left px-6 py-3 font-medium text-gray-600">Status</th>
-                  <th className="text-left px-6 py-3 font-medium text-gray-600">Rating</th>
                   <th className="px-6 py-3" />
                 </tr>
               </thead>
@@ -574,15 +573,6 @@ export default function VideosView({
                           {canWrite
                             ? <StatusButtons status={review.status} canWrite={canWrite} onChange={(s) => handleReviewChange(v, s, review.rating)} />
                             : <StatusBadge status={review.status} reviewedBy={review.reviewedBy} />}
-                        </td>
-                        <td className="px-6 py-3">
-                          {review.rating != null ? (
-                            <span className={cn('inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium border', RATING_COLORS_ACTIVE[review.rating])}>
-                              {review.rating}
-                            </span>
-                          ) : (
-                            <span className="text-gray-300">—</span>
-                          )}
                         </td>
                         <td className="px-6 py-3">
                           {canWrite && (
