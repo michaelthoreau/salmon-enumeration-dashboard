@@ -191,6 +191,7 @@ export default function MapView({ projectId, timezone, routes, fileMarkers = [],
     const startMs = startDate ? toMs(startDate, startTime) : null
     const endMs = endDate ? toMs(endDate, endTime || '23:59') : null
 
+    const UNTAGGED = '__untagged__'
     return fileMarkers.filter((f) => {
       if (!showAllPoints && f.fishCount === 0) return false
       if (f.flightTimestamp) {
@@ -198,7 +199,13 @@ export default function MapView({ projectId, timezone, routes, fileMarkers = [],
         if (startMs !== null && ts < startMs) return false
         if (endMs !== null && ts > endMs) return false
       }
-      if (selectedGeofences.length > 0 && !f.geofenceTags.some((t) => selectedGeofences.includes(t))) return false
+      if (selectedGeofences.length > 0) {
+        const wantsUntagged = selectedGeofences.includes(UNTAGGED)
+        const wantedTags = selectedGeofences.filter((s) => s !== UNTAGGED)
+        const matchesTag = wantedTags.length > 0 && f.geofenceTags.some((t) => wantedTags.includes(t))
+        const matchesUntagged = wantsUntagged && f.geofenceTags.length === 0
+        if (!matchesTag && !matchesUntagged) return false
+      }
       return true
     })
   }, [fileMarkers, startDate, startTime, endDate, endTime, selectedGeofences, showAllPoints])
@@ -835,6 +842,21 @@ export default function MapView({ projectId, timezone, routes, fileMarkers = [],
                       </button>
                     )
                   })}
+                  {(() => {
+                    const active = selectedGeofences.length === 0 || selectedGeofences.includes('__untagged__')
+                    return (
+                      <button
+                        type="button"
+                        onClick={() => toggleGeofence('__untagged__')}
+                        className={cn(
+                          'px-2.5 py-0.5 rounded-full text-[10px] font-semibold border transition-all whitespace-nowrap',
+                          active ? 'bg-gray-500 text-white border-transparent' : 'bg-white border-gray-200 text-gray-400',
+                        )}
+                      >
+                        Untagged
+                      </button>
+                    )
+                  })()}
                 </div>
                 <div className="h-5 w-px bg-gray-200 flex-shrink-0" />
               </>
