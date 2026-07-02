@@ -78,16 +78,56 @@ function parseMvhdDuration(buf: Buffer): number | null {
   }
 }
 
+// Walk top-level MP4 box headers (8 bytes each) to find the byte offset and size of `moov`.
+// DJI firmware writes moov at the end by default; some firmware/tools move it to the front.
+// Walking headers costs at most N small requests (one per top-level box, usually 3–4).
+async function findMoovRange(key: string): Promise<{ start: number; size: number } | null> {
+  const { contentRange, body: firstChunk } = await getObjectRange(key, 'bytes=0-15')
+  const totalMatch = contentRange?.match(/\/(\d+)$/)
+  if (!totalMatch) return null
+  const fileSize = parseInt(totalMatch[1], 10)
+
+  let offset = 0
+  let headerBuf = Buffer.from(firstChunk)
+
+  while (offset < fileSize) {
+    if (headerBuf.length < 8) break
+
+    const boxSizeRaw = headerBuf.readUInt32BE(0)
+    const boxType = headerBuf.subarray(4, 8).toString('ascii')
+
+    let boxSize: number
+    if (boxSizeRaw === 1) {
+      if (headerBuf.length < 16) break
+      boxSize = Number(headerBuf.readBigUInt64BE(8))
+    } else if (boxSizeRaw === 0) {
+      boxSize = fileSize - offset
+    } else {
+      boxSize = boxSizeRaw
+    }
+
+    if (boxType === 'moov') return { start: offset, size: boxSize }
+
+    offset += boxSize
+    if (offset >= fileSize) break
+
+    const nextEnd = Math.min(offset + 15, fileSize - 1)
+    const { body } = await getObjectRange(key, `bytes=${offset}-${nextEnd}`)
+    headerBuf = Buffer.from(body)
+  }
+
+  return null
+}
+
 async function extractVideoDuration(key: string): Promise<number | undefined> {
   try {
-    // Try first 2 MB — moov is here for DJI originals (moov-at-start)
-    const { body: bodyStart } = await getObjectRange(key, 'bytes=0-2097151')
-    const dur = parseMvhdDuration(Buffer.from(bodyStart))
-    if (dur) return dur
+    const moov = await findMoovRange(key)
+    if (!moov) return undefined
 
-    // For FFmpeg re-encoded files moov is at the end; mvhd can be ~650 KB in from EOF
-    const { body: bodyEnd } = await getObjectRange(key, 'bytes=-1048576')
-    return parseMvhdDuration(Buffer.from(bodyEnd)) ?? undefined
+    // mvhd is typically the first child of moov — fetch up to 4 KB of it
+    const fetchEnd = Math.min(moov.start + moov.size - 1, moov.start + 4095)
+    const { body } = await getObjectRange(key, `bytes=${moov.start}-${fetchEnd}`)
+    return parseMvhdDuration(Buffer.from(body)) ?? undefined
   } catch {
     return undefined
   }
