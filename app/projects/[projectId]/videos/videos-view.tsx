@@ -511,23 +511,23 @@ export default function VideosView({
             </div>
           </div>
         ) : (
-          <div className="bg-white rounded-xl border border-gray-200 overflow-x-auto">
-            <table className="w-full text-sm min-w-[900px]">
+          <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+            <table className="w-full text-sm">
               <thead className="bg-gray-50 border-b border-gray-200">
                 <tr>
-                  <th className="text-left px-6 py-3 font-medium text-gray-600">Filename</th>
-                  <th className="text-left px-6 py-3 font-medium text-gray-600">Location</th>
-                  <th className="text-left px-6 py-3 font-medium text-gray-600">Time</th>
-                  <th className="text-left px-6 py-3 font-medium text-gray-600">Fish/hr</th>
-                  <th className="text-left px-6 py-3 font-medium text-gray-600">Length</th>
-                  <th className="text-left px-6 py-3 font-medium text-gray-600">Status</th>
-                  <th className="px-6 py-3" />
+                  <th className="text-left px-3 py-2 font-medium text-gray-600">Filename</th>
+                  <th className="text-left px-3 py-2 font-medium text-gray-600">Location</th>
+                  <th className="text-left px-3 py-2 font-medium text-gray-600">Time</th>
+                  <th className="text-left px-3 py-2 font-medium text-gray-600">Fish/hr</th>
+                  <th className="text-left px-3 py-2 font-medium text-gray-600">Length</th>
+                  <th className="text-left px-3 py-2 font-medium text-gray-600">Status</th>
+                  <th className="px-2 py-2" />
                 </tr>
               </thead>
               {grouped.map(([dateKey, group], i) => (
                 <tbody key={dateKey} className="divide-y divide-gray-100">
                   <tr className="bg-gray-100/70">
-                    <td colSpan={8} className={`px-6 py-2.5 ${i > 0 ? 'border-t-2 border-gray-300' : 'border-t border-gray-200'}`}>
+                    <td colSpan={7} className={`px-3 py-2 ${i > 0 ? 'border-t-2 border-gray-300' : 'border-t border-gray-200'}`}>
                       <span className="text-sm font-semibold text-gray-700">{group.label}</span>
                       <span className="ml-2 text-xs text-gray-400">{group.videos.length} video{group.videos.length !== 1 ? 's' : ''}</span>
                     </td>
@@ -537,44 +537,44 @@ export default function VideosView({
                     const review = getReview(v)
                     return (
                       <tr key={v.fileId} className="hover:bg-gray-50 transition-colors group">
-                        <td className="px-6 py-3">
+                        <td className="px-3 py-2">
                           <Link
                             href={`/projects/${projectId}/flight-plans/${v.flightPlanId}/flights/${v.flightId}?file=${v.fileId}`}
-                            className={cn(buttonVariants({ variant: 'outline', size: 'sm' }), 'truncate max-w-[220px]')}
+                            className={cn(buttonVariants({ variant: 'outline', size: 'sm' }), 'truncate max-w-[160px] text-xs')}
                           >
                             {filename}
                           </Link>
                         </td>
-                        <td className="px-6 py-3">
+                        <td className="px-3 py-2">
                           <LocationCell v={v} canWrite={canWrite} onOpenDialog={() => openLocationDialog(v)} />
                         </td>
-                        <td className="px-6 py-3 text-gray-500 font-mono text-xs whitespace-nowrap">
+                        <td className="px-3 py-2 text-gray-500 font-mono text-xs whitespace-nowrap">
                           {formatTime(v.flightTimestamp, timezone)}
                         </td>
-                        <td className="px-6 py-3">
+                        <td className="px-3 py-2">
                           {v.fishCount === null ? (
-                            <span className="text-gray-400 text-xs italic">Unlabeled</span>
+                            <span className="text-gray-400 text-xs italic">—</span>
                           ) : v.durationSeconds != null && v.durationSeconds > 0 ? (
-                            <span className="inline-flex items-center gap-1 text-red-500">
-                              <Fish className="w-3.5 h-3.5" />
+                            <span className="inline-flex items-center gap-1 text-red-500 text-xs">
+                              <Fish className="w-3 h-3" />
                               {(v.fishCount / (v.durationSeconds / 3600)).toFixed(1)}
                             </span>
                           ) : (
-                            <span className="inline-flex items-center gap-1 text-red-500">
-                              <Fish className="w-3.5 h-3.5" />
+                            <span className="inline-flex items-center gap-1 text-red-500 text-xs">
+                              <Fish className="w-3 h-3" />
                               {v.fishCount}
                             </span>
                           )}
                         </td>
-                        <td className="px-6 py-3 text-gray-500 font-mono text-xs whitespace-nowrap">
+                        <td className="px-3 py-2 text-gray-500 font-mono text-xs whitespace-nowrap">
                           {v.durationSeconds != null ? formatDuration(v.durationSeconds) : <span className="text-gray-300">—</span>}
                         </td>
-                        <td className="px-6 py-3">
+                        <td className="px-3 py-2">
                           {canWrite
-                            ? <StatusButtons status={review.status} canWrite={canWrite} onChange={(s) => handleReviewChange(v, s, review.rating)} />
+                            ? <StatusButtons status={review.status} canWrite={canWrite} compact onChange={(s) => handleReviewChange(v, s, review.rating)} />
                             : <StatusBadge status={review.status} reviewedBy={review.reviewedBy} />}
                         </td>
-                        <td className="px-6 py-3">
+                        <td className="px-2 py-2">
                           {canWrite && (
                             <button
                               type="button"
@@ -780,7 +780,7 @@ function StatusBadge({ status, reviewedBy }: { status: ReviewStatus; reviewedBy:
   )
 }
 
-function StatusButtons({ status, canWrite, onChange }: { status: ReviewStatus; canWrite: boolean; onChange: (s: ReviewStatus) => void }) {
+function StatusButtons({ status, canWrite, onChange, compact = false }: { status: ReviewStatus; canWrite: boolean; onChange: (s: ReviewStatus) => void; compact?: boolean }) {
   const options: { value: ReviewStatus; label: string; icon: React.ReactNode; active: string; inactive: string }[] = [
     {
       value: 'not_reviewed',
@@ -821,7 +821,7 @@ function StatusButtons({ status, canWrite, onChange }: { status: ReviewStatus; c
           )}
         >
           {opt.icon}
-          <span className="hidden sm:inline">{opt.label.split(' ')[0]}</span>
+          {!compact && <span className="hidden sm:inline">{opt.label.split(' ')[0]}</span>}
         </button>
       ))}
     </div>
