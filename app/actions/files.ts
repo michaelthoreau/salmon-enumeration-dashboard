@@ -424,7 +424,7 @@ export async function updateBulkFileLocation(
 
   const [firstFile] = await db.select({ flightId: files.flightId }).from(files).where(eq(files.id, fileIds[0]))
   if (firstFile) {
-and    const { getProjectIdForFlight } = await import('@/lib/geofence-tagger')
+    const { getProjectIdForFlight } = await import('@/lib/geofence-tagger')
     const projectId = await getProjectIdForFlight(firstFile.flightId)
     if (projectId) {
       const tagFiles = fileIds.map((id) => ({ id, latitude, longitude }))

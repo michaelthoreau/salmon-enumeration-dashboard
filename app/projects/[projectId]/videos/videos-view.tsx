@@ -2,7 +2,7 @@
 
 import { useState, useMemo, useRef, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
-import { Video, Search, RefreshCw, Fish, NotebookPen, MapPin } from 'lucide-react'
+import { Video, Search, RefreshCw, Fish, MapPin } from 'lucide-react'
 import Link from 'next/link'
 import { cn } from '@/lib/utils'
 import { Button, buttonVariants } from '@/components/ui/button'
@@ -19,7 +19,6 @@ import { updateFileLocation } from '@/app/actions/files'
 interface VideoEntry {
   fileId: string
   key: string
-  size: number
   etag: string
   uploadedAt: string
   flightTimestamp: string
@@ -27,17 +26,19 @@ interface VideoEntry {
   planName: string
   flightId: string
   flightPlanId: string
-  fishCount: number
-  noteCount: number
+  fishCount: number | null
+  durationSeconds: number | null
   locationTags: { name: string; color: string }[]
   latitude: number | null
   longitude: number | null
 }
 
-function formatBytes(bytes: number): string {
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`
-  if (bytes < 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`
-  return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} GB`
+function formatDuration(seconds: number): string {
+  const h = Math.floor(seconds / 3600)
+  const m = Math.floor((seconds % 3600) / 60)
+  const s = Math.floor(seconds % 60)
+  if (h > 0) return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
+  return `${m}:${String(s).padStart(2, '0')}`
 }
 
 function formatDate(iso: string, tz: string): string {
@@ -370,18 +371,16 @@ export default function VideosView({ projectId, timezone, videos, canWrite, avai
               <thead className="bg-gray-50 border-b border-gray-200">
                 <tr>
                   <th className="text-left px-6 py-3 font-medium text-gray-600">Filename</th>
-                  <th className="text-left px-6 py-3 font-medium text-gray-600">Route</th>
-                  <th className="text-left px-6 py-3 font-medium text-gray-600">Time</th>
-                  <th className="text-left px-6 py-3 font-medium text-gray-600">Size</th>
-                  <th className="text-left px-6 py-3 font-medium text-gray-600">Fish</th>
                   <th className="text-left px-6 py-3 font-medium text-gray-600">Location</th>
-                  <th className="text-left px-6 py-3 font-medium text-gray-600">Notes</th>
+                  <th className="text-left px-6 py-3 font-medium text-gray-600">Time</th>
+                  <th className="text-left px-6 py-3 font-medium text-gray-600">Fish/hr</th>
+                  <th className="text-left px-6 py-3 font-medium text-gray-600">Length</th>
                 </tr>
               </thead>
               {grouped.map(([dateKey, group], i) => (
                 <tbody key={dateKey} className="divide-y divide-gray-100">
                   <tr className="bg-gray-100/70">
-                    <td colSpan={7} className={`px-6 py-2.5 ${i > 0 ? 'border-t-2 border-gray-300' : 'border-t border-gray-200'}`}>
+                    <td colSpan={5} className={`px-6 py-2.5 ${i > 0 ? 'border-t-2 border-gray-300' : 'border-t border-gray-200'}`}>
                       <span className="text-sm font-semibold text-gray-700">{group.label}</span>
                       <span className="ml-2 text-xs text-gray-400">{group.videos.length} video{group.videos.length !== 1 ? 's' : ''}</span>
                     </td>
@@ -397,21 +396,6 @@ export default function VideosView({ projectId, timezone, videos, canWrite, avai
                           >
                             {filename}
                           </Link>
-                        </td>
-                        <td className="px-6 py-3 text-gray-500">{v.planName}</td>
-                        <td className="px-6 py-3 text-gray-500 font-mono text-xs">
-                          {formatTime(v.flightTimestamp, timezone)}
-                        </td>
-                        <td className="px-6 py-3 text-gray-500">{formatBytes(v.size)}</td>
-                        <td className="px-6 py-3">
-                          {v.fishCount > 0 ? (
-                            <span className="inline-flex items-center gap-1 text-red-500">
-                              <Fish className="w-3.5 h-3.5" />
-                              {v.fishCount}
-                            </span>
-                          ) : (
-                            <span className="text-gray-300">—</span>
-                          )}
                         </td>
                         <td className="px-6 py-3">
                           {v.latitude != null && v.longitude != null ? (
@@ -456,15 +440,26 @@ export default function VideosView({ projectId, timezone, videos, canWrite, avai
                             <span className="text-red-400 text-xs">Not set</span>
                           )}
                         </td>
+                        <td className="px-6 py-3 text-gray-500 font-mono text-xs">
+                          {formatTime(v.flightTimestamp, timezone)}
+                        </td>
                         <td className="px-6 py-3">
-                          {v.noteCount > 0 ? (
-                            <span className="inline-flex items-center gap-1 text-yellow-600">
-                              <NotebookPen className="w-3.5 h-3.5" />
-                              {v.noteCount}
+                          {v.fishCount === null ? (
+                            <span className="text-gray-400 text-xs italic">Unlabeled</span>
+                          ) : v.durationSeconds != null && v.durationSeconds > 0 ? (
+                            <span className="inline-flex items-center gap-1 text-red-500">
+                              <Fish className="w-3.5 h-3.5" />
+                              {(v.fishCount / (v.durationSeconds / 3600)).toFixed(1)}
                             </span>
                           ) : (
-                            <span className="text-gray-300">—</span>
+                            <span className="inline-flex items-center gap-1 text-red-500">
+                              <Fish className="w-3.5 h-3.5" />
+                              {v.fishCount}
+                            </span>
                           )}
+                        </td>
+                        <td className="px-6 py-3 text-gray-500 font-mono text-xs">
+                          {v.durationSeconds != null ? formatDuration(v.durationSeconds) : <span className="text-gray-300">—</span>}
                         </td>
                       </tr>
                     )

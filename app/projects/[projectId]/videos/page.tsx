@@ -87,13 +87,10 @@ export default async function VideosPage({ params }: PageProps) {
     : []
 
   const fishCountMap = new Map<string, number>()
-  const noteCountMap = new Map<string, number>()
   for (const a of videoAnnotations) {
     if (!a.fileId) continue
     if (a.label === 'video-count') {
       fishCountMap.set(a.fileId, a.fishCount)
-    } else if (a.label === 'video-note') {
-      noteCountMap.set(a.fileId, (noteCountMap.get(a.fileId) ?? 0) + 1)
     }
   }
 
@@ -131,7 +128,6 @@ export default async function VideosPage({ params }: PageProps) {
       return {
         fileId: f.id,
         key: f.key,
-        size: f.size ?? 0,
         etag: f.etag,
         uploadedAt: f.uploadedAt.toISOString(),
         flightTimestamp: flight.timestamp.toISOString(),
@@ -139,8 +135,8 @@ export default async function VideosPage({ params }: PageProps) {
         planName: plan.displayName || plan.name,
         flightId: flight.id,
         flightPlanId: flight.flightPlanId,
-        fishCount: fishCountMap.get(f.id) ?? 0,
-        noteCount: noteCountMap.get(f.id) ?? 0,
+        fishCount: fishCountMap.has(f.id) ? fishCountMap.get(f.id)! : null,
+        durationSeconds: f.durationSeconds ?? null,
         locationTags: tagsByFileId.get(f.id) ?? [],
         latitude: f.latitude ?? null,
         longitude: f.longitude ?? null,
