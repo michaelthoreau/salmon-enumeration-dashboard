@@ -131,12 +131,11 @@ export async function updateGeofence(
     }
   }
 
-  const updateData: Record<string, string> = {}
-  if (fields.name !== undefined) updateData.name = fields.name.trim()
-  if (fields.color !== undefined) updateData.color = fields.color
-  if (fields.geometry !== undefined) updateData.geometry = fields.geometry
-
-  await db.update(geofences).set(updateData).where(eq(geofences.id, geofenceId))
+  await db.update(geofences).set({
+    ...(fields.name !== undefined ? { name: fields.name.trim() } : {}),
+    ...(fields.color !== undefined ? { color: fields.color } : {}),
+    ...(fields.geometry !== undefined ? { geometry: fields.geometry } : {}),
+  }).where(eq(geofences.id, geofenceId))
 
   // Re-tag files if geometry changed
   if (fields.geometry !== undefined) {

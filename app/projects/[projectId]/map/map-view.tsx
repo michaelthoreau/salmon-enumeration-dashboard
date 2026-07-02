@@ -536,16 +536,20 @@ export default function MapView({ projectId, timezone, routes, fileMarkers = [],
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // Geofence click → open edit panel
+  // Geofence click via queryRenderedFeatures — more reliable than layer-specific events.
+  // Only fires on direct canvas clicks; HTML overlay buttons don't reach map.on('click').
   useEffect(() => {
     if (!mapRef.current || !mapReady || !canWrite) return
     const map = mapRef.current
 
-    const handleGeofenceClick = (e: any) => {
-      e.stopPropagation()
+    const handleClick = (e: any) => {
       if (isDrawing) return
-      const feature = e.features[0]
-      const id = feature.properties.id
+      const features = map.queryRenderedFeatures(e.point, { layers: ['geofences-fill'] })
+      if (features.length === 0) {
+        setSelectedGeofenceId(null)
+        return
+      }
+      const id = features[0].properties?.id
       const geofence = geofences.find((g) => g.id === id)
       if (!geofence) return
       setSelectedGeofenceId(id)
@@ -554,19 +558,9 @@ export default function MapView({ projectId, timezone, routes, fileMarkers = [],
       setShowGeofenceList(false)
     }
 
-    map.on('click', 'geofences-fill', handleGeofenceClick)
-    return () => { map.off('click', 'geofences-fill', handleGeofenceClick) }
+    map.on('click', handleClick)
+    return () => { map.off('click', handleClick) }
   }, [isDrawing, geofences, mapReady, canWrite])
-
-  // Click on empty map → deselect geofence
-  useEffect(() => {
-    if (!mapRef.current || !mapReady || !selectedGeofenceId) return
-    const map = mapRef.current
-
-    const handleMapClick = () => { setSelectedGeofenceId(null) }
-    map.on('click', handleMapClick)
-    return () => { map.off('click', handleMapClick) }
-  }, [selectedGeofenceId, mapReady])
 
   // Sync highlight layers with selected geofence
   useEffect(() => {
@@ -829,7 +823,8 @@ export default function MapView({ projectId, timezone, routes, fileMarkers = [],
 
   async function handleUpdateColor(id: string, color: string) {
     setEditingColorId(null)
-    await updateGeofenceColor(id, projectId, color)
+    const result = await updateGeofenceColor(id, projectId, color)
+    if (result.error) { alert(result.error); return }
     router.refresh()
   }
 
@@ -1098,13 +1093,13 @@ export default function MapView({ projectId, timezone, routes, fileMarkers = [],
             <div className="p-2 space-y-1">
               {geofences.map((g) => (
                 <div key={g.id}>
-                  <div className="flex items-center justify-between gap-2 px-2 py-1.5 rounded-lg hover:bg-gray-50 group">
+                  <div className="flex items-center justify-between gap-2 px-2 py-1.5 rounded-lg hover:bg-gray-50">
                     <div className="flex items-center gap-2 min-w-0">
                       <span className="w-3 h-3 rounded-full flex-shrink-0" style={{ backgroundColor: g.color }} />
                       <span className="text-xs font-medium text-gray-700 truncate">{g.name}</span>
                     </div>
                     {canWrite && (
-                      <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-all">
+                      <div className="flex items-center gap-0.5">
                         <button
                           type="button"
                           onClick={() => setEditingColorId(editingColorId === g.id ? null : g.id)}
