@@ -372,84 +372,82 @@ export default function VideosView({
         </div>
 
         {queue.length === 0 ? (
-          <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+          <div className="bg-white rounded-xl border border-gray-200">
             <div className="text-center py-10 space-y-2">
               <CheckCircle2 className="w-10 h-10 text-green-400 mx-auto" />
               <p className="text-sm font-medium text-gray-600">All caught up — no videos awaiting review.</p>
             </div>
           </div>
         ) : (
-          <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-            <table className="w-full text-sm">
-              <thead className="bg-gray-50 border-b border-gray-200">
-                <tr>
-                  <th className="text-left px-4 py-3 font-medium text-gray-600">Video</th>
-                  <th className="text-left px-4 py-3 font-medium text-gray-600">Location</th>
-                  <th className="text-left px-4 py-3 font-medium text-gray-600">Time</th>
-                  <th className="text-left px-4 py-3 font-medium text-gray-600">Length</th>
-                  <th className="text-left px-4 py-3 font-medium text-gray-600">Status</th>
-                  <th className="text-left px-4 py-3 font-medium text-gray-600">Rating</th>
-                  <th className="text-left px-4 py-3 font-medium text-gray-600">Reviewer</th>
-                  <th className="px-4 py-3" />
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-100">
-                {queue.map((v) => {
-                  const filename = v.key.split('/').pop() ?? v.key
-                  const review = getReview(v)
-                  return (
-                    <tr key={v.fileId} className="hover:bg-gray-50 transition-colors">
-                      <td className="px-4 py-3">
-                        <Link
-                          href={`/projects/${projectId}/flight-plans/${v.flightPlanId}/flights/${v.flightId}?file=${v.fileId}`}
-                          className={cn(buttonVariants({ variant: 'outline', size: 'sm' }), 'truncate max-w-[180px]')}
-                        >
-                          {filename}
-                        </Link>
-                      </td>
-                      <td className="px-4 py-3">
-                        <LocationCell v={v} canWrite={canWrite} onOpenDialog={() => openLocationDialog(v)} />
-                      </td>
-                      <td className="px-4 py-3 text-gray-500 font-mono text-xs whitespace-nowrap">
-                        {formatTime(v.flightTimestamp, timezone)}
-                      </td>
-                      <td className="px-4 py-3 text-gray-500 font-mono text-xs whitespace-nowrap">
-                        {v.durationSeconds != null ? formatDuration(v.durationSeconds) : <span className="text-gray-300">—</span>}
-                      </td>
-                      <td className="px-4 py-3">
-                        <StatusButtons
-                          status={review.status}
-                          canWrite={canWrite}
-                          onChange={(s) => handleReviewChange(v, s, review.rating)}
-                        />
-                      </td>
-                      <td className="px-4 py-3">
-                        <RatingButtons
-                          rating={review.rating}
-                          canWrite={canWrite}
-                          onChange={(r) => handleReviewChange(v, review.status, r)}
-                        />
-                      </td>
-                      <td className="px-4 py-3 text-xs text-gray-400 whitespace-nowrap">
-                        {review.reviewedBy ? shortEmail(review.reviewedBy) : <span className="text-gray-200">—</span>}
-                      </td>
-                      <td className="px-4 py-3">
-                        {canWrite && (
-                          <button
-                            type="button"
-                            onClick={() => handleHide(v, true)}
-                            title="Move to archive"
-                            className="p-1 rounded text-gray-300 hover:text-gray-500 hover:bg-gray-100 transition-colors"
-                          >
-                            <Archive className="w-3.5 h-3.5" />
-                          </button>
-                        )}
-                      </td>
-                    </tr>
-                  )
-                })}
-              </tbody>
-            </table>
+          <div className="flex gap-3 overflow-x-auto pb-2 snap-x snap-mandatory">
+            {queue.map((v) => {
+              const filename = v.key.split('/').pop() ?? v.key
+              const review = getReview(v)
+              return (
+                <div
+                  key={v.fileId}
+                  className="flex-none w-72 bg-white rounded-xl border border-gray-200 p-4 flex flex-col gap-3 snap-start"
+                >
+                  {/* Header: filename + archive */}
+                  <div className="flex items-start justify-between gap-2">
+                    <Link
+                      href={`/projects/${projectId}/flight-plans/${v.flightPlanId}/flights/${v.flightId}?file=${v.fileId}`}
+                      className="text-sm font-medium text-blue-600 hover:text-blue-800 truncate leading-snug"
+                      title={filename}
+                    >
+                      {filename}
+                    </Link>
+                    {canWrite && (
+                      <button
+                        type="button"
+                        onClick={() => handleHide(v, true)}
+                        title="Move to archive"
+                        className="flex-none p-1 rounded text-gray-300 hover:text-gray-500 hover:bg-gray-100 transition-colors"
+                      >
+                        <Archive className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Meta row */}
+                  <div className="flex items-center gap-2 text-xs text-gray-400 font-mono">
+                    <span>{formatTime(v.flightTimestamp, timezone)}</span>
+                    {v.durationSeconds != null && (
+                      <>
+                        <span>·</span>
+                        <span>{formatDuration(v.durationSeconds)}</span>
+                      </>
+                    )}
+                  </div>
+
+                  {/* Location */}
+                  <div className="min-h-[20px]">
+                    <LocationCell v={v} canWrite={canWrite} onOpenDialog={() => openLocationDialog(v)} />
+                  </div>
+
+                  <div className="border-t border-gray-100" />
+
+                  {/* Status buttons */}
+                  <StatusButtons
+                    status={review.status}
+                    canWrite={canWrite}
+                    onChange={(s) => handleReviewChange(v, s, review.rating)}
+                  />
+
+                  {/* Rating + reviewer */}
+                  <div className="flex items-center justify-between">
+                    <RatingButtons
+                      rating={review.rating}
+                      canWrite={canWrite}
+                      onChange={(r) => handleReviewChange(v, review.status, r)}
+                    />
+                    {review.reviewedBy && (
+                      <span className="text-xs text-gray-400 truncate ml-2">{shortEmail(review.reviewedBy)}</span>
+                    )}
+                  </div>
+                </div>
+              )
+            })}
           </div>
         )}
       </section>
@@ -573,7 +571,9 @@ export default function VideosView({
                           {v.durationSeconds != null ? formatDuration(v.durationSeconds) : <span className="text-gray-300">—</span>}
                         </td>
                         <td className="px-6 py-3">
-                          <StatusBadge status={review.status} reviewedBy={review.reviewedBy} />
+                          {canWrite
+                            ? <StatusButtons status={review.status} canWrite={canWrite} onChange={(s) => handleReviewChange(v, s, review.rating)} />
+                            : <StatusBadge status={review.status} reviewedBy={review.reviewedBy} />}
                         </td>
                         <td className="px-6 py-3">
                           {review.rating != null ? (
