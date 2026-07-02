@@ -168,10 +168,22 @@ export default function MapView({ projectId, timezone, routes, fileMarkers = [],
   const [showAllPoints, setShowAllPoints] = useState(false)
 
   // Bottom bar controls
-  const [startDate, setStartDate] = useState('')
-  const [startTime, setStartTime] = useState('')
-  const [endDate, setEndDate] = useState('')
-  const [endTime, setEndTime] = useState('')
+  const [startDate, setStartDate] = useState(() => {
+    const d = new Date(Date.now() - 24 * 60 * 60 * 1000)
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+  })
+  const [startTime, setStartTime] = useState(() => {
+    const d = new Date(Date.now() - 24 * 60 * 60 * 1000)
+    return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+  })
+  const [endDate, setEndDate] = useState(() => {
+    const d = new Date()
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+  })
+  const [endTime, setEndTime] = useState(() => {
+    const d = new Date()
+    return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+  })
   const [rateMode, setRateMode] = useState<'hourly' | 'daily'>('hourly')
   const [selectedGeofences, setSelectedGeofences] = useState<string[]>([])
 
