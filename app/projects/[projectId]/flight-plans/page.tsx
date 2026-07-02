@@ -105,7 +105,7 @@ export default async function FlightPlansPage({ params }: PageProps) {
           <div className="flex items-center gap-2">
             {canWrite && <DjiSyncButton projectId={projectId} />}
             {canWrite && <SyncProjectButton projectId={projectId} />}
-            {canWrite && <ExtractMetadataButton projectId={projectId} />}
+            {/* {canWrite && <ExtractMetadataButton projectId={projectId} />} */}
             {isAdmin && <CreateFlightPlanForm projectId={projectId} timezone={project.timezone} />}
           </div>
         </div>
