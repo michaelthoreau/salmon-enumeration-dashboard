@@ -140,6 +140,11 @@ export default async function VideosPage({ params }: PageProps) {
         locationTags: tagsByFileId.get(f.id) ?? [],
         latitude: f.latitude ?? null,
         longitude: f.longitude ?? null,
+        reviewStatus: f.reviewStatus,
+        reviewRating: f.reviewRating ?? null,
+        reviewedBy: f.reviewedBy ?? null,
+        reviewedAt: f.reviewedAt?.toISOString() ?? null,
+        hidden: f.hidden ?? false,
       }
     })
     .sort((a, b) => new Date(b.flightTimestamp).getTime() - new Date(a.flightTimestamp).getTime())
@@ -159,6 +164,7 @@ export default async function VideosPage({ params }: PageProps) {
       timezone={project.timezone}
       videos={videos}
       canWrite={canWrite}
+      currentUserEmail={session.email}
       availableLocationTags={availableTags}
       geofences={geofenceData}
     />

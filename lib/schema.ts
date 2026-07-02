@@ -2,6 +2,7 @@ import { sqliteTable, text, integer, real } from 'drizzle-orm/sqlite-core'
 
 export type Role = 'read' | 'read-write' | 'admin'
 export type Split = 'train' | 'val' | 'test'
+export type ReviewStatus = 'not_reviewed' | 'in_review' | 'reviewed'
 
 export const users = sqliteTable('users', {
   id: text('id').primaryKey(),
@@ -81,6 +82,11 @@ export const files = sqliteTable('files', {
   latitude: real('latitude'),
   longitude: real('longitude'),
   durationSeconds: real('duration_seconds'),
+  reviewStatus: text('review_status').$type<ReviewStatus>().notNull().default('not_reviewed'),
+  reviewRating: integer('review_rating'),
+  reviewedBy: text('reviewed_by'),
+  reviewedAt: integer('reviewed_at', { mode: 'timestamp' }),
+  hidden: integer('hidden', { mode: 'boolean' }).notNull().default(false),
 })
 
 // ─── File Points ──────────────────────────────────────────────────────────────

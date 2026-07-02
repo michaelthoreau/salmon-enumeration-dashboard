@@ -6,7 +6,7 @@ import { eq, and, isNull, inArray, isNotNull } from 'drizzle-orm'
 import { getSession } from '@/lib/session'
 import { headObject, listFlightObjects } from '@/lib/s3'
 import { randomUUID } from 'crypto'
-import type { Split } from '@/lib/schema'
+import type { Split, ReviewStatus } from '@/lib/schema'
 import { extractExifGps, extractVideoDurationOnly } from '@/lib/exif'
 import { tagFilesAgainstGeofences } from '@/lib/geofence-tagger'
 
@@ -433,5 +433,35 @@ export async function updateBulkFileLocation(
   }
 
   return { updated: fileIds.length }
+}
+
+export async function updateVideoReview(
+  fileId: string,
+  status: ReviewStatus,
+  rating: number | null,
+): Promise<{ error?: string }> {
+  const session = await getSession()
+  if (!session || session.role === 'read') return { error: 'Unauthorized' }
+
+  const now = new Date()
+  await db.update(files).set({
+    reviewStatus: status,
+    reviewRating: rating ?? null,
+    reviewedBy: status === 'not_reviewed' ? null : session.email,
+    reviewedAt: status === 'reviewed' ? now : null,
+  }).where(eq(files.id, fileId))
+
+  return {}
+}
+
+export async function setVideoHidden(
+  fileId: string,
+  hidden: boolean,
+): Promise<{ error?: string }> {
+  const session = await getSession()
+  if (!session || session.role === 'read') return { error: 'Unauthorized' }
+
+  await db.update(files).set({ hidden }).where(eq(files.id, fileId))
+  return {}
 }
 

@@ -1,8 +1,12 @@
 'use client'
 
-import { useState, useMemo, useRef, useEffect } from 'react'
+import { useState, useMemo, useRef, useEffect, useTransition, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
-import { Video, Search, RefreshCw, Fish, MapPin } from 'lucide-react'
+import {
+  Video, Search, RefreshCw, Fish, MapPin,
+  Archive, ChevronDown, ChevronRight, EyeOff, Eye,
+  Clock, CheckCircle2, Circle, Loader2,
+} from 'lucide-react'
 import Link from 'next/link'
 import { cn } from '@/lib/utils'
 import { Button, buttonVariants } from '@/components/ui/button'
@@ -14,7 +18,8 @@ import {
   DialogDescription,
   DialogFooter,
 } from '@/components/ui/dialog'
-import { updateFileLocation } from '@/app/actions/files'
+import { updateFileLocation, updateVideoReview, setVideoHidden } from '@/app/actions/files'
+import type { ReviewStatus } from '@/lib/schema'
 
 interface VideoEntry {
   fileId: string
@@ -31,6 +36,17 @@ interface VideoEntry {
   locationTags: { name: string; color: string }[]
   latitude: number | null
   longitude: number | null
+  reviewStatus: ReviewStatus
+  reviewRating: number | null
+  reviewedBy: string | null
+  reviewedAt: string | null
+  hidden: boolean
+}
+
+interface ReviewState {
+  status: ReviewStatus
+  rating: number | null
+  reviewedBy: string | null
 }
 
 function formatDuration(seconds: number): string {
@@ -72,6 +88,28 @@ function getDateKey(iso: string, tz: string): string {
   return `${y}-${m}-${d}`
 }
 
+function shortEmail(email: string): string {
+  return email.split('@')[0]
+}
+
+const RATING_LABELS: Record<number, string> = {
+  1: 'Not usable for training',
+  2: 'Somewhat usable',
+  3: 'Very usable',
+}
+
+const RATING_COLORS: Record<number, string> = {
+  1: 'bg-red-100 text-red-700 border-red-300',
+  2: 'bg-yellow-100 text-yellow-700 border-yellow-300',
+  3: 'bg-green-100 text-green-700 border-green-300',
+}
+
+const RATING_COLORS_ACTIVE: Record<number, string> = {
+  1: 'bg-red-500 text-white border-red-500',
+  2: 'bg-yellow-500 text-white border-yellow-500',
+  3: 'bg-green-500 text-white border-green-500',
+}
+
 interface GeofenceEntry {
   id: string
   name: string
@@ -84,15 +122,61 @@ export interface VideosViewProps {
   timezone: string
   videos: VideoEntry[]
   canWrite: boolean
+  currentUserEmail?: string
   availableLocationTags?: string[]
   geofences?: GeofenceEntry[]
 }
 
-export default function VideosView({ projectId, timezone, videos, canWrite, availableLocationTags = [], geofences = [] }: VideosViewProps) {
+export default function VideosView({
+  projectId,
+  timezone,
+  videos,
+  canWrite,
+  currentUserEmail,
+  availableLocationTags = [],
+  geofences = [],
+}: VideosViewProps) {
   const router = useRouter()
   const [search, setSearch] = useState('')
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [locationFilter, setLocationFilter] = useState<string>('')
+  const [archivedOpen, setArchivedOpen] = useState(false)
+
+  // Optimistic review state: fileId → ReviewState
+  const [reviewOverrides, setReviewOverrides] = useState<Map<string, ReviewState>>(new Map())
+  // Optimistic hidden state: fileId → boolean
+  const [hiddenOverrides, setHiddenOverrides] = useState<Map<string, boolean>>(new Map())
+
+  const [, startTransition] = useTransition()
+
+  // Merge server state with optimistic overrides
+  const getReview = useCallback((v: VideoEntry): ReviewState => {
+    const override = reviewOverrides.get(v.fileId)
+    if (override) return override
+    return { status: v.reviewStatus, rating: v.reviewRating, reviewedBy: v.reviewedBy }
+  }, [reviewOverrides])
+
+  const isHidden = useCallback((v: VideoEntry): boolean => {
+    const override = hiddenOverrides.get(v.fileId)
+    return override !== undefined ? override : v.hidden
+  }, [hiddenOverrides])
+
+  function handleReviewChange(v: VideoEntry, status: ReviewStatus, rating: number | null) {
+    const reviewedBy = status === 'not_reviewed' ? null : (currentUserEmail ?? v.reviewedBy)
+    setReviewOverrides((prev) => new Map(prev).set(v.fileId, { status, rating, reviewedBy }))
+    startTransition(async () => {
+      await updateVideoReview(v.fileId, status, rating)
+      router.refresh()
+    })
+  }
+
+  function handleHide(v: VideoEntry, hide: boolean) {
+    setHiddenOverrides((prev) => new Map(prev).set(v.fileId, hide))
+    startTransition(async () => {
+      await setVideoHidden(v.fileId, hide)
+      router.refresh()
+    })
+  }
 
   // Location dialog state
   const [locationDialogFileId, setLocationDialogFileId] = useState<string | null>(null)
@@ -116,20 +200,17 @@ export default function VideosView({ projectId, timezone, videos, canWrite, avai
     setLocationPin(null)
   }
 
-  // Init mini map when dialog opens (defer to let portal mount)
   useEffect(() => {
     if (!locationDialogFileId) return
     let cancelled = false
 
     async function initMiniMap() {
-      // Wait for dialog portal to mount the container
       await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))
       const maplibre = (await import('maplibre-gl')).default
       await import('maplibre-gl/dist/maplibre-gl.css')
       if (cancelled || !locationMapRef.current) return
 
       const initialCenter: [number, number] = locationPin ?? [-158.65, 59.25]
-
       const map = new maplibre.Map({
         container: locationMapRef.current,
         style: 'https://tiles.openfreemap.org/styles/liberty',
@@ -161,85 +242,31 @@ export default function VideosView({ projectId, timezone, videos, canWrite, avai
           }
         }
 
-        // Geofence layers
         const geofenceFeatures = geofences
           .map((g) => {
             try {
-              return {
-                type: 'Feature' as const,
-                geometry: JSON.parse(g.geometry),
-                properties: { name: g.name, color: g.color },
-              }
+              return { type: 'Feature' as const, geometry: JSON.parse(g.geometry), properties: { name: g.name, color: g.color } }
             } catch { return null }
           })
           .filter(Boolean)
 
-        map.addSource('geofences-source', {
-          type: 'geojson',
-          data: { type: 'FeatureCollection', features: geofenceFeatures as any[] },
-        })
-        map.addLayer({
-          id: 'geofences-fill',
-          type: 'fill',
-          source: 'geofences-source',
-          paint: { 'fill-color': ['get', 'color'], 'fill-opacity': 0.15 },
-        })
-        map.addLayer({
-          id: 'geofences-line',
-          type: 'line',
-          source: 'geofences-source',
-          paint: { 'line-color': ['get', 'color'], 'line-width': 2, 'line-dasharray': [3, 2] },
-        })
-        // Geofence name labels
-        map.addLayer({
-          id: 'geofences-label',
-          type: 'symbol',
-          source: 'geofences-source',
-          layout: {
-            'text-field': ['get', 'name'],
-            'text-size': 12,
-            'text-anchor': 'center',
-          },
-          paint: {
-            'text-color': ['get', 'color'],
-            'text-halo-color': '#ffffff',
-            'text-halo-width': 1.5,
-          },
-        })
+        map.addSource('geofences-source', { type: 'geojson', data: { type: 'FeatureCollection', features: geofenceFeatures as any[] } })
+        map.addLayer({ id: 'geofences-fill', type: 'fill', source: 'geofences-source', paint: { 'fill-color': ['get', 'color'], 'fill-opacity': 0.15 } })
+        map.addLayer({ id: 'geofences-line', type: 'line', source: 'geofences-source', paint: { 'line-color': ['get', 'color'], 'line-width': 2, 'line-dasharray': [3, 2] } })
+        map.addLayer({ id: 'geofences-label', type: 'symbol', source: 'geofences-source', layout: { 'text-field': ['get', 'name'], 'text-size': 12, 'text-anchor': 'center' }, paint: { 'text-color': ['get', 'color'], 'text-halo-color': '#ffffff', 'text-halo-width': 1.5 } })
 
-        // Pin layer
         map.addSource('pin-source', {
           type: 'geojson',
-          data: {
-            type: 'FeatureCollection',
-            features: locationPin
-              ? [{ type: 'Feature', geometry: { type: 'Point', coordinates: locationPin }, properties: {} }]
-              : [],
-          },
+          data: { type: 'FeatureCollection', features: locationPin ? [{ type: 'Feature', geometry: { type: 'Point', coordinates: locationPin }, properties: {} }] : [] },
         })
-        map.addLayer({
-          id: 'pin-layer',
-          type: 'circle',
-          source: 'pin-source',
-          paint: {
-            'circle-color': '#ef4444',
-            'circle-radius': 8,
-            'circle-stroke-color': '#ffffff',
-            'circle-stroke-width': 2,
-          },
-        })
+        map.addLayer({ id: 'pin-layer', type: 'circle', source: 'pin-source', paint: { 'circle-color': '#ef4444', 'circle-radius': 8, 'circle-stroke-color': '#ffffff', 'circle-stroke-width': 2 } })
       })
 
       map.on('click', (e: any) => {
         const lngLat: [number, number] = [e.lngLat.lng, e.lngLat.lat]
         setLocationPin(lngLat)
         const src = map.getSource('pin-source')
-        if (src) {
-          (src as any).setData({
-            type: 'FeatureCollection',
-            features: [{ type: 'Feature', geometry: { type: 'Point', coordinates: lngLat }, properties: {} }],
-          })
-        }
+        if (src) (src as any).setData({ type: 'FeatureCollection', features: [{ type: 'Feature', geometry: { type: 'Point', coordinates: lngLat }, properties: {} }] })
       })
 
       map.getCanvas().style.cursor = 'crosshair'
@@ -261,10 +288,7 @@ export default function VideosView({ projectId, timezone, videos, canWrite, avai
     setIsSavingLocation(true)
     const result = await updateFileLocation(locationDialogFileId, locationPin[1], locationPin[0])
     setIsSavingLocation(false)
-    if (result.error) {
-      alert(result.error)
-      return
-    }
+    if (result.error) { alert(result.error); return }
     closeLocationDialog()
     router.refresh()
   }
@@ -275,11 +299,10 @@ export default function VideosView({ projectId, timezone, videos, canWrite, avai
     setTimeout(() => setIsRefreshing(false), 1000)
   }
 
-  const filtered = useMemo(() => {
+  // Partition into visible / hidden
+  const { visible, archived } = useMemo(() => {
     let result = videos
-    if (locationFilter) {
-      result = result.filter((v) => v.locationTags.some((t) => t.name === locationFilter))
-    }
+    if (locationFilter) result = result.filter((v) => v.locationTags.some((t) => t.name === locationFilter))
     if (search.trim()) {
       const q = search.toLowerCase()
       result = result.filter((v) => {
@@ -288,26 +311,150 @@ export default function VideosView({ projectId, timezone, videos, canWrite, avai
         return filename.includes(q) || notes.includes(q) || v.planName.toLowerCase().includes(q)
       })
     }
-    return result
-  }, [videos, search, locationFilter])
+    const visible: VideoEntry[] = []
+    const archived: VideoEntry[] = []
+    for (const v of result) {
+      if (isHidden(v)) archived.push(v)
+      else visible.push(v)
+    }
+    return { visible, archived }
+  }, [videos, search, locationFilter, isHidden])
 
+  // Queue: not_reviewed + in_review, newest first
+  const queue = useMemo(() =>
+    visible
+      .filter((v) => {
+        const s = getReview(v).status
+        return s === 'not_reviewed' || s === 'in_review'
+      })
+      .sort((a, b) => new Date(b.flightTimestamp).getTime() - new Date(a.flightTimestamp).getTime()),
+    [visible, getReview]
+  )
+
+  // All visible videos date-grouped
   const grouped = useMemo(() => {
     const map = new Map<string, { label: string; videos: VideoEntry[] }>()
-    for (const v of filtered) {
+    for (const v of visible) {
       const key = getDateKey(v.flightTimestamp, timezone)
-      if (!map.has(key)) {
-        map.set(key, {
-          label: formatDate(v.flightTimestamp, timezone),
-          videos: [],
-        })
-      }
+      if (!map.has(key)) map.set(key, { label: formatDate(v.flightTimestamp, timezone), videos: [] })
       map.get(key)!.videos.push(v)
     }
     return Array.from(map.entries()).sort((a, b) => b[0].localeCompare(a[0]))
-  }, [filtered, timezone])
+  }, [visible, timezone])
+
+  const queueCounts = useMemo(() => {
+    const notReviewed = visible.filter((v) => getReview(v).status === 'not_reviewed').length
+    const inReview = visible.filter((v) => getReview(v).status === 'in_review').length
+    return { notReviewed, inReview }
+  }, [visible, getReview])
 
   return (
     <div className="space-y-8">
+      {/* ── Review Queue ── */}
+      <section>
+        <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center gap-3">
+            <h2 className="text-lg font-semibold text-gray-900">
+              Review Queue{' '}
+              <span className="text-sm font-normal text-gray-500">({queue.length})</span>
+            </h2>
+            {queueCounts.notReviewed > 0 && (
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs bg-gray-100 text-gray-600 border border-gray-200">
+                <Circle className="w-3 h-3" /> {queueCounts.notReviewed} unreviewed
+              </span>
+            )}
+            {queueCounts.inReview > 0 && (
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs bg-blue-50 text-blue-600 border border-blue-200">
+                <Loader2 className="w-3 h-3" /> {queueCounts.inReview} in review
+              </span>
+            )}
+          </div>
+        </div>
+
+        {queue.length === 0 ? (
+          <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+            <div className="text-center py-10 space-y-2">
+              <CheckCircle2 className="w-10 h-10 text-green-400 mx-auto" />
+              <p className="text-sm font-medium text-gray-600">All caught up — no videos awaiting review.</p>
+            </div>
+          </div>
+        ) : (
+          <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+            <table className="w-full text-sm">
+              <thead className="bg-gray-50 border-b border-gray-200">
+                <tr>
+                  <th className="text-left px-4 py-3 font-medium text-gray-600">Video</th>
+                  <th className="text-left px-4 py-3 font-medium text-gray-600">Location</th>
+                  <th className="text-left px-4 py-3 font-medium text-gray-600">Time</th>
+                  <th className="text-left px-4 py-3 font-medium text-gray-600">Length</th>
+                  <th className="text-left px-4 py-3 font-medium text-gray-600">Status</th>
+                  <th className="text-left px-4 py-3 font-medium text-gray-600">Rating</th>
+                  <th className="text-left px-4 py-3 font-medium text-gray-600">Reviewer</th>
+                  <th className="px-4 py-3" />
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {queue.map((v) => {
+                  const filename = v.key.split('/').pop() ?? v.key
+                  const review = getReview(v)
+                  return (
+                    <tr key={v.fileId} className="hover:bg-gray-50 transition-colors">
+                      <td className="px-4 py-3">
+                        <Link
+                          href={`/projects/${projectId}/flight-plans/${v.flightPlanId}/flights/${v.flightId}?file=${v.fileId}`}
+                          className={cn(buttonVariants({ variant: 'outline', size: 'sm' }), 'truncate max-w-[180px]')}
+                        >
+                          {filename}
+                        </Link>
+                      </td>
+                      <td className="px-4 py-3">
+                        <LocationCell v={v} canWrite={canWrite} onOpenDialog={() => openLocationDialog(v)} />
+                      </td>
+                      <td className="px-4 py-3 text-gray-500 font-mono text-xs whitespace-nowrap">
+                        {formatTime(v.flightTimestamp, timezone)}
+                      </td>
+                      <td className="px-4 py-3 text-gray-500 font-mono text-xs whitespace-nowrap">
+                        {v.durationSeconds != null ? formatDuration(v.durationSeconds) : <span className="text-gray-300">—</span>}
+                      </td>
+                      <td className="px-4 py-3">
+                        <StatusButtons
+                          status={review.status}
+                          canWrite={canWrite}
+                          onChange={(s) => handleReviewChange(v, s, review.rating)}
+                        />
+                      </td>
+                      <td className="px-4 py-3">
+                        <RatingButtons
+                          rating={review.rating}
+                          canWrite={canWrite}
+                          onChange={(r) => handleReviewChange(v, review.status, r)}
+                        />
+                      </td>
+                      <td className="px-4 py-3 text-xs text-gray-400 whitespace-nowrap">
+                        {review.reviewedBy ? shortEmail(review.reviewedBy) : <span className="text-gray-200">—</span>}
+                      </td>
+                      <td className="px-4 py-3">
+                        {canWrite && (
+                          <button
+                            type="button"
+                            onClick={() => handleHide(v, true)}
+                            title="Move to archive"
+                            className="p-1 rounded text-gray-300 hover:text-gray-500 hover:bg-gray-100 transition-colors"
+                          >
+                            <Archive className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+
+      {/* ── All Videos ── */}
       <section>
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-lg font-semibold text-gray-900">
@@ -351,18 +498,18 @@ export default function VideosView({ projectId, timezone, videos, canWrite, avai
           </div>
         </div>
 
-        {grouped.length === 0 ? (
+        {videos.length === 0 ? (
           <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
             <div className="text-center py-16 space-y-3">
               <Video className="w-12 h-12 text-gray-300 mx-auto" />
-              <p className="text-sm text-gray-500 font-medium">
-                {videos.length === 0 ? 'No videos have been synced yet.' : 'No videos match your search.'}
-              </p>
-              {videos.length === 0 && (
-                <p className="text-xs text-gray-400">
-                  Videos from DJI FlightHub2 will appear here automatically when synced.
-                </p>
-              )}
+              <p className="text-sm text-gray-500 font-medium">No videos have been synced yet.</p>
+              <p className="text-xs text-gray-400">Videos from DJI FlightHub2 will appear here automatically when synced.</p>
+            </div>
+          </div>
+        ) : grouped.length === 0 ? (
+          <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+            <div className="text-center py-16">
+              <p className="text-sm text-gray-500">No videos match your search.</p>
             </div>
           </div>
         ) : (
@@ -375,72 +522,36 @@ export default function VideosView({ projectId, timezone, videos, canWrite, avai
                   <th className="text-left px-6 py-3 font-medium text-gray-600">Time</th>
                   <th className="text-left px-6 py-3 font-medium text-gray-600">Fish/hr</th>
                   <th className="text-left px-6 py-3 font-medium text-gray-600">Length</th>
+                  <th className="text-left px-6 py-3 font-medium text-gray-600">Status</th>
+                  <th className="text-left px-6 py-3 font-medium text-gray-600">Rating</th>
+                  <th className="px-6 py-3" />
                 </tr>
               </thead>
               {grouped.map(([dateKey, group], i) => (
                 <tbody key={dateKey} className="divide-y divide-gray-100">
                   <tr className="bg-gray-100/70">
-                    <td colSpan={5} className={`px-6 py-2.5 ${i > 0 ? 'border-t-2 border-gray-300' : 'border-t border-gray-200'}`}>
+                    <td colSpan={8} className={`px-6 py-2.5 ${i > 0 ? 'border-t-2 border-gray-300' : 'border-t border-gray-200'}`}>
                       <span className="text-sm font-semibold text-gray-700">{group.label}</span>
                       <span className="ml-2 text-xs text-gray-400">{group.videos.length} video{group.videos.length !== 1 ? 's' : ''}</span>
                     </td>
                   </tr>
                   {group.videos.map((v) => {
                     const filename = v.key.split('/').pop() ?? v.key
+                    const review = getReview(v)
                     return (
-                      <tr key={v.fileId} className="hover:bg-gray-50 transition-colors">
+                      <tr key={v.fileId} className="hover:bg-gray-50 transition-colors group">
                         <td className="px-6 py-3">
                           <Link
                             href={`/projects/${projectId}/flight-plans/${v.flightPlanId}/flights/${v.flightId}?file=${v.fileId}`}
-                            className={cn(buttonVariants({ variant: 'outline', size: 'sm' }), "truncate max-w-[220px]")}
+                            className={cn(buttonVariants({ variant: 'outline', size: 'sm' }), 'truncate max-w-[220px]')}
                           >
                             {filename}
                           </Link>
                         </td>
                         <td className="px-6 py-3">
-                          {v.latitude != null && v.longitude != null ? (
-                            <div className="flex flex-wrap gap-1">
-                              {v.locationTags.length > 0 ? v.locationTags.map((tag) => (
-                                <button
-                                  key={tag.name}
-                                  type="button"
-                                  onClick={() => openLocationDialog(v)}
-                                  className="inline-flex items-center rounded px-1.5 py-px text-[10px] font-medium border transition-opacity hover:opacity-80"
-                                  style={{
-                                    backgroundColor: tag.color + '22',
-                                    borderColor: tag.color + '66',
-                                    color: tag.color,
-                                  }}
-                                  title={`${v.latitude!.toFixed(4)}, ${v.longitude!.toFixed(4)}`}
-                                >
-                                  {tag.name}
-                                </button>
-                              )) : (
-                                <button
-                                  type="button"
-                                  onClick={() => openLocationDialog(v)}
-                                  className="inline-flex items-center gap-1 text-green-600 hover:text-green-700 transition-colors text-xs"
-                                  title={`${v.latitude!.toFixed(4)}, ${v.longitude!.toFixed(4)}`}
-                                >
-                                  <MapPin className="w-3.5 h-3.5" />
-                                  <span>Set</span>
-                                </button>
-                              )}
-                            </div>
-                          ) : canWrite ? (
-                            <button
-                              type="button"
-                              onClick={() => openLocationDialog(v)}
-                              className="inline-flex items-center gap-1 text-red-500 hover:text-red-600 transition-colors text-xs font-medium"
-                            >
-                              <MapPin className="w-3.5 h-3.5" />
-                              <span>Not set</span>
-                            </button>
-                          ) : (
-                            <span className="text-red-400 text-xs">Not set</span>
-                          )}
+                          <LocationCell v={v} canWrite={canWrite} onOpenDialog={() => openLocationDialog(v)} />
                         </td>
-                        <td className="px-6 py-3 text-gray-500 font-mono text-xs">
+                        <td className="px-6 py-3 text-gray-500 font-mono text-xs whitespace-nowrap">
                           {formatTime(v.flightTimestamp, timezone)}
                         </td>
                         <td className="px-6 py-3">
@@ -458,8 +569,32 @@ export default function VideosView({ projectId, timezone, videos, canWrite, avai
                             </span>
                           )}
                         </td>
-                        <td className="px-6 py-3 text-gray-500 font-mono text-xs">
+                        <td className="px-6 py-3 text-gray-500 font-mono text-xs whitespace-nowrap">
                           {v.durationSeconds != null ? formatDuration(v.durationSeconds) : <span className="text-gray-300">—</span>}
+                        </td>
+                        <td className="px-6 py-3">
+                          <StatusBadge status={review.status} reviewedBy={review.reviewedBy} />
+                        </td>
+                        <td className="px-6 py-3">
+                          {review.rating != null ? (
+                            <span className={cn('inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium border', RATING_COLORS_ACTIVE[review.rating])}>
+                              {review.rating}
+                            </span>
+                          ) : (
+                            <span className="text-gray-300">—</span>
+                          )}
+                        </td>
+                        <td className="px-6 py-3">
+                          {canWrite && (
+                            <button
+                              type="button"
+                              onClick={() => handleHide(v, true)}
+                              title="Move to archive"
+                              className="p-1 rounded text-gray-200 hover:text-gray-500 hover:bg-gray-100 transition-colors opacity-0 group-hover:opacity-100"
+                            >
+                              <Archive className="w-3.5 h-3.5" />
+                            </button>
+                          )}
                         </td>
                       </tr>
                     )
@@ -467,6 +602,93 @@ export default function VideosView({ projectId, timezone, videos, canWrite, avai
                 </tbody>
               ))}
             </table>
+          </div>
+        )}
+
+        {/* ── Archived ── */}
+        {archived.length > 0 && (
+          <div className="mt-4">
+            <button
+              type="button"
+              onClick={() => setArchivedOpen((o) => !o)}
+              className="flex items-center gap-2 text-sm text-gray-400 hover:text-gray-600 transition-colors mb-2"
+            >
+              {archivedOpen ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+              <EyeOff className="w-4 h-4" />
+              Archived ({archived.length})
+            </button>
+
+            {archivedOpen && (
+              <div className="bg-white rounded-xl border border-gray-200 overflow-hidden opacity-70">
+                <table className="w-full text-sm">
+                  <thead className="bg-gray-50 border-b border-gray-200">
+                    <tr>
+                      <th className="text-left px-6 py-3 font-medium text-gray-500">Filename</th>
+                      <th className="text-left px-6 py-3 font-medium text-gray-500">Location</th>
+                      <th className="text-left px-6 py-3 font-medium text-gray-500">Time</th>
+                      <th className="text-left px-6 py-3 font-medium text-gray-500">Length</th>
+                      <th className="text-left px-6 py-3 font-medium text-gray-500">Status</th>
+                      <th className="text-left px-6 py-3 font-medium text-gray-500">Rating</th>
+                      <th className="px-6 py-3" />
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {archived
+                      .sort((a, b) => new Date(b.flightTimestamp).getTime() - new Date(a.flightTimestamp).getTime())
+                      .map((v) => {
+                        const filename = v.key.split('/').pop() ?? v.key
+                        const review = getReview(v)
+                        return (
+                          <tr key={v.fileId} className="hover:bg-gray-50 transition-colors">
+                            <td className="px-6 py-3">
+                              <Link
+                                href={`/projects/${projectId}/flight-plans/${v.flightPlanId}/flights/${v.flightId}?file=${v.fileId}`}
+                                className={cn(buttonVariants({ variant: 'outline', size: 'sm' }), 'truncate max-w-[220px]')}
+                              >
+                                {filename}
+                              </Link>
+                            </td>
+                            <td className="px-6 py-3">
+                              <LocationCell v={v} canWrite={false} onOpenDialog={() => {}} />
+                            </td>
+                            <td className="px-6 py-3 text-gray-400 font-mono text-xs whitespace-nowrap">
+                              {formatTime(v.flightTimestamp, timezone)}
+                            </td>
+                            <td className="px-6 py-3 text-gray-400 font-mono text-xs whitespace-nowrap">
+                              {v.durationSeconds != null ? formatDuration(v.durationSeconds) : '—'}
+                            </td>
+                            <td className="px-6 py-3">
+                              <StatusBadge status={review.status} reviewedBy={review.reviewedBy} />
+                            </td>
+                            <td className="px-6 py-3">
+                              {review.rating != null ? (
+                                <span className={cn('inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium border', RATING_COLORS_ACTIVE[review.rating])}>
+                                  {review.rating}
+                                </span>
+                              ) : (
+                                <span className="text-gray-300">—</span>
+                              )}
+                            </td>
+                            <td className="px-6 py-3">
+                              {canWrite && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleHide(v, false)}
+                                  title="Restore from archive"
+                                  className="inline-flex items-center gap-1 text-xs text-gray-400 hover:text-blue-600 transition-colors"
+                                >
+                                  <Eye className="w-3.5 h-3.5" />
+                                  Restore
+                                </button>
+                              )}
+                            </td>
+                          </tr>
+                        )
+                      })}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
         )}
       </section>
@@ -480,10 +702,7 @@ export default function VideosView({ projectId, timezone, videos, canWrite, avai
               Click the map to place a pin for <strong>{locationDialogFileName}</strong>.
             </DialogDescription>
           </DialogHeader>
-          <div
-            ref={locationMapRef}
-            className="w-full h-[640px] rounded-lg border border-gray-200 overflow-hidden"
-          />
+          <div ref={locationMapRef} className="w-full h-[640px] rounded-lg border border-gray-200 overflow-hidden" />
           {locationPin && (
             <p className="text-xs text-gray-500 font-mono">
               {locationPin[1].toFixed(6)}, {locationPin[0].toFixed(6)}
@@ -497,6 +716,147 @@ export default function VideosView({ projectId, timezone, videos, canWrite, avai
           </DialogFooter>
         </DialogContent>
       </Dialog>
+    </div>
+  )
+}
+
+// ── Sub-components ────────────────────────────────────────────────────────────
+
+function LocationCell({ v, canWrite, onOpenDialog }: { v: VideoEntry; canWrite: boolean; onOpenDialog: () => void }) {
+  if (v.latitude != null && v.longitude != null) {
+    return (
+      <div className="flex flex-wrap gap-1">
+        {v.locationTags.length > 0 ? v.locationTags.map((tag) => (
+          <button
+            key={tag.name}
+            type="button"
+            onClick={onOpenDialog}
+            className="inline-flex items-center rounded px-1.5 py-px text-[10px] font-medium border transition-opacity hover:opacity-80"
+            style={{ backgroundColor: tag.color + '22', borderColor: tag.color + '66', color: tag.color }}
+            title={`${v.latitude!.toFixed(4)}, ${v.longitude!.toFixed(4)}`}
+          >
+            {tag.name}
+          </button>
+        )) : (
+          <button
+            type="button"
+            onClick={onOpenDialog}
+            className="inline-flex items-center gap-1 text-green-600 hover:text-green-700 transition-colors text-xs"
+            title={`${v.latitude!.toFixed(4)}, ${v.longitude!.toFixed(4)}`}
+          >
+            <MapPin className="w-3.5 h-3.5" />
+            <span>Set</span>
+          </button>
+        )}
+      </div>
+    )
+  }
+  if (canWrite) {
+    return (
+      <button
+        type="button"
+        onClick={onOpenDialog}
+        className="inline-flex items-center gap-1 text-red-500 hover:text-red-600 transition-colors text-xs font-medium"
+      >
+        <MapPin className="w-3.5 h-3.5" />
+        <span>Not set</span>
+      </button>
+    )
+  }
+  return <span className="text-red-400 text-xs">Not set</span>
+}
+
+function StatusBadge({ status, reviewedBy }: { status: ReviewStatus; reviewedBy: string | null }) {
+  if (status === 'not_reviewed') {
+    return (
+      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs bg-gray-100 text-gray-500 border border-gray-200">
+        <Circle className="w-2.5 h-2.5" /> Not reviewed
+      </span>
+    )
+  }
+  if (status === 'in_review') {
+    return (
+      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs bg-blue-50 text-blue-600 border border-blue-200">
+        <Clock className="w-2.5 h-2.5" />
+        In review{reviewedBy ? ` · ${shortEmail(reviewedBy)}` : ''}
+      </span>
+    )
+  }
+  return (
+    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs bg-green-50 text-green-700 border border-green-200">
+      <CheckCircle2 className="w-2.5 h-2.5" />
+      Reviewed{reviewedBy ? ` · ${shortEmail(reviewedBy)}` : ''}
+    </span>
+  )
+}
+
+function StatusButtons({ status, canWrite, onChange }: { status: ReviewStatus; canWrite: boolean; onChange: (s: ReviewStatus) => void }) {
+  const options: { value: ReviewStatus; label: string; icon: React.ReactNode; active: string; inactive: string }[] = [
+    {
+      value: 'not_reviewed',
+      label: 'Not reviewed',
+      icon: <Circle className="w-3 h-3" />,
+      active: 'bg-gray-200 text-gray-700 border-gray-300',
+      inactive: 'bg-white text-gray-400 border-gray-200 hover:border-gray-300 hover:text-gray-600',
+    },
+    {
+      value: 'in_review',
+      label: 'In review',
+      icon: <Clock className="w-3 h-3" />,
+      active: 'bg-blue-500 text-white border-blue-500',
+      inactive: 'bg-white text-gray-400 border-gray-200 hover:border-blue-300 hover:text-blue-500',
+    },
+    {
+      value: 'reviewed',
+      label: 'Reviewed',
+      icon: <CheckCircle2 className="w-3 h-3" />,
+      active: 'bg-green-500 text-white border-green-500',
+      inactive: 'bg-white text-gray-400 border-gray-200 hover:border-green-300 hover:text-green-600',
+    },
+  ]
+
+  return (
+    <div className="flex rounded-md border border-gray-200 overflow-hidden w-fit">
+      {options.map((opt) => (
+        <button
+          key={opt.value}
+          type="button"
+          title={opt.label}
+          disabled={!canWrite}
+          onClick={() => onChange(opt.value)}
+          className={cn(
+            'flex items-center gap-1 px-2 py-1 text-xs font-medium border-r last:border-r-0 transition-colors',
+            status === opt.value ? opt.active : opt.inactive,
+            !canWrite && 'cursor-default opacity-70',
+          )}
+        >
+          {opt.icon}
+          <span className="hidden sm:inline">{opt.label.split(' ')[0]}</span>
+        </button>
+      ))}
+    </div>
+  )
+}
+
+function RatingButtons({ rating, canWrite, onChange }: { rating: number | null; canWrite: boolean; onChange: (r: number | null) => void }) {
+  return (
+    <div className="flex gap-1">
+      {[1, 2, 3].map((n) => (
+        <button
+          key={n}
+          type="button"
+          title={RATING_LABELS[n]}
+          disabled={!canWrite}
+          onClick={() => onChange(rating === n ? null : n)}
+          className={cn(
+            'w-6 h-6 rounded text-xs font-bold border transition-colors',
+            rating === n ? RATING_COLORS_ACTIVE[n] : RATING_COLORS[n],
+            !canWrite && 'cursor-default',
+          )}
+        >
+          {n}
+        </button>
+      ))}
     </div>
   )
 }
