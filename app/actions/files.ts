@@ -342,7 +342,7 @@ export async function backfillVideoMetadata(
     const videoFiles = await db
       .select({ id: files.id, key: files.key })
       .from(files)
-      .where(and(inArray(files.flightId, flightIds)))
+      .where(and(inArray(files.flightId, flightIds), isNull(files.durationSeconds)))
 
     const needsDuration = videoFiles.filter((f) => {
       const lower = f.key.toLowerCase()

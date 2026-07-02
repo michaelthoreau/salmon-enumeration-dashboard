@@ -1,3 +1,5 @@
+export const maxDuration = 300
+
 import { notFound } from 'next/navigation'
 import { db } from '@/lib/db'
 import { projects, flightPlans, flights, files as filesTable, geofences, fileGeofenceTags } from '@/lib/schema'
