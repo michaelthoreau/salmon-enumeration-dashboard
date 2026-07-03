@@ -852,7 +852,7 @@ export default function TodayFlightsView({
       )}
 
       {/* Summary Stats Row */}
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <div className="bg-white border border-gray-200/80 rounded-2xl p-4 shadow-sm flex flex-col justify-center">
           <span className="text-[10px] uppercase tracking-wider text-gray-400 font-bold select-none">Flights Flown</span>
           <span className="text-2xl font-bold text-gray-900 mt-1">{totalFlights}</span>
