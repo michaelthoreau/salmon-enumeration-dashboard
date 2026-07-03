@@ -860,10 +860,6 @@ export default function TodayFlightsView({
           <span className="text-2xl font-bold text-gray-900 mt-1">{totalImages}</span>
         </div>
         <div className="bg-white border border-gray-200/80 rounded-2xl p-4 shadow-sm flex flex-col justify-center">
-          <span className="text-[10px] uppercase tracking-wider text-gray-400 font-bold select-none">Fish Counted</span>
-          <span className="text-2xl font-bold text-orange-600 mt-1">{totalFishCount}</span>
-        </div>
-        <div className="bg-white border border-gray-200/80 rounded-2xl p-4 shadow-sm flex flex-col justify-center">
           <span className="text-[10px] uppercase tracking-wider text-gray-400 font-bold select-none">Completed Maps</span>
           <span className="text-2xl font-bold text-emerald-600 mt-1">{completedMaps}</span>
         </div>
