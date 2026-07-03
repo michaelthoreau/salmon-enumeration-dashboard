@@ -5,10 +5,13 @@ from aws_cdk import (
     Duration,
     CfnOutput,
     aws_lambda as lambda_,
+    aws_lambda_event_sources as lambda_es,
     aws_apigateway as apigw,
     aws_iam as iam,
     aws_logs as logs,
     aws_cloudwatch as cw,
+    aws_s3 as s3,
+    aws_s3_notifications as s3n,
 )
 from constructs import Construct
 
@@ -184,6 +187,100 @@ class DjiAwsPipelineStack(Stack):
                 ],
                 width=12,
                 height=6,
+            ),
+        )
+
+        # ── Video Compression ────────────────────────────────────────────────────
+
+        # FFmpeg Lambda Layer
+        # Download the static Linux x86_64 FFmpeg binary and place it at:
+        #   dji-pipeline/ffmpeg-layer/bin/ffmpeg
+        # then redeploy. Get it from: https://johnvansickle.com/ffmpeg/
+        ffmpeg_layer = lambda_.LayerVersion(
+            self, "FfmpegLayer",
+            code=lambda_.Code.from_asset("../ffmpeg-layer"),
+            compatible_runtimes=[lambda_.Runtime.PYTHON_3_12],
+            description="Static FFmpeg binary for video compression",
+        )
+
+        # Compression Lambda — triggered by S3 PutObject on video files
+        compress_handler = lambda_.Function(
+            self, "CompressVideoHandler",
+            function_name="dji-compress-video",
+            runtime=lambda_.Runtime.PYTHON_3_12,
+            handler="compress_video.handler",
+            code=lambda_.Code.from_asset("../lambda"),
+            timeout=Duration.minutes(15),
+            memory_size=4096,
+            ephemeral_storage_size=lambda_.Size.gibibytes(10),
+            layers=[ffmpeg_layer],
+            environment={
+                "BUCKET_NAME": BUCKET_NAME,
+                "FFMPEG_PATH": "/opt/bin/ffmpeg",
+                "FRONTEND_API_URL": os.getenv("FRONTEND_API_URL", "https://salmon.projectkiwi.io"),
+                "FRONTEND_API_KEY": os.getenv("FRONTEND_API_KEY", ""),
+            },
+            log_retention=logs.RetentionDays.ONE_MONTH,
+        )
+
+        compress_handler.add_to_role_policy(iam.PolicyStatement(
+            actions=["s3:GetObject", "s3:PutObject"],
+            resources=[f"arn:aws:s3:::{BUCKET_NAME}/*"],
+        ))
+
+        # S3 bucket reference (already exists — import by name)
+        media_bucket = s3.Bucket.from_bucket_name(self, "MediaBucket", BUCKET_NAME)
+
+        # Trigger compression for any uploaded video (exclude compressed/ prefix)
+        for ext in [".mp4", ".MP4", ".mov", ".MOV"]:
+            media_bucket.add_event_notification(
+                s3.EventType.OBJECT_CREATED,
+                s3n.LambdaDestination(compress_handler),
+                s3.NotificationKeyFilter(suffix=ext),
+            )
+
+        # CloudWatch alarm for compression failures
+        compress_error_filter = logs.MetricFilter(
+            self, "CompressErrorFilter",
+            log_group=compress_handler.log_group,
+            filter_pattern=logs.FilterPattern.literal("COMPRESSION ERROR"),
+            metric_name="VideoCompressionErrors",
+            metric_namespace="DjiPipeline",
+            default_value=0,
+        )
+
+        compression_alarm = cw.Alarm(
+            self, "CompressionFailureAlarm",
+            alarm_name="VideoCompressionFailed",
+            alarm_description="One or more DJI videos failed to compress. Check the dji-compress-video Lambda logs.",
+            metric=compress_error_filter.metric(
+                statistic="Sum",
+                period=Duration.minutes(5),
+            ),
+            threshold=1,
+            evaluation_periods=1,
+            comparison_operator=cw.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
+            treat_missing_data=cw.TreatMissingData.NOT_BREACHING,
+        )
+
+        dashboard.add_widgets(
+            cw.AlarmWidget(
+                title="Video Compression Failures",
+                alarm=compression_alarm,
+                width=12,
+                height=4,
+            ),
+            cw.LogQueryWidget(
+                title="Compression Error Logs",
+                log_group_names=[compress_handler.log_group.log_group_name],
+                query_string=(
+                    "fields datefloor(@timestamp, 1s) as ts, @message"
+                    " | filter @message like /COMPRESSION ERROR/"
+                    " | sort @timestamp desc"
+                    " | limit 200"
+                ),
+                width=12,
+                height=4,
             ),
         )
 

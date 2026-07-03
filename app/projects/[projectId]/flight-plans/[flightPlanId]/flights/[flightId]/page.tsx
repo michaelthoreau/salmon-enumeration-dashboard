@@ -96,7 +96,7 @@ export default async function FlightDetailPage({ params, searchParams }: PagePro
     .limit(1)
 
   // Filter out any generated outputs from the main file list
-  const displayObjects = dbFiles.filter((o) => !o.key.includes('/outputs/') && !o.key.includes('/odm/') && !o.key.includes('/georef/'))
+  const displayObjects = dbFiles.filter((o) => !o.key.includes('/outputs/') && !o.key.includes('/odm/') && !o.key.includes('/georef/') && !o.key.includes('/compressed/'))
 
   // Pick the output key from the most recently created task that has one,
   // regardless of whether it's an ODM or georef task. This ensures that
@@ -223,6 +223,8 @@ export default async function FlightDetailPage({ params, searchParams }: PagePro
         durationSeconds: o.durationSeconds ?? null,
         reviewStatus: o.reviewStatus ?? null,
         reviewRating: o.reviewRating ?? null,
+        compressionStatus: o.compressionStatus,
+        compressedKey: o.compressedKey ?? null,
       }))}
       geotiffKey={geotiffKey ?? null}
       reportPdfKey={reportPdfKey ?? null}

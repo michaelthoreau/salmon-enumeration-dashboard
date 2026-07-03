@@ -15,6 +15,7 @@ interface VideoNote {
 
 interface VideoPlayerProps {
   videoUrl: string
+  compressedVideoUrl?: string
   filename: string
   fishCount?: number
   canWrite?: boolean
@@ -29,7 +30,7 @@ interface VideoPlayerProps {
 }
 
 export default function VideoPlayer({
-  videoUrl, filename, fishCount = 0, canWrite = false,
+  videoUrl, compressedVideoUrl, filename, fishCount = 0, canWrite = false,
   onIncrement, onDecrement,
   notes = [], onAddNote, onDeleteNote, onExpand,
   fileId, existingDuration,
@@ -59,12 +60,15 @@ export default function VideoPlayer({
   const [fishSnapshots, setFishSnapshots] = useState<{ time: number; delta: number; total: number }[]>([])
   const [showFishTimeline, setShowFishTimeline] = useState(false)
   const [fishTimelinePopped, setFishTimelinePopped] = useState(false)
+  const [useCompressed, setUseCompressed] = useState(true)
   const lastBucketRef = useRef(-1)
   const countAtBucketStartRef = useRef(0)
 
+  const activeUrl = useCompressed && compressedVideoUrl ? compressedVideoUrl : videoUrl
+
   useEffect(() => {
     const video = videoRef.current
-    if (!video || !videoUrl) return
+    if (!video || !activeUrl) return
 
     const handlePlay = () => setIsPlaying(true)
     const handlePause = () => setIsPlaying(false)
@@ -121,7 +125,7 @@ export default function VideoPlayer({
       video.removeEventListener('seeking', handleWaiting)
       video.removeEventListener('seeked', handleSeeked)
     }
-  }, [videoUrl])
+  }, [activeUrl])
 
   useEffect(() => {
     const video = videoRef.current
@@ -326,7 +330,7 @@ export default function VideoPlayer({
         <div className="flex-1 min-h-0 flex items-center justify-center cursor-pointer" onClick={togglePlay}>
           <video
             ref={videoRef}
-            src={videoUrl ?? undefined}
+            src={activeUrl}
             preload="auto"
             muted={isMuted}
             playsInline
@@ -619,6 +623,31 @@ export default function VideoPlayer({
                           </div>
                         )}
                       </div>
+                      {compressedVideoUrl && (
+                        <div>
+                          <label className="text-[10px] text-white/40 uppercase tracking-wider block mb-1">Quality</label>
+                          <div className="flex gap-1">
+                            <button
+                              onClick={() => setUseCompressed(true)}
+                              className={cn(
+                                "flex-1 px-2 py-1 rounded text-xs transition-colors",
+                                useCompressed ? "bg-white text-black font-semibold" : "text-white/60 hover:text-white hover:bg-white/10"
+                              )}
+                            >
+                              Compressed
+                            </button>
+                            <button
+                              onClick={() => setUseCompressed(false)}
+                              className={cn(
+                                "flex-1 px-2 py-1 rounded text-xs transition-colors",
+                                !useCompressed ? "bg-white text-black font-semibold" : "text-white/60 hover:text-white hover:bg-white/10"
+                              )}
+                            >
+                              Original
+                            </button>
+                          </div>
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>

@@ -87,6 +87,8 @@ export const files = sqliteTable('files', {
   reviewedBy: text('reviewed_by'),
   reviewedAt: integer('reviewed_at', { mode: 'timestamp' }),
   hidden: integer('hidden', { mode: 'boolean' }).notNull().default(false),
+  compressionStatus: text('compression_status').$type<'none' | 'pending' | 'done' | 'failed'>().notNull().default('none'),
+  compressedKey: text('compressed_key'),
 })
 
 // ─── File Points ──────────────────────────────────────────────────────────────

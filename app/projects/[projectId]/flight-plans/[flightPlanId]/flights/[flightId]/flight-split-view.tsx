@@ -84,6 +84,8 @@ interface FileEntry {
   durationSeconds?: number | null
   reviewStatus?: string | null
   reviewRating?: number | null
+  compressionStatus?: string | null
+  compressedKey?: string | null
 }
 
 interface FlightSplitViewProps {
@@ -1027,6 +1029,24 @@ export default function FlightSplitView({
     return () => { active = false }
   }, [activeImage])
 
+  // Pre-generate presigned URL for compressed video (if available)
+  const [activeCompressedVideoUrl, setActiveCompressedVideoUrl] = useState('')
+  useEffect(() => {
+    if (!activeImage?.compressedKey || activeImage.compressionStatus !== 'done') {
+      setActiveCompressedVideoUrl('')
+      return
+    }
+    let active = true
+    async function fetchCompressedUrl() {
+      const res = await fetch(`/api/files/presign?key=${encodeURIComponent(activeImage!.compressedKey!)}`)
+      if (!res.ok) return
+      const { url } = await res.json()
+      if (active) setActiveCompressedVideoUrl(url)
+    }
+    fetchCompressedUrl()
+    return () => { active = false }
+  }, [activeImage])
+
   return (
     <div className="fixed top-[100px] bottom-0 left-0 right-0 z-10 bg-gray-50 flex overflow-hidden border-t border-gray-200">
       {/* ─── Left Sidebar ─── */}
@@ -1794,6 +1814,7 @@ export default function FlightSplitView({
                           <div className="w-full h-full">
                             <VideoPlayer
                               videoUrl={activeImageDownloadUrl}
+                              compressedVideoUrl={activeCompressedVideoUrl || undefined}
                               filename={activeImage.key.split('/').pop() || ''}
                               fishCount={getVideoFishCount(activeImage.id)}
                               canWrite={canWrite}
@@ -2180,6 +2201,7 @@ export default function FlightSplitView({
               <div className="w-full h-full max-w-7xl max-h-[85vh] flex items-center justify-center">
                 <VideoPlayer
                   videoUrl={activeImageDownloadUrl}
+                  compressedVideoUrl={activeCompressedVideoUrl || undefined}
                   filename={activeImage.key.split('/').pop() || ''}
                   fishCount={getVideoFishCount(activeImage.id)}
                   canWrite={canWrite}
