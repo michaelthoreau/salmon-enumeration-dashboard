@@ -138,6 +138,7 @@ export default function MapView({ projectId, timezone, routes, fileMarkers = [],
   const mapContainerRef = useRef<HTMLDivElement>(null)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const mapRef = useRef<any | null>(null)
+  const filteredFileMarkersRef = useRef<typeof fileMarkers>([])
   const [mapReady, setMapReady] = useState(false)
   const [basemap, setBasemap] = useState<'street' | 'satellite'>('satellite')
 
@@ -243,6 +244,12 @@ export default function MapView({ projectId, timezone, routes, fileMarkers = [],
   }, [routes])
 
   const fileMarkerGeojson = useMemo(() => {
+    const coordCounts: Record<string, number> = {}
+    for (const f of filteredFileMarkers) {
+      const key = `${f.longitude.toFixed(6)},${f.latitude.toFixed(6)}`
+      coordCounts[key] = (coordCounts[key] ?? 0) + 1
+    }
+
     const features = filteredFileMarkers.map((f) => {
       let rateStr = ''
       if (f.fishCount > 0 && f.durationSeconds && f.durationSeconds > 0) {
@@ -250,6 +257,7 @@ export default function MapView({ projectId, timezone, routes, fileMarkers = [],
         const rate = rateMode === 'daily' ? hourly * 24 : hourly
         rateStr = `${Math.round(rate).toLocaleString()}${rateMode === 'hourly' ? '/hr' : '/day'}`
       }
+      const coordKey = `${f.longitude.toFixed(6)},${f.latitude.toFixed(6)}`
       return {
         type: 'Feature' as const,
         geometry: { type: 'Point' as const, coordinates: [f.longitude, f.latitude] },
@@ -257,7 +265,8 @@ export default function MapView({ projectId, timezone, routes, fileMarkers = [],
           fileId: f.fileId, filename: f.filename, type: f.type, planName: f.planName,
           color: '#3b82f6',
           flightId: f.flightId, flightPlanId: f.flightPlanId, key: f.key, etag: f.etag,
-          rateStr,
+          rateStr, coordKey,
+          overlapCount: coordCounts[coordKey] ?? 1,
         },
       }
     })
@@ -334,6 +343,18 @@ export default function MapView({ projectId, timezone, routes, fileMarkers = [],
 
         // File marker layers
         map.addSource('file-markers-source', { type: 'geojson', data: fileMarkerGeojson as any })
+        // Outer ring for overlapping markers
+        map.addLayer({
+          id: 'file-markers-overlap-ring', type: 'circle', source: 'file-markers-source',
+          filter: ['>', ['get', 'overlapCount'], 1],
+          paint: {
+            'circle-color': 'transparent',
+            'circle-radius': 12,
+            'circle-stroke-color': '#3b82f6',
+            'circle-stroke-width': 2,
+            'circle-stroke-opacity': 0.5,
+          },
+        })
         map.addLayer({
           id: 'file-markers-point', type: 'circle', source: 'file-markers-source',
           paint: { 'circle-color': ['get', 'color'], 'circle-radius': 7, 'circle-stroke-color': '#ffffff', 'circle-stroke-width': 1.5 },
@@ -346,6 +367,18 @@ export default function MapView({ projectId, timezone, routes, fileMarkers = [],
             'text-anchor': 'top',
             'text-offset': [0, 1],
             'visibility': 'visible',
+          },
+          paint: { 'text-color': '#1d4ed8', 'text-halo-color': '#ffffff', 'text-halo-width': 1.5 },
+        })
+        // Count badge (×2, ×3…) shown top-right of overlapping dots
+        map.addLayer({
+          id: 'file-markers-count', type: 'symbol', source: 'file-markers-source',
+          filter: ['>', ['get', 'overlapCount'], 1],
+          layout: {
+            'text-field': ['concat', '×', ['to-string', ['get', 'overlapCount']]],
+            'text-size': 10,
+            'text-anchor': 'bottom-left',
+            'text-offset': [0.6, -0.6],
           },
           paint: { 'text-color': '#1d4ed8', 'text-halo-color': '#ffffff', 'text-halo-width': 1.5 },
         })
@@ -364,22 +397,42 @@ export default function MapView({ projectId, timezone, routes, fileMarkers = [],
 
         // File marker popup
         map.on('click', 'file-markers-point', (e: any) => {
-          const feature = e.features[0]
-          const props = feature.properties
-          const popupHtml = `
-            <div style="font-family:ui-sans-serif,system-ui,sans-serif;padding:12px;max-width:240px;">
-              <h3 style="font-weight:700;font-size:13px;color:#111827;margin:0;word-break:break-all;">${props.filename}</h3>
-              <p style="font-size:11px;color:#6b7280;margin:4px 0 0;">
-                <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${props.color};margin-right:4px;vertical-align:middle;"></span>
-                Video · ${props.planName}
-              </p>
-              ${props.rateStr ? `<p style="font-size:13px;font-weight:700;color:#1d4ed8;margin:6px 0 0;">${props.rateStr}</p>` : ''}
-              <a href="/projects/${projectId}/flight-plans/${props.flightPlanId}/flights/${props.flightId}?file=${props.fileId}" style="display:inline-block;margin-top:10px;font-size:11px;font-weight:600;color:#2563eb;text-decoration:none;">
-                Open flight details →
-              </a>
-            </div>
-          `
-          new maplibre.Popup({ maxWidth: '280px' }).setLngLat(e.lngLat).setHTML(popupHtml).addTo(map)
+          const props = e.features[0].properties
+          const coordKey = props.coordKey
+
+          // Find all videos at this exact coordinate using the live ref
+          const allAtCoord = filteredFileMarkersRef.current.filter(
+            (f) => `${f.longitude.toFixed(6)},${f.latitude.toFixed(6)}` === coordKey
+          )
+
+          const buildVideoHtml = (f: typeof allAtCoord[number]) => {
+            let rateStr = ''
+            if (f.fishCount > 0 && f.durationSeconds && f.durationSeconds > 0) {
+              const hourly = f.fishCount / (f.durationSeconds / 3600)
+              rateStr = `${Math.round(hourly).toLocaleString()}/hr`
+            }
+            return `
+              <div>
+                <p style="font-weight:600;font-size:12px;color:#111827;margin:0;word-break:break-all;">${f.filename}</p>
+                <p style="font-size:11px;color:#6b7280;margin:3px 0 0;">Video · ${f.planName}</p>
+                ${rateStr ? `<p style="font-size:13px;font-weight:700;color:#1d4ed8;margin:4px 0 0;">${rateStr}</p>` : ''}
+                <a href="/projects/${projectId}/flight-plans/${f.flightPlanId}/flights/${f.flightId}?file=${f.fileId}" style="display:inline-block;margin-top:6px;font-size:11px;font-weight:600;color:#2563eb;text-decoration:none;">
+                  Open flight details →
+                </a>
+              </div>
+            `
+          }
+
+          const popupHtml = allAtCoord.length > 1
+            ? `<div style="font-family:ui-sans-serif,system-ui,sans-serif;padding:12px;max-width:260px;">
+                <p style="font-size:10px;font-weight:700;color:#6b7280;text-transform:uppercase;letter-spacing:.05em;margin:0 0 10px;">${allAtCoord.length} videos at this location</p>
+                ${allAtCoord.map((f, i) => `${i > 0 ? '<hr style="border:none;border-top:1px solid #e5e7eb;margin:10px 0;">' : ''}${buildVideoHtml(f)}`).join('')}
+              </div>`
+            : `<div style="font-family:ui-sans-serif,system-ui,sans-serif;padding:12px;max-width:240px;">
+                ${buildVideoHtml(allAtCoord[0] ?? { filename: props.filename, planName: props.planName, fishCount: 0, durationSeconds: null, flightPlanId: props.flightPlanId, flightId: props.flightId, fileId: props.fileId })}
+              </div>`
+
+          new maplibre.Popup({ maxWidth: '300px' }).setLngLat(e.lngLat).setHTML(popupHtml).addTo(map)
         })
         map.on('mouseenter', 'file-markers-point', () => { map.getCanvas().style.cursor = 'pointer' })
         map.on('mouseleave', 'file-markers-point', () => { map.getCanvas().style.cursor = '' })
@@ -442,6 +495,10 @@ export default function MapView({ projectId, timezone, routes, fileMarkers = [],
     const source = mapRef.current.getSource('routes-source')
     if (source) source.setData(routeGeojson)
   }, [routeGeojson, mapReady])
+
+  useEffect(() => {
+    filteredFileMarkersRef.current = filteredFileMarkers
+  }, [filteredFileMarkers])
 
   useEffect(() => {
     if (!mapRef.current || !mapReady) return
