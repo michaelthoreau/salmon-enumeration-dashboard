@@ -65,11 +65,20 @@ interface FileMarker {
   durationSeconds: number | null
 }
 
+interface FishPoint {
+  id: string
+  fishCount: number
+  latitude: number
+  longitude: number
+  flightTimestamp: string | null
+}
+
 interface Props {
   projectId: string
   timezone: string
   routes: RouteEntry[]
   fileMarkers?: FileMarker[]
+  fishPoints?: FishPoint[]
   geofences: GeofenceEntry[]
   canWrite: boolean
 }
@@ -134,12 +143,13 @@ function buildPopupHtml(route: RouteEntry, projectId: string): string {
 
 const GEOFENCE_COLORS = ['#ef4444', '#f97316', '#eab308', '#22c55e', '#3b82f6', '#8b5cf6']
 
-export default function MapView({ projectId, timezone, routes, fileMarkers = [], geofences, canWrite }: Props) {
+export default function MapView({ projectId, timezone, routes, fileMarkers = [], fishPoints = [], geofences, canWrite }: Props) {
   const router = useRouter()
   const mapContainerRef = useRef<HTMLDivElement>(null)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const mapRef = useRef<any | null>(null)
   const filteredFileMarkersRef = useRef<typeof fileMarkers>([])
+  const activeOrthoKeyRef = useRef<string | null>(null)
   const [mapReady, setMapReady] = useState(false)
   const [activeOrthoKey, setActiveOrthoKey] = useState<string | null>(null)
   const [basemap, setBasemap] = useState<'street' | 'satellite'>('satellite')
@@ -293,6 +303,31 @@ export default function MapView({ projectId, timezone, routes, fileMarkers = [],
     return { type: 'FeatureCollection' as const, features: features as any[] }
   }, [filteredFileMarkers, rateMode])
 
+  const fishPointGeojson = useMemo(() => {
+    const toMs = (date: string, time: string) => {
+      const [y, mo, d] = date.split('-').map(Number)
+      const [h, m] = time ? time.split(':').map(Number) : [0, 0]
+      return new Date(y, mo - 1, d, h, m).getTime()
+    }
+    const startMs = startDate ? toMs(startDate, startTime) : null
+    const endMs = endDate ? toMs(endDate, endTime || '23:59') : null
+
+    const features = fishPoints
+      .filter((p) => {
+        if (!p.flightTimestamp) return false
+        const ts = new Date(p.flightTimestamp).getTime()
+        if (startMs !== null && ts < startMs) return false
+        if (endMs !== null && ts > endMs) return false
+        return true
+      })
+      .map((p) => ({
+        type: 'Feature' as const,
+        geometry: { type: 'Point' as const, coordinates: [p.longitude, p.latitude] },
+        properties: { id: p.id, fishCount: p.fishCount },
+      }))
+    return { type: 'FeatureCollection' as const, features }
+  }, [fishPoints, startDate, startTime, endDate, endTime])
+
   const geofenceGeojson = useMemo(() => {
     const features = geofences
       .map((g) => {
@@ -407,6 +442,28 @@ export default function MapView({ projectId, timezone, routes, fileMarkers = [],
           paint: { 'text-color': '#1d4ed8', 'text-halo-color': '#ffffff', 'text-halo-width': 1.5 },
         })
 
+        // Fish annotation points from ortho labeling
+        map.addSource('fish-points-source', { type: 'geojson', data: fishPointGeojson as any })
+        map.addLayer({
+          id: 'fish-points-circle', type: 'circle', source: 'fish-points-source',
+          paint: { 'circle-color': '#f97316', 'circle-radius': 6, 'circle-stroke-color': '#ffffff', 'circle-stroke-width': 1.5 },
+        })
+        map.addLayer({
+          id: 'fish-points-label', type: 'symbol', source: 'fish-points-source',
+          layout: { 'text-field': ['to-string', ['get', 'fishCount']], 'text-size': 10, 'text-anchor': 'top', 'text-offset': [0, 0.9] },
+          paint: { 'text-color': '#ea580c', 'text-halo-color': '#ffffff', 'text-halo-width': 1.5 },
+        })
+
+        map.on('click', 'fish-points-circle', (e: any) => {
+          const props = e.features[0].properties
+          new maplibre.Popup({ maxWidth: '200px' })
+            .setLngLat(e.lngLat)
+            .setHTML(`<div style="font-family:ui-sans-serif,system-ui,sans-serif;padding:10px;"><p style="font-size:13px;font-weight:700;color:#ea580c;margin:0;">${props.fishCount} fish</p><p style="font-size:11px;color:#6b7280;margin:4px 0 0;">Ortho annotation</p></div>`)
+            .addTo(map)
+        })
+        map.on('mouseenter', 'fish-points-circle', () => { map.getCanvas().style.cursor = 'pointer' })
+        map.on('mouseleave', 'fish-points-circle', () => { map.getCanvas().style.cursor = '' })
+
         // Geofence label layer
         map.addLayer({
           id: 'geofences-label', type: 'symbol', source: 'geofences-source',
@@ -496,6 +553,7 @@ export default function MapView({ projectId, timezone, routes, fileMarkers = [],
     const map = mapRef.current
     const handleClick = (e: any) => {
       if (isDrawing) return
+      if (activeOrthoKeyRef.current) return
       if (map.queryRenderedFeatures(e.point, { layers: ['file-markers-point'] }).length > 0) return
       const features = map.queryRenderedFeatures(e.point, { layers: ['geofences-fill'] })
       if (features.length === 0) { setSelectedGeofenceId(null); return }
@@ -530,6 +588,10 @@ export default function MapView({ projectId, timezone, routes, fileMarkers = [],
     filteredFileMarkersRef.current = filteredFileMarkers
   }, [filteredFileMarkers])
 
+  useEffect(() => {
+    activeOrthoKeyRef.current = activeOrthoKey
+  }, [activeOrthoKey])
+
   // Sync active ortho layer with map
   useEffect(() => {
     if (!mapRef.current || !mapReady) return
@@ -560,6 +622,12 @@ export default function MapView({ projectId, timezone, routes, fileMarkers = [],
     const source = mapRef.current.getSource('file-markers-source')
     if (source) source.setData(fileMarkerGeojson)
   }, [fileMarkerGeojson, mapReady])
+
+  useEffect(() => {
+    if (!mapRef.current || !mapReady) return
+    const source = mapRef.current.getSource('fish-points-source')
+    if (source) (source as any).setData(fishPointGeojson)
+  }, [fishPointGeojson, mapReady])
 
   useEffect(() => {
     if (!mapReady || !mapRef.current) return

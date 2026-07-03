@@ -220,6 +220,30 @@ export default async function MapPage({ params }: PageProps) {
     }
   }
 
+  // Fish annotation points from ortho labeling (map annotations with GPS geometry)
+  const rawFishAnnotations = flightIds.length > 0
+    ? await db
+        .select({ id: annotations.id, flightId: annotations.flightId, fishCount: annotations.fishCount, geometry: annotations.geometry })
+        .from(annotations)
+        .where(and(
+          inArray(annotations.flightId, flightIds),
+          eq(annotations.label, 'fish'),
+          isNull(annotations.fileId),
+          isNull(annotations.deletedAt),
+        ))
+    : []
+
+  const fishPoints = rawFishAnnotations
+    .flatMap((a) => {
+      try {
+        const geom = JSON.parse(a.geometry)
+        if (geom.type === 'Point') {
+          return [{ id: a.id, fishCount: a.fishCount, longitude: geom.coordinates[0], latitude: geom.coordinates[1], flightTimestamp: flightTimestampMap.get(a.flightId) ?? null }]
+        }
+      } catch { }
+      return []
+    })
+
   const fileMarkers = allFiles
     .filter((f) => {
       if (f.latitude == null || f.longitude == null) return false
@@ -251,6 +275,7 @@ export default async function MapPage({ params }: PageProps) {
       timezone={project.timezone}
       routes={routes}
       fileMarkers={fileMarkers}
+      fishPoints={fishPoints}
       geofences={allGeofences.map((g) => ({
         id: g.id,
         name: g.name,

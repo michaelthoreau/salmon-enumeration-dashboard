@@ -16,7 +16,7 @@ import {
   DialogFooter,
 } from '@/components/ui/dialog'
 import { highlightFlight } from '@/app/actions/projects'
-import { setFlightPriority, logFlightWithRoute, loadFlightsBefore } from '@/app/actions/flights'
+I import { setFlightPriority, logFlightWithRoute, loadFlightsBefore } from '@/app/actions/flights'
 import type { FlightRow } from '@/app/actions/flights'
 
 interface Props {
