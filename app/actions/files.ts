@@ -622,6 +622,8 @@ export interface DatasetEntry {
   imageWidth: number | null
   imageHeight: number | null
   size: number | null
+  reviewRating: number | null
+  durationSeconds: number | null
   flightId: string
   flightTimestampIso: string
   flightPlanName: string
@@ -646,6 +648,8 @@ export async function loadDatasetEntriesBefore(
       imageWidth: files.imageWidth,
       imageHeight: files.imageHeight,
       size: files.size,
+      reviewRating: files.reviewRating,
+      durationSeconds: files.durationSeconds,
       flightId: flights.id,
       flightTimestamp: flights.timestamp,
       flightPlanName: flightPlans.name,
@@ -672,6 +676,8 @@ export async function loadDatasetEntriesBefore(
     imageWidth: r.imageWidth ?? null,
     imageHeight: r.imageHeight ?? null,
     size: r.size ?? null,
+    reviewRating: r.reviewRating ?? null,
+    durationSeconds: r.durationSeconds ?? null,
     flightId: r.flightId,
     flightTimestampIso: r.flightTimestamp.toISOString(),
     flightPlanName: r.flightPlanName,

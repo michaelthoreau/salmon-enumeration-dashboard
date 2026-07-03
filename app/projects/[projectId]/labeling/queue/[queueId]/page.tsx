@@ -93,6 +93,7 @@ export default async function QueueLabelingPage({ params, searchParams }: PagePr
         y1: task.y1,
         x2: task.x2,
         y2: task.y2,
+        frame: task.frame,
         completedBy: task.completedBy ?? null,
         flightPlanName: task.flightPlanName,
       }}

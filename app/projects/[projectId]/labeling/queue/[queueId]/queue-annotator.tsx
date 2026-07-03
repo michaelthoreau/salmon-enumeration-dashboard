@@ -1,8 +1,9 @@
 'use client'
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
+import { Play, Pause, ChevronLeft, ChevronRight, History } from 'lucide-react'
 import { saveTaskPoints, setTaskComplete } from '@/app/actions/labeling-tasks'
 
 interface Point {
@@ -18,6 +19,7 @@ interface Task {
   y1: number
   x2: number
   y2: number
+  frame: number
   completedBy: string | null
   flightPlanName: string
 }
@@ -38,6 +40,12 @@ interface Props {
 
 const POINT_RADIUS = 6
 const HIT_RADIUS = 10
+const MAX_DISPLAY = 800
+const VIDEO_EXTS = new Set(['mp4', 'mov', 'avi', 'mkv'])
+
+function isVideoKey(key: string) {
+  return VIDEO_EXTS.has(key.split('.').pop()?.toLowerCase() ?? '')
+}
 
 function queueTaskUrl(projectId: string, queueId: string, taskId: string) {
   return `/projects/${projectId}/labeling/queue/${queueId}?task=${taskId}`
@@ -57,30 +65,65 @@ export default function QueueAnnotator({
   nextTaskId,
 }: Props) {
   const router = useRouter()
+  const isVideo = isVideoKey(task.fileKey)
 
-  const tileW = task.x2 - task.x1
-  const tileH = task.y2 - task.y1
-  const maxDisplay = 800
-  const scale = Math.min(1, maxDisplay / Math.max(tileW, tileH))
-  const displayW = Math.round(tileW * scale)
-  const displayH = Math.round(tileH * scale)
-
-  const [imageUrl, setImageUrl] = useState<string | null>(null)
-  const [imageError, setImageError] = useState(false)
+  // ── Annotation state ──────────────────────────────────────────────────────
   const [points, setPoints] = useState<Point[]>(() => initialPoints.map(p => ({ ...p })))
   const [complete, setComplete] = useState(!!task.completedBy)
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
   const [dirty, setDirty] = useState(false)
   const [busy, setBusy] = useState(false)
   const [cursor, setCursor] = useState<'crosshair' | 'grabbing'>('crosshair')
-
   const dragRef = useRef<{ id: string } | null>(null)
   const didDragRef = useRef(false)
 
-  // Load tile image
+  // ── Image state ───────────────────────────────────────────────────────────
+  const [imageUrl, setImageUrl] = useState<string | null>(null)
+  const [imageError, setImageError] = useState(false)
+
+  // ── Video state ───────────────────────────────────────────────────────────
+  const [videoUrl, setVideoUrl] = useState<string | null>(null)
+  const [videoError, setVideoError] = useState(false)
+  const [videoDims, setVideoDims] = useState<{ w: number; h: number } | null>(null)
+  const [isPlaying, setIsPlaying] = useState(false)
+  const [fps] = useState(29.97)
+  const videoRef = useRef<HTMLVideoElement>(null)
+  const returnTimeRef = useRef<number | null>(null)
+
+  // ── Display dimensions ────────────────────────────────────────────────────
+  const { frameW, frameH, displayW, displayH, scale } = useMemo(() => {
+    if (isVideo && videoDims) {
+      const s = Math.min(1, MAX_DISPLAY / Math.max(videoDims.w, videoDims.h))
+      return {
+        frameW: videoDims.w,
+        frameH: videoDims.h,
+        displayW: Math.round(videoDims.w * s),
+        displayH: Math.round(videoDims.h * s),
+        scale: s,
+      }
+    }
+    if (!isVideo) {
+      const tileW = task.x2 - task.x1
+      const tileH = task.y2 - task.y1
+      const s = Math.min(1, MAX_DISPLAY / Math.max(tileW, tileH))
+      return {
+        frameW: tileW,
+        frameH: tileH,
+        displayW: Math.round(tileW * s),
+        displayH: Math.round(tileH * s),
+        scale: s,
+      }
+    }
+    return { frameW: 0, frameH: 0, displayW: 0, displayH: 0, scale: 1 }
+  }, [isVideo, videoDims, task.x1, task.y1, task.x2, task.y2])
+
+  // ── Load image tile ───────────────────────────────────────────────────────
   useEffect(() => {
+    if (isVideo) return
     setImageUrl(null)
     setImageError(false)
+    const tileW = task.x2 - task.x1
+    const tileH = task.y2 - task.y1
     const params = new URLSearchParams({
       key: task.fileKey,
       x: String(task.x1),
@@ -92,9 +135,88 @@ export default function QueueAnnotator({
       .then(r => { if (!r.ok) throw new Error(); return r.blob() })
       .then(blob => setImageUrl(URL.createObjectURL(blob)))
       .catch(() => setImageError(true))
-  }, [task.fileKey, task.x1, task.y1, tileW, tileH])
+  }, [isVideo, task.fileKey, task.x1, task.y1, task.x2, task.y2])
 
-  // End drag anywhere
+  // ── Load video ────────────────────────────────────────────────────────────
+  useEffect(() => {
+    if (!isVideo) return
+    setVideoUrl(null)
+    setVideoError(false)
+    setVideoDims(null)
+    fetch(`/api/files/presign?key=${encodeURIComponent(task.fileKey)}`)
+      .then(r => r.ok ? r.json() as Promise<{ url: string }> : null)
+      .then(data => { if (data) setVideoUrl(data.url) })
+      .catch(() => setVideoError(true))
+  }, [isVideo, task.fileKey])
+
+  // Seek to task frame once video metadata is available
+  useEffect(() => {
+    if (!isVideo || !videoUrl) return
+    const video = videoRef.current
+    if (!video) return
+    const handleMeta = () => {
+      setVideoDims({ w: video.videoWidth, h: video.videoHeight })
+      video.currentTime = task.frame / fps
+    }
+    video.addEventListener('loadedmetadata', handleMeta)
+    return () => video.removeEventListener('loadedmetadata', handleMeta)
+  }, [isVideo, videoUrl, task.frame, fps])
+
+  // Track play state and handle "play last second" return
+  useEffect(() => {
+    if (!isVideo) return
+    const video = videoRef.current
+    if (!video) return
+
+    const onPlay = () => setIsPlaying(true)
+    const onPause = () => setIsPlaying(false)
+    const onTimeUpdate = () => {
+      if (returnTimeRef.current !== null && video.currentTime >= returnTimeRef.current) {
+        video.pause()
+        video.currentTime = returnTimeRef.current
+        returnTimeRef.current = null
+      }
+    }
+    const onError = () => setVideoError(true)
+
+    video.addEventListener('play', onPlay)
+    video.addEventListener('pause', onPause)
+    video.addEventListener('timeupdate', onTimeUpdate)
+    video.addEventListener('error', onError)
+    return () => {
+      video.removeEventListener('play', onPlay)
+      video.removeEventListener('pause', onPause)
+      video.removeEventListener('timeupdate', onTimeUpdate)
+      video.removeEventListener('error', onError)
+    }
+  }, [isVideo])
+
+  // ── Video controls ────────────────────────────────────────────────────────
+  const togglePlay = useCallback(() => {
+    const video = videoRef.current
+    if (!video) return
+    if (video.paused) video.play().catch(() => {})
+    else video.pause()
+  }, [])
+
+  const stepFrame = useCallback((dir: 'prev' | 'next') => {
+    const video = videoRef.current
+    if (!video) return
+    video.pause()
+    const delta = dir === 'next' ? 1 / fps : -1 / fps
+    video.currentTime = Math.max(0, video.currentTime + delta)
+  }, [fps])
+
+  const handlePlayLastSecond = useCallback(() => {
+    const video = videoRef.current
+    if (!video) return
+    const targetTime = video.currentTime
+    returnTimeRef.current = targetTime
+    video.currentTime = Math.max(0, targetTime - 1)
+    video.play().catch(() => {})
+  }, [])
+
+  // ── Drag handling ─────────────────────────────────────────────────────────
   const endDrag = useCallback(() => {
     if (!dragRef.current) return
     if (didDragRef.current) { setDirty(true); setSaveStatus('idle') }
@@ -108,7 +230,7 @@ export default function QueueAnnotator({
     return () => document.removeEventListener('mouseup', endDrag)
   }, [endDrag])
 
-  // ── Save helpers ────────────────────────────────────────────────────────
+  // ── Save helpers ──────────────────────────────────────────────────────────
   const doSave = useCallback(async () => {
     setSaveStatus('saving')
     const res = await saveTaskPoints(task.id, points.map(p => ({ x: p.x, y: p.y })))
@@ -117,19 +239,16 @@ export default function QueueAnnotator({
     return !!res.ok
   }, [task.id, points])
 
-  // Prev — just navigate, no save
   const handlePrev = useCallback(() => {
     if (!prevTaskId) return
     router.push(queueTaskUrl(projectId, queueId, prevTaskId))
   }, [prevTaskId, projectId, queueId, router])
 
-  // Skip — navigate to next without saving or marking done
   const handleSkip = useCallback(() => {
     if (!nextTaskId) return
     router.push(queueTaskUrl(projectId, queueId, nextTaskId))
   }, [nextTaskId, projectId, queueId, router])
 
-  // Complete — save, mark done, advance to next
   const handleComplete = useCallback(async () => {
     if (!canWrite) return
     setBusy(true)
@@ -145,12 +264,11 @@ export default function QueueAnnotator({
     if (nextTaskId) {
       router.push(queueTaskUrl(projectId, queueId, nextTaskId))
     } else {
-      // Last task — stay but refresh to show ✓
       router.refresh()
     }
   }, [canWrite, dirty, complete, task.id, doSave, nextTaskId, projectId, queueId, router])
 
-  // ── Canvas interaction ──────────────────────────────────────────────────
+  // ── Canvas interaction ────────────────────────────────────────────────────
   const handleMouseDown = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
     if (e.button !== 0 || !canWrite) return
     const rect = e.currentTarget.getBoundingClientRect()
@@ -169,11 +287,11 @@ export default function QueueAnnotator({
     if (!dragRef.current || !canWrite) return
     didDragRef.current = true
     const rect = e.currentTarget.getBoundingClientRect()
-    const px = Math.max(0, Math.min(tileW, (e.clientX - rect.left) / scale))
-    const py = Math.max(0, Math.min(tileH, (e.clientY - rect.top) / scale))
+    const px = Math.max(0, Math.min(frameW, (e.clientX - rect.left) / scale))
+    const py = Math.max(0, Math.min(frameH, (e.clientY - rect.top) / scale))
     const id = dragRef.current.id
     setPoints(prev => prev.map(p => p.id === id ? { ...p, x: px, y: py } : p))
-  }, [canWrite, scale, tileW, tileH])
+  }, [canWrite, scale, frameW, frameH])
 
   const handleCanvasClick = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
     if (!canWrite) return
@@ -202,7 +320,6 @@ export default function QueueAnnotator({
     }
   }, [canWrite, points, scale])
 
-  // Progress bar pct
   const progressPct = totalInQueue > 0 ? Math.round((completeCount / totalInQueue) * 100) : 0
   const filename = task.fileKey.split('/').pop() ?? task.fileKey
 
@@ -212,7 +329,6 @@ export default function QueueAnnotator({
       {/* ── Queue Session Header ─────────────────────────────────────────── */}
       <div className="bg-gradient-to-r from-blue-700 to-blue-600 text-white rounded-2xl px-6 py-4 mb-5">
         <div className="flex items-center justify-between gap-4">
-          {/* Left: breadcrumb + queue name */}
           <div className="min-w-0">
             <Link
               href={`/projects/${projectId}/labeling`}
@@ -222,8 +338,6 @@ export default function QueueAnnotator({
             </Link>
             <h1 className="text-lg font-bold mt-0.5 truncate">{queueName}</h1>
           </div>
-
-          {/* Centre: progress counter */}
           <div className="flex flex-col items-center shrink-0">
             <span className="text-3xl font-black tabular-nums leading-none">
               {positionInQueue}
@@ -231,8 +345,6 @@ export default function QueueAnnotator({
             </span>
             <span className="text-xs text-blue-200 mt-0.5">{completeCount} complete</span>
           </div>
-
-          {/* Right: progress bar */}
           <div className="w-40 shrink-0">
             <div className="flex items-center justify-between text-xs text-blue-200 mb-1">
               <span>Progress</span>
@@ -250,17 +362,16 @@ export default function QueueAnnotator({
 
       {/* ── Task info + nav buttons ──────────────────────────────────────── */}
       <div className="flex items-center justify-between gap-4 mb-4">
-        {/* File info */}
         <div className="min-w-0">
           <p className="text-base font-semibold text-gray-900 truncate">{filename}</p>
           <p className="text-xs text-gray-400 font-mono">
-            {task.flightPlanName} · {task.x1},{task.y1} — {task.x2},{task.y2}
+            {task.flightPlanName}
+            {isVideo
+              ? ` · Frame ${task.frame}`
+              : ` · ${task.x1},${task.y1} — ${task.x2},${task.y2}`}
           </p>
         </div>
-
-        {/* Nav + action buttons */}
         <div className="flex items-center gap-2 shrink-0">
-          {/* Prev */}
           {prevTaskId ? (
             <button
               onClick={handlePrev}
@@ -273,8 +384,6 @@ export default function QueueAnnotator({
               ← Prev
             </span>
           )}
-
-          {/* Skip */}
           {nextTaskId ? (
             <button
               onClick={handleSkip}
@@ -287,8 +396,6 @@ export default function QueueAnnotator({
               Skip →
             </span>
           )}
-
-          {/* Complete */}
           {canWrite && (
             <button
               onClick={handleComplete}
@@ -299,18 +406,12 @@ export default function QueueAnnotator({
                   : 'bg-blue-600 hover:bg-blue-700 text-white'
               }`}
             >
-              {busy ? (
-                <span className="animate-pulse">…</span>
-              ) : complete ? (
-                <>✓ Complete — next</>
-              ) : nextTaskId ? (
-                <>Complete & Next →</>
-              ) : (
-                <>✓ Complete</>
-              )}
+              {busy ? <span className="animate-pulse">…</span>
+                : complete ? <>✓ Complete — next</>
+                : nextTaskId ? <>Complete & Next →</>
+                : <>✓ Complete</>}
             </button>
           )}
-
           {!canWrite && complete && (
             <span className="inline-flex items-center rounded-xl bg-green-50 px-4 py-2 text-sm font-semibold text-green-700">
               ✓ Complete
@@ -319,7 +420,7 @@ export default function QueueAnnotator({
         </div>
       </div>
 
-      {/* Status strip — always rendered at fixed height to prevent layout shift */}
+      {/* Status strip */}
       <div className="h-7 flex items-center gap-3 mb-3 text-xs overflow-hidden">
         {complete && !dirty && (
           <span className="inline-flex items-center gap-1 rounded-full bg-green-50 px-2.5 py-1 font-medium text-green-700">
@@ -346,70 +447,173 @@ export default function QueueAnnotator({
       </div>
 
       {/* ── Annotation canvas ────────────────────────────────────────────── */}
-      <div className="flex justify-center">
-        <div
-          className="relative select-none bg-gray-100 rounded-xl overflow-hidden shadow-inner"
-          style={{ width: displayW, height: displayH, cursor: canWrite ? cursor : 'default' }}
-          onClick={handleCanvasClick}
-          onMouseDown={handleMouseDown}
-          onMouseMove={handleMouseMove}
-          onContextMenu={handleContextMenu}
-        >
-          {imageUrl && !imageError && (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img
-              src={imageUrl}
-              alt=""
-              draggable={false}
+      <div className="flex flex-col items-center gap-3">
+
+        {isVideo ? (
+          <>
+            {/* Video controls bar */}
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => stepFrame('prev')}
+                className="p-2 rounded-lg bg-gray-100 hover:bg-gray-200 text-gray-700 transition-colors"
+                title="Previous frame (←)"
+              >
+                <ChevronLeft className="w-4 h-4" />
+              </button>
+              <button
+                onClick={togglePlay}
+                className="p-2 rounded-lg bg-gray-100 hover:bg-gray-200 text-gray-700 transition-colors"
+                title="Play / Pause (Space)"
+              >
+                {isPlaying ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
+              </button>
+              <button
+                onClick={() => stepFrame('next')}
+                className="p-2 rounded-lg bg-gray-100 hover:bg-gray-200 text-gray-700 transition-colors"
+                title="Next frame (→)"
+              >
+                <ChevronRight className="w-4 h-4" />
+              </button>
+              <button
+                onClick={handlePlayLastSecond}
+                className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-amber-50 border border-amber-200 text-amber-700 hover:bg-amber-100 transition-colors text-xs font-semibold"
+                title="Rewind 1 second and play back to current frame"
+              >
+                <History className="w-3.5 h-3.5" />
+                Play last second
+              </button>
+            </div>
+
+            {/* Video + annotation overlay */}
+            {videoError ? (
+              <div className="flex items-center justify-center bg-gray-100 rounded-xl text-sm text-gray-400 w-[800px] h-[450px]">
+                Failed to load video
+              </div>
+            ) : !videoUrl || !videoDims ? (
+              <div className="flex items-center justify-center bg-gray-100 rounded-xl text-sm text-gray-400 animate-pulse w-[800px] h-[450px]">
+                Loading…
+              </div>
+            ) : (
+              <div
+                className="relative select-none rounded-xl overflow-hidden shadow-inner"
+                style={{ width: displayW, height: displayH, cursor: canWrite ? cursor : 'default' }}
+                onClick={handleCanvasClick}
+                onMouseDown={handleMouseDown}
+                onMouseMove={handleMouseMove}
+                onContextMenu={handleContextMenu}
+              >
+                {/* Hidden video element used for frame data */}
+                <video
+                  ref={videoRef}
+                  src={videoUrl}
+                  preload="auto"
+                  muted
+                  playsInline
+                  style={{
+                    position: 'absolute',
+                    inset: 0,
+                    width: displayW,
+                    height: displayH,
+                    pointerEvents: 'none',
+                    objectFit: 'fill',
+                  }}
+                />
+                {/* Annotation overlay */}
+                <svg
+                  className="absolute inset-0 pointer-events-none"
+                  width={displayW}
+                  height={displayH}
+                  viewBox={`0 0 ${displayW} ${displayH}`}
+                >
+                  {points.map(p => {
+                    const cx = p.x * scale
+                    const cy = p.y * scale
+                    return (
+                      <g key={p.id}>
+                        <circle cx={cx} cy={cy} r={POINT_RADIUS + 1} fill="rgba(0,0,0,0.5)" />
+                        <circle cx={cx} cy={cy} r={POINT_RADIUS} fill="#ef4444" stroke="white" strokeWidth={1.5} />
+                      </g>
+                    )
+                  })}
+                </svg>
+              </div>
+            )}
+          </>
+        ) : (
+          /* Image annotation canvas */
+          <div
+            className="relative select-none bg-gray-100 rounded-xl overflow-hidden shadow-inner"
+            style={{ width: displayW, height: displayH, cursor: canWrite ? cursor : 'default' }}
+            onClick={handleCanvasClick}
+            onMouseDown={handleMouseDown}
+            onMouseMove={handleMouseMove}
+            onContextMenu={handleContextMenu}
+          >
+            {imageUrl && !imageError && (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={imageUrl}
+                alt=""
+                draggable={false}
+                width={displayW}
+                height={displayH}
+                style={{
+                  position: 'absolute',
+                  inset: 0,
+                  width: displayW,
+                  height: displayH,
+                  imageRendering: 'pixelated',
+                  pointerEvents: 'none',
+                  userSelect: 'none',
+                }}
+                onError={() => setImageError(true)}
+              />
+            )}
+            {imageError && (
+              <div className="absolute inset-0 flex items-center justify-center text-sm text-gray-400">
+                Failed to load image
+              </div>
+            )}
+            {!imageUrl && !imageError && (
+              <div className="absolute inset-0 flex items-center justify-center text-sm text-gray-400 animate-pulse">
+                Loading…
+              </div>
+            )}
+            <svg
+              className="absolute inset-0 pointer-events-none"
               width={displayW}
               height={displayH}
-              style={{
-                position: 'absolute',
-                inset: 0,
-                width: displayW,
-                height: displayH,
-                imageRendering: 'pixelated',
-                pointerEvents: 'none',
-                userSelect: 'none',
-              }}
-              onError={() => setImageError(true)}
-            />
-          )}
-          {imageError && (
-            <div className="absolute inset-0 flex items-center justify-center text-sm text-gray-400">
-              Failed to load image
-            </div>
-          )}
-          {!imageUrl && !imageError && (
-            <div className="absolute inset-0 flex items-center justify-center text-sm text-gray-400 animate-pulse">
-              Loading…
-            </div>
-          )}
+              viewBox={`0 0 ${displayW} ${displayH}`}
+            >
+              {points.map(p => {
+                const cx = p.x * scale
+                const cy = p.y * scale
+                return (
+                  <g key={p.id}>
+                    <circle cx={cx} cy={cy} r={POINT_RADIUS + 1} fill="rgba(0,0,0,0.5)" />
+                    <circle cx={cx} cy={cy} r={POINT_RADIUS} fill="#ef4444" stroke="white" strokeWidth={1.5} />
+                  </g>
+                )
+              })}
+            </svg>
+          </div>
+        )}
 
-          {/* Point overlay */}
-          <svg className="absolute inset-0 pointer-events-none" width={displayW} height={displayH} viewBox={`0 0 ${displayW} ${displayH}`}>
-            {points.map(p => {
-              const cx = p.x * scale
-              const cy = p.y * scale
-              return (
-                <g key={p.id}>
-                  <circle cx={cx} cy={cy} r={POINT_RADIUS + 1} fill="rgba(0,0,0,0.5)" />
-                  <circle cx={cx} cy={cy} r={POINT_RADIUS} fill="#ef4444" stroke="white" strokeWidth={1.5} />
-                </g>
-              )
-            })}
-          </svg>
-        </div>
+        {/* Keyboard hints */}
+        {canWrite && (
+          <div className="flex items-center justify-center gap-6 text-xs text-gray-400">
+            <span><kbd className="font-mono bg-gray-100 border border-gray-200 rounded px-1 py-0.5">Left click</kbd> Add point</span>
+            <span><kbd className="font-mono bg-gray-100 border border-gray-200 rounded px-1 py-0.5">Drag</kbd> Move point</span>
+            <span><kbd className="font-mono bg-gray-100 border border-gray-200 rounded px-1 py-0.5">Right click</kbd> Remove point</span>
+            {isVideo && (
+              <>
+                <span><kbd className="font-mono bg-gray-100 border border-gray-200 rounded px-1 py-0.5">← →</kbd> Step frame</span>
+                <span><kbd className="font-mono bg-gray-100 border border-gray-200 rounded px-1 py-0.5">Space</kbd> Play/Pause</span>
+              </>
+            )}
+          </div>
+        )}
       </div>
-
-      {/* Keyboard hints */}
-      {canWrite && (
-        <div className="flex items-center justify-center gap-6 mt-4 text-xs text-gray-400">
-          <span><kbd className="font-mono bg-gray-100 border border-gray-200 rounded px-1 py-0.5">Left click</kbd> Add point</span>
-          <span><kbd className="font-mono bg-gray-100 border border-gray-200 rounded px-1 py-0.5">Drag</kbd> Move point</span>
-          <span><kbd className="font-mono bg-gray-100 border border-gray-200 rounded px-1 py-0.5">Right click</kbd> Remove point</span>
-        </div>
-      )}
     </div>
   )
 }

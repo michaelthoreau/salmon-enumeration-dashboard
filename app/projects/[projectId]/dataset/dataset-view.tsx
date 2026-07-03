@@ -52,12 +52,46 @@ function SplitBadge({ split }: { split: Split | null }) {
   )
 }
 
-// ── Labeling task helpers ──────────────────────────────────────────────────────
+// ── File type helpers ──────────────────────────────────────────────────────────
 
 const IMAGE_EXTS = new Set(['jpg', 'jpeg', 'png', 'webp', 'tiff', 'tif'])
+const VIDEO_EXTS = new Set(['mp4', 'mov', 'avi', 'mkv'])
+
 function isImageKey(key: string) {
   return IMAGE_EXTS.has(key.split('.').pop()?.toLowerCase() ?? '')
 }
+
+function isVideoKey(key: string) {
+  return VIDEO_EXTS.has(key.split('.').pop()?.toLowerCase() ?? '')
+}
+
+// ── Rating badge ───────────────────────────────────────────────────────────────
+
+const RATING_COLORS: Record<number, string> = {
+  1: 'bg-red-100 text-red-700 border-red-300',
+  2: 'bg-yellow-100 text-yellow-700 border-yellow-300',
+  3: 'bg-green-100 text-green-700 border-green-300',
+}
+
+const RATING_LABELS: Record<number, string> = {
+  1: 'Not usable',
+  2: 'Somewhat usable',
+  3: 'Very usable',
+}
+
+function RatingBadge({ rating }: { rating: number | null }) {
+  if (!rating) return <span className="text-xs text-gray-300 select-none">—</span>
+  return (
+    <span
+      className={cn('inline-flex items-center rounded px-1.5 py-0.5 text-xs font-medium border', RATING_COLORS[rating])}
+      title={RATING_LABELS[rating]}
+    >
+      {rating}
+    </span>
+  )
+}
+
+// ── Labeling task helpers — images ─────────────────────────────────────────────
 
 const TILE_SIZE = 640
 function computeTiles(width: number, height: number) {
@@ -75,7 +109,6 @@ function computeTiles(width: number, height: number) {
   return tiles
 }
 
-/** Return a random sample of `n` items (without replacement). */
 function sampleN<T>(arr: T[], n: number): T[] {
   if (n >= arr.length) return arr
   const copy = arr.slice()
@@ -117,6 +150,41 @@ type TaskDialogState =
   | { step: 'done'; count: number }
   | { step: 'error'; message: string }
 
+// ── Labeling task helpers — videos ─────────────────────────────────────────────
+
+const VIDEO_FPS = 29.97
+
+const VIDEO_MAX_OPTIONS = [
+  { label: '1/s (all)', value: null },
+  { label: '30', value: 30 },
+  { label: '60', value: 60 },
+  { label: '120', value: 120 },
+  { label: '300', value: 300 },
+] as const
+
+type VideoFileSample = {
+  fileId: string
+  filename: string
+  durationSeconds: number
+}
+
+type VideoTaskDialogState =
+  | { step: 'ready'; videoEntries: VideoFileSample[] }
+  | { step: 'creating' }
+  | { step: 'done'; count: number }
+  | { step: 'error'; message: string }
+
+function sampleVideoFrames(durationSeconds: number, maxFrames: number | null): number[] {
+  const totalAtOneFps = Math.max(1, Math.floor(durationSeconds))
+  const count = maxFrames !== null ? Math.min(totalAtOneFps, maxFrames) : totalAtOneFps
+  if (count <= 1) return [0]
+  return Array.from({ length: count }, (_, i) =>
+    Math.round((i / (count - 1)) * Math.floor(durationSeconds * VIDEO_FPS))
+  )
+}
+
+// ── Props ──────────────────────────────────────────────────────────────────────
+
 interface Props {
   projectId: string
   entries: DatasetEntry[]
@@ -143,6 +211,8 @@ export default function DatasetView({ projectId, entries: initialEntries, taskCo
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [taskDialog, setTaskDialog] = useState<TaskDialogState | null>(null)
   const [maxPerImage, setMaxPerImage] = useState<number | null>(null)
+  const [videoTaskDialog, setVideoTaskDialog] = useState<VideoTaskDialogState | null>(null)
+  const [maxFramesPerVideo, setMaxFramesPerVideo] = useState<number | null>(null)
   const [collapsedFlights, setCollapsedFlights] = useState<Set<string>>(new Set())
   const [activeImageKey, setActiveImageKey] = useState<string | null>(null)
   const [activeDownloadUrl, setActiveDownloadUrl] = useState('')
@@ -182,13 +252,14 @@ export default function DatasetView({ projectId, entries: initialEntries, taskCo
     setIsLoadingMore(false)
   }
 
-  // Filter entries by active tab (use live splits map, not initial data)
+  // Filter entries by active tab; hide videos with rating != 2 or 3
   const filtered = useMemo(() => {
     return allEntries.filter(e => {
       const s = splits.get(e.key) ?? null
       if (activeTab === 'unassigned') { if (s !== null) return false }
       else { if (s !== activeTab) return false }
       if (excludeWithTasks && isImageKey(e.key) && (taskCounts.get(e.fileId) ?? 0) > 0) return false
+      if (isVideoKey(e.key) && e.reviewRating !== 2 && e.reviewRating !== 3) return false
       return true
     })
   }, [allEntries, splits, activeTab, excludeWithTasks, taskCounts])
@@ -273,12 +344,10 @@ export default function DatasetView({ projectId, entries: initialEntries, taskCo
     const target = choice === 'none' ? null : choice as Split
     if (cur === target) return
     if (cur !== null && target !== null) {
-      // Reassignment: open dialog with the choice pre-filled
       setSplitDialog({ keys: [key] })
       setPendingSplit(choice)
       return
     }
-    // Direct assign or clear: apply immediately
     setSplits(prev => { const n = new Map(prev); n.set(key, target); return n })
     await assignFileSplit(key, target)
     router.refresh()
@@ -299,7 +368,7 @@ export default function DatasetView({ projectId, entries: initialEntries, taskCo
     router.refresh()
   }, [splitDialog, pendingSplit, router])
 
-  // ── Labeling task creation ────────────────────────────────────────────────
+  // ── Image labeling task creation ───────────────────────────────────────────
 
   const selectedImageEntries = allEntries.filter(
     e => selected.has(e.key) && isImageKey(e.key)
@@ -314,7 +383,6 @@ export default function DatasetView({ projectId, entries: initialEntries, taskCo
         imageEntries.map(async entry => {
           const filename = entry.key.split('/').pop() ?? entry.key
           try {
-            // Use cached dimensions from DB when available
             const { width, height } = (entry.imageWidth && entry.imageHeight)
               ? { width: entry.imageWidth, height: entry.imageHeight }
               : await getImageDimensions(entry.key)
@@ -346,11 +414,49 @@ export default function DatasetView({ projectId, entries: initialEntries, taskCo
     } else {
       setTaskDialog({ step: 'error', message: result.error ?? 'Unknown error' })
     }
-  }, [taskDialog, router])
+  }, [taskDialog, maxPerImage, router])
 
-  // filtered is defined at the top of the component
+  // ── Video labeling task creation ───────────────────────────────────────────
 
-  // Use server-computed global counts for tab badges
+  const selectedVideoEntries = allEntries.filter(
+    e => selected.has(e.key) && isVideoKey(e.key) &&
+      (e.reviewRating === 2 || e.reviewRating === 3)
+  )
+
+  const openVideoTaskDialog = useCallback(() => {
+    const videoEntries = allEntries
+      .filter(e => selected.has(e.key) && isVideoKey(e.key) &&
+        (e.reviewRating === 2 || e.reviewRating === 3) &&
+        e.durationSeconds != null && e.durationSeconds > 0)
+      .map(e => ({
+        fileId: e.fileId,
+        filename: e.key.split('/').pop() ?? e.key,
+        durationSeconds: e.durationSeconds!,
+      }))
+    if (videoEntries.length === 0) return
+    setVideoTaskDialog({ step: 'ready', videoEntries })
+  }, [selected, allEntries])
+
+  const confirmCreateVideoTasks = useCallback(async () => {
+    if (!videoTaskDialog || videoTaskDialog.step !== 'ready') return
+    const { videoEntries } = videoTaskDialog
+    setVideoTaskDialog({ step: 'creating' })
+    const allTasks: LabelingTaskInput[] = videoEntries.flatMap(v => {
+      const frames = sampleVideoFrames(v.durationSeconds, maxFramesPerVideo)
+      return frames.map(frame => ({ fileId: v.fileId, x1: 0, y1: 0, x2: 0, y2: 0, frame }))
+    })
+    const result = await createLabelingTasks(allTasks)
+    if (result.ok) {
+      setVideoTaskDialog({ step: 'done', count: result.count ?? 0 })
+      setSelected(new Set())
+      router.refresh()
+    } else {
+      setVideoTaskDialog({ step: 'error', message: result.error ?? 'Unknown error' })
+    }
+  }, [videoTaskDialog, maxFramesPerVideo, router])
+
+  // ── Tab counts ─────────────────────────────────────────────────────────────
+
   const counts = globalCounts
 
   // Group filtered entries by flight
@@ -416,14 +522,13 @@ export default function DatasetView({ projectId, entries: initialEntries, taskCo
           </label>
         </div>
 
-        {/* Actions — always in this spot, content changes with selection */}
+        {/* Actions */}
         <div className="flex items-center gap-2 pb-1">
           {selected.size > 0 ? (
             <>
               <span className="text-xs text-gray-500 mr-1">{selected.size} selected</span>
               {canWrite && (
                 <>
-                  {/* Single split selector replaces 3 separate buttons */}
                   <select
                     value=""
                     onChange={async e => {
@@ -449,7 +554,15 @@ export default function DatasetView({ projectId, entries: initialEntries, taskCo
                       onClick={openTaskDialog}
                       className={cn(buttonVariants({ variant: 'outline', size: 'sm' }))}
                     >
-                      Create labeling tasks
+                      Create image tasks
+                    </button>
+                  )}
+                  {activeTab !== 'unassigned' && selectedVideoEntries.length > 0 && (
+                    <button
+                      onClick={openVideoTaskDialog}
+                      className={cn(buttonVariants({ variant: 'outline', size: 'sm' }))}
+                    >
+                      Create video tasks
                     </button>
                   )}
                 </>
@@ -523,6 +636,7 @@ export default function DatasetView({ projectId, entries: initialEntries, taskCo
                         <th className="text-left px-4 py-2 font-medium text-gray-600">Filename</th>
                         <th className="text-left px-4 py-2 font-medium text-gray-600">Split</th>
                         <th className="text-right px-4 py-2 font-medium text-gray-600">Tasks</th>
+                        <th className="text-left px-4 py-2 font-medium text-gray-600">Rating</th>
                         <th className="text-left px-4 py-2 font-medium text-gray-600">Uploaded</th>
                       </tr>
                     </thead>
@@ -530,6 +644,7 @@ export default function DatasetView({ projectId, entries: initialEntries, taskCo
                       {group.entries.map(entry => {
                         const filename = entry.key.split('/').pop() ?? entry.key
                         const split = splits.get(entry.key) ?? null
+                        const isVideo = isVideoKey(entry.key)
                         return (
                           <tr key={entry.key} className={cn('transition-colors', selected.has(entry.key) ? 'bg-blue-50' : 'hover:bg-gray-50')}>
                             <td className="px-4 py-2.5" onClick={() => setSelected(prev => { const n = new Set(prev); n.has(entry.key) ? n.delete(entry.key) : n.add(entry.key); return n })}>
@@ -550,6 +665,9 @@ export default function DatasetView({ projectId, entries: initialEntries, taskCo
                                 }
                               }}
                             >
+                              {isVideo && (
+                                <span className="inline-block mr-1 text-gray-400">▶</span>
+                              )}
                               {filename}
                             </td>
                             <td className="px-4 py-2.5">
@@ -579,6 +697,11 @@ export default function DatasetView({ projectId, entries: initialEntries, taskCo
                                   : <span className="text-xs text-gray-300">—</span>
                               })()}
                             </td>
+                            <td className="px-4 py-2.5">
+                              {isVideo
+                                ? <RatingBadge rating={entry.reviewRating} />
+                                : <span className="text-xs text-gray-300">—</span>}
+                            </td>
                             <td className="px-4 py-2.5 text-gray-400 text-xs">
                               {new Date(entry.uploadedAtIso).toLocaleDateString()}
                             </td>
@@ -594,7 +717,7 @@ export default function DatasetView({ projectId, entries: initialEntries, taskCo
         </div>
       )}
 
-      {/* Labeling task creation dialog */}
+      {/* Image labeling task creation dialog */}
       <Dialog
         open={!!taskDialog}
         onOpenChange={o => {
@@ -603,7 +726,7 @@ export default function DatasetView({ projectId, entries: initialEntries, taskCo
       >
         <DialogContent showCloseButton>
           <DialogHeader>
-            <DialogTitle>Create labeling tasks</DialogTitle>
+            <DialogTitle>Create image labeling tasks</DialogTitle>
           </DialogHeader>
 
           {taskDialog?.step === 'loading' && (
@@ -619,7 +742,6 @@ export default function DatasetView({ projectId, entries: initialEntries, taskCo
             const isCapped = maxPerImage !== null && effectiveTotal < totalTiles
             return (
               <>
-                {/* Summary stats */}
                 <div className="grid grid-cols-3 gap-3 my-1">
                   <div className="flex flex-col items-center justify-center rounded-xl bg-gray-50 border border-gray-100 px-3 py-4">
                     <span className="text-2xl font-black text-gray-900">{imageCount}</span>
@@ -634,8 +756,6 @@ export default function DatasetView({ projectId, entries: initialEntries, taskCo
                     <span className={`text-xs mt-0.5 ${isCapped ? 'text-amber-600' : 'text-blue-600'}`}>tasks to create{isCapped ? ' (capped)' : ''}</span>
                   </div>
                 </div>
-
-                {/* Settings */}
                 <div className="flex items-center justify-between gap-3 rounded-xl bg-gray-50 border border-gray-100 px-4 py-3">
                   <div>
                     <p className="text-xs font-medium text-gray-700">Tile size</p>
@@ -687,6 +807,100 @@ export default function DatasetView({ projectId, entries: initialEntries, taskCo
                     onClick={confirmCreateTasks}
                     disabled={effectiveTotal === 0}
                   >
+                    Create {effectiveTotal} task{effectiveTotal !== 1 ? 's' : ''}
+                  </Button>
+                </>
+              )
+            })()}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Video labeling task creation dialog */}
+      <Dialog
+        open={!!videoTaskDialog}
+        onOpenChange={o => {
+          if (!o && videoTaskDialog?.step !== 'creating') setVideoTaskDialog(null)
+        }}
+      >
+        <DialogContent showCloseButton>
+          <DialogHeader>
+            <DialogTitle>Create video labeling tasks</DialogTitle>
+          </DialogHeader>
+
+          {videoTaskDialog?.step === 'ready' && (() => {
+            const videoCount = videoTaskDialog.videoEntries.length
+            const totalFrames = videoTaskDialog.videoEntries.reduce(
+              (s, v) => s + Math.floor(v.durationSeconds), 0
+            )
+            const effectiveTotal = videoTaskDialog.videoEntries.reduce(
+              (s, v) => s + sampleVideoFrames(v.durationSeconds, maxFramesPerVideo).length, 0
+            )
+            const isCapped = maxFramesPerVideo !== null && effectiveTotal < totalFrames
+            return (
+              <>
+                <div className="grid grid-cols-3 gap-3 my-1">
+                  <div className="flex flex-col items-center justify-center rounded-xl bg-gray-50 border border-gray-100 px-3 py-4">
+                    <span className="text-2xl font-black text-gray-900">{videoCount}</span>
+                    <span className="text-xs text-gray-500 mt-0.5">video{videoCount !== 1 ? 's' : ''}</span>
+                  </div>
+                  <div className="flex flex-col items-center justify-center rounded-xl bg-gray-50 border border-gray-100 px-3 py-4">
+                    <span className="text-2xl font-black text-gray-900">{totalFrames}</span>
+                    <span className="text-xs text-gray-500 mt-0.5">available frames</span>
+                  </div>
+                  <div className={`flex flex-col items-center justify-center rounded-xl border px-3 py-4 ${isCapped ? 'bg-amber-50 border-amber-200' : 'bg-blue-50 border-blue-200'}`}>
+                    <span className={`text-2xl font-black ${isCapped ? 'text-amber-700' : 'text-blue-700'}`}>{effectiveTotal}</span>
+                    <span className={`text-xs mt-0.5 ${isCapped ? 'text-amber-600' : 'text-blue-600'}`}>tasks to create{isCapped ? ' (capped)' : ''}</span>
+                  </div>
+                </div>
+                <div className="flex items-center justify-between gap-3 rounded-xl bg-gray-50 border border-gray-100 px-4 py-3">
+                  <div>
+                    <p className="text-xs font-medium text-gray-700">Sampling rate</p>
+                    <p className="text-xs text-gray-500">1 frame per second by default</p>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <label className="text-xs text-gray-500 whitespace-nowrap">Max per video</label>
+                    <select
+                      value={maxFramesPerVideo ?? ''}
+                      onChange={e => setMaxFramesPerVideo(e.target.value === '' ? null : Number(e.target.value))}
+                      className="text-xs border border-gray-200 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-blue-400 bg-white"
+                    >
+                      {VIDEO_MAX_OPTIONS.map(o => (
+                        <option key={String(o.value)} value={o.value ?? ''}>{o.label}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+              </>
+            )
+          })()}
+
+          {videoTaskDialog?.step === 'creating' && (
+            <p className="text-sm text-gray-500 py-4 text-center">Creating tasks…</p>
+          )}
+
+          {videoTaskDialog?.step === 'done' && (
+            <p className="text-sm text-green-700 py-4 text-center">
+              ✓ Created <strong>{videoTaskDialog.count}</strong> video labeling tasks.
+            </p>
+          )}
+
+          {videoTaskDialog?.step === 'error' && (
+            <p className="text-sm text-red-600 py-4">{videoTaskDialog.message}</p>
+          )}
+
+          <DialogFooter>
+            {(videoTaskDialog?.step === 'done' || videoTaskDialog?.step === 'error') && (
+              <Button variant="outline" onClick={() => setVideoTaskDialog(null)}>Close</Button>
+            )}
+            {videoTaskDialog?.step === 'ready' && (() => {
+              const effectiveTotal = videoTaskDialog.videoEntries.reduce(
+                (s, v) => s + sampleVideoFrames(v.durationSeconds, maxFramesPerVideo).length, 0
+              )
+              return (
+                <>
+                  <Button variant="outline" onClick={() => setVideoTaskDialog(null)}>Cancel</Button>
+                  <Button onClick={confirmCreateVideoTasks} disabled={effectiveTotal === 0}>
                     Create {effectiveTotal} task{effectiveTotal !== 1 ? 's' : ''}
                   </Button>
                 </>
@@ -792,7 +1006,6 @@ export default function DatasetView({ projectId, entries: initialEntries, taskCo
 
               {/* Viewport / Stage */}
               <div className="flex-1 min-h-0 relative flex items-center justify-center bg-gray-950 group">
-                {/* Prev Button */}
                 {activeIndex > 0 && (
                   <button
                     onClick={handlePrev}
@@ -803,7 +1016,6 @@ export default function DatasetView({ projectId, entries: initialEntries, taskCo
                   </button>
                 )}
 
-                {/* Main Image */}
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img
                   src={thumbnailUrl(activeEntry.key, activeEntry.etag, 1200)}
@@ -811,7 +1023,6 @@ export default function DatasetView({ projectId, entries: initialEntries, taskCo
                   className="max-w-full max-h-full object-contain select-none pointer-events-none"
                 />
 
-                {/* Next Button */}
                 {activeIndex < lightboxList.length - 1 && (
                   <button
                     onClick={handleNext}
@@ -823,7 +1034,7 @@ export default function DatasetView({ projectId, entries: initialEntries, taskCo
                 )}
               </div>
 
-              {/* Footer metadata & Split selection */}
+              {/* Footer */}
               <div className="px-6 py-3 border-t border-gray-800 flex items-center justify-between shrink-0 bg-gray-900 text-gray-300">
                 <div className="flex flex-wrap items-center gap-x-6 gap-y-2 text-xs text-gray-400">
                   <div>
