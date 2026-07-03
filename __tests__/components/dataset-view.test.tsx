@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, fireEvent, act } from '@testing-library/react'
-import DatasetView, { type DatasetEntry } from '@/app/projects/[projectId]/dataset/dataset-view'
+import DatasetView from '@/app/projects/[projectId]/dataset/dataset-view'
+import type { DatasetEntry } from '@/app/actions/files'
 
 // Mock next/navigation
 vi.mock('next/navigation', () => ({
@@ -12,9 +13,10 @@ vi.mock('next/navigation', () => ({
   }),
 }))
 
-// Mock assignFileSplit server action
+// Mock server actions
 vi.mock('@/app/actions/files', () => ({
   assignFileSplit: vi.fn().mockResolvedValue({ success: true }),
+  loadDatasetEntriesBefore: vi.fn().mockResolvedValue({ entries: [], taskCounts: {}, hasMore: false }),
 }))
 
 // Mock createLabelingTasks server action
@@ -92,9 +94,12 @@ describe('DatasetView Lightbox Carousel', () => {
     render(
       <DatasetView
         entries={mockEntries}
+        projectId="proj1"
         taskCountByFileId={new Map()}
         canWrite={true}
         timezone="UTC"
+        hasMore={false}
+        globalCounts={{ train: 0, val: 0, test: 0, unassigned: 3 }}
       />
     )
 
@@ -134,9 +139,12 @@ describe('DatasetView Lightbox Carousel', () => {
     render(
       <DatasetView
         entries={mockEntries}
+        projectId="proj1"
         taskCountByFileId={new Map()}
         canWrite={true}
         timezone="UTC"
+        hasMore={false}
+        globalCounts={{ train: 0, val: 0, test: 0, unassigned: 3 }}
       />
     )
 

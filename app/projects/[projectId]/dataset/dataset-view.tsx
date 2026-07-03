@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useCallback, useEffect, useMemo } from 'react'
+import { useState, useCallback, useEffect, useMemo, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
@@ -9,7 +9,8 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { ChevronLeftIcon, ChevronRightIcon, DownloadIcon } from 'lucide-react'
 
 import type { Split } from '@/lib/schema'
-import { assignFileSplit } from '@/app/actions/files'
+import { assignFileSplit, loadDatasetEntriesBefore } from '@/app/actions/files'
+import type { DatasetEntry } from '@/app/actions/files'
 import { createLabelingTasks, type LabelingTaskInput } from '@/app/actions/labeling-tasks'
 
 type SplitChoice = Split | 'none'
@@ -116,33 +117,27 @@ type TaskDialogState =
   | { step: 'done'; count: number }
   | { step: 'error'; message: string }
 
-export interface DatasetEntry {
-  fileId: string
-  key: string
-  etag: string
-  split: Split | null
-  imageWidth: number | null
-  imageHeight: number | null
-  size: number | null
-  flightId: string
-  flightTimestampIso: string
-  flightPlanName: string
-  uploadedAtIso: string
-}
-
 interface Props {
+  projectId: string
   entries: DatasetEntry[]
   taskCountByFileId: Map<string, number>
   canWrite: boolean
   timezone: string
+  hasMore: boolean
+  globalCounts: { train: number; val: number; test: number; unassigned: number }
 }
 
-export default function DatasetView({ entries: initialEntries, taskCountByFileId, canWrite, timezone }: Props) {
+export default function DatasetView({ projectId, entries: initialEntries, taskCountByFileId, canWrite, timezone, hasMore: initialHasMore, globalCounts }: Props) {
   const router = useRouter()
   const [activeTab, setActiveTab] = useState<Tab>('unassigned')
+  const [allEntries, setAllEntries] = useState<DatasetEntry[]>(initialEntries)
+  const [hasMore, setHasMore] = useState(initialHasMore)
+  const [isLoadingMore, setIsLoadingMore] = useState(false)
+  const sentinelRef = useRef<HTMLDivElement>(null)
   const [splits, setSplits] = useState<Map<string, Split | null>>(
     () => new Map(initialEntries.map(e => [e.key, e.split]))
   )
+  const [taskCounts, setTaskCounts] = useState<Map<string, number>>(() => taskCountByFileId)
   const [splitDialog, setSplitDialog] = useState<{ keys: string[] } | null>(null)
   const [pendingSplit, setPendingSplit] = useState<SplitChoice | null>(null)
   const [selected, setSelected] = useState<Set<string>>(new Set())
@@ -154,18 +149,51 @@ export default function DatasetView({ entries: initialEntries, taskCountByFileId
   const [lightboxImages, setLightboxImages] = useState<DatasetEntry[]>([])
   const [excludeWithTasks, setExcludeWithTasks] = useState(false)
 
+  // Infinite scroll sentinel
+  useEffect(() => {
+    const sentinel = sentinelRef.current
+    if (!sentinel) return
+    const observer = new IntersectionObserver(
+      (entries) => { if (entries[0].isIntersecting && hasMore && !isLoadingMore) loadMore() },
+      { rootMargin: '300px' },
+    )
+    observer.observe(sentinel)
+    return () => observer.disconnect()
+  }, [hasMore, isLoadingMore])
+
+  async function loadMore() {
+    if (isLoadingMore || !hasMore) return
+    setIsLoadingMore(true)
+    const oldest = allEntries[allEntries.length - 1]
+    if (!oldest) { setIsLoadingMore(false); return }
+    const result = await loadDatasetEntriesBefore(projectId, oldest.uploadedAtIso)
+    setAllEntries(prev => [...prev, ...result.entries])
+    setSplits(prev => {
+      const n = new Map(prev)
+      for (const e of result.entries) n.set(e.key, e.split)
+      return n
+    })
+    setTaskCounts(prev => {
+      const n = new Map(prev)
+      for (const [k, v] of Object.entries(result.taskCounts)) n.set(k, v)
+      return n
+    })
+    setHasMore(result.hasMore)
+    setIsLoadingMore(false)
+  }
+
   // Filter entries by active tab (use live splits map, not initial data)
   const filtered = useMemo(() => {
-    return initialEntries.filter(e => {
+    return allEntries.filter(e => {
       const s = splits.get(e.key) ?? null
       if (activeTab === 'unassigned') { if (s !== null) return false }
       else { if (s !== activeTab) return false }
-      if (excludeWithTasks && isImageKey(e.key) && (taskCountByFileId.get(e.fileId) ?? 0) > 0) return false
+      if (excludeWithTasks && isImageKey(e.key) && (taskCounts.get(e.fileId) ?? 0) > 0) return false
       return true
     })
-  }, [initialEntries, splits, activeTab, excludeWithTasks, taskCountByFileId])
+  }, [allEntries, splits, activeTab, excludeWithTasks, taskCounts])
 
-  const activeEntry = useMemo(() => initialEntries.find(e => e.key === activeImageKey) ?? null, [initialEntries, activeImageKey])
+  const activeEntry = useMemo(() => allEntries.find(e => e.key === activeImageKey) ?? null, [allEntries, activeImageKey])
   const filteredImages = useMemo(() => filtered.filter(e => isImageKey(e.key)), [filtered])
 
   const lightboxList = useMemo(() => {
@@ -222,8 +250,11 @@ export default function DatasetView({ entries: initialEntries, taskCountByFileId
   }, [])
 
   useEffect(() => {
+    setAllEntries(initialEntries)
     setSplits(new Map(initialEntries.map(e => [e.key, e.split])))
-  }, [initialEntries])
+    setTaskCounts(taskCountByFileId)
+    setHasMore(initialHasMore)
+  }, [initialEntries, taskCountByFileId, initialHasMore])
 
   const fmt = new Intl.DateTimeFormat('en', {
     timeZone: timezone,
@@ -270,12 +301,12 @@ export default function DatasetView({ entries: initialEntries, taskCountByFileId
 
   // ── Labeling task creation ────────────────────────────────────────────────
 
-  const selectedImageEntries = initialEntries.filter(
+  const selectedImageEntries = allEntries.filter(
     e => selected.has(e.key) && isImageKey(e.key)
   )
 
   const openTaskDialog = useCallback(async () => {
-    const imageEntries = initialEntries.filter(e => selected.has(e.key) && isImageKey(e.key))
+    const imageEntries = allEntries.filter(e => selected.has(e.key) && isImageKey(e.key))
     if (imageEntries.length === 0) return
     setTaskDialog({ step: 'loading' })
     try {
@@ -297,7 +328,7 @@ export default function DatasetView({ entries: initialEntries, taskCountByFileId
     } catch (e) {
       setTaskDialog({ step: 'error', message: String(e) })
     }
-  }, [selected, initialEntries])
+  }, [selected, allEntries])
 
   const confirmCreateTasks = useCallback(async () => {
     if (!taskDialog || taskDialog.step !== 'ready') return
@@ -319,15 +350,8 @@ export default function DatasetView({ entries: initialEntries, taskCountByFileId
 
   // filtered is defined at the top of the component
 
-  // Counts for tab badges
-  const counts: Record<Tab, number> = {
-    train: 0, val: 0, test: 0, unassigned: 0,
-  }
-  for (const e of initialEntries) {
-    const s = splits.get(e.key) ?? null
-    if (s) counts[s]++
-    else counts.unassigned++
-  }
+  // Use server-computed global counts for tab badges
+  const counts = globalCounts
 
   // Group filtered entries by flight
   const flightGroups = useMemo(() => {
@@ -549,7 +573,7 @@ export default function DatasetView({ entries: initialEntries, taskCountByFileId
                             </td>
                             <td className="px-4 py-2.5 text-right">
                               {(() => {
-                                const n = taskCountByFileId.get(entry.fileId) ?? 0
+                                const n = taskCounts.get(entry.fileId) ?? 0
                                 return n > 0
                                   ? <span className="inline-flex items-center rounded-full bg-indigo-50 px-2 py-0.5 text-xs font-medium text-indigo-700">{n}</span>
                                   : <span className="text-xs text-gray-300">—</span>
@@ -733,6 +757,18 @@ export default function DatasetView({ entries: initialEntries, taskCountByFileId
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Infinite scroll sentinel */}
+      <div ref={sentinelRef} className="h-1" />
+      {isLoadingMore && (
+        <div className="flex items-center justify-center py-6 text-gray-400 text-xs gap-2">
+          <svg className="w-4 h-4 animate-spin" viewBox="0 0 24 24" fill="none">
+            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+          </svg>
+          Loading more files…
+        </div>
+      )}
 
       {/* Lightbox Dialog */}
       <Dialog open={!!activeImageKey} onOpenChange={o => { if (!o) { setActiveImageKey(null); setActiveDownloadUrl(''); setLightboxImages([]) } }}>

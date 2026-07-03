@@ -2,8 +2,6 @@
 
 import { useActionState, useState } from 'react'
 import { deleteFlight, restoreFlight } from '@/app/actions/flights'
-import type { flights } from '@/lib/schema'
-import type { InferSelectModel } from 'drizzle-orm'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -13,14 +11,12 @@ import {
   DialogFooter,
 } from '@/components/ui/dialog'
 
-type Flight = InferSelectModel<typeof flights>
-
 export function DeleteFlightButton({
   flight,
   projectId,
   flightPlanId,
 }: {
-  flight: Flight
+  flight: { id: string }
   projectId: string
   flightPlanId: string
 }) {
@@ -60,7 +56,7 @@ export function RestoreFlightButton({
   projectId,
   flightPlanId,
 }: {
-  flight: Flight
+  flight: { id: string }
   projectId: string
   flightPlanId: string
 }) {

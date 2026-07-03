@@ -1,8 +1,8 @@
 'use server'
 
 import { db } from '@/lib/db'
-import { files, flightPlans, flights, annotations, geofences, fileGeofenceTags } from '@/lib/schema'
-import { eq, and, isNull, inArray, isNotNull, desc, lt, gte, sql } from 'drizzle-orm'
+import { files, flightPlans, flights, annotations, geofences, fileGeofenceTags, labelingTasks } from '@/lib/schema'
+import { eq, and, isNull, inArray, isNotNull, desc, lt, gte, sql, count } from 'drizzle-orm'
 import { getSession } from '@/lib/session'
 import { headObject, listFlightObjects } from '@/lib/s3'
 import { randomUUID } from 'crypto'
@@ -610,5 +610,85 @@ export async function loadVideosBefore(
     .sort((a, b) => new Date(b.flightTimestamp).getTime() - new Date(a.flightTimestamp).getTime())
 
   return { videos, hasMore }
+}
+
+// ── Dataset page ───────────────────────────────────────────────────────────────
+
+export interface DatasetEntry {
+  fileId: string
+  key: string
+  etag: string
+  split: Split | null
+  imageWidth: number | null
+  imageHeight: number | null
+  size: number | null
+  flightId: string
+  flightTimestampIso: string
+  flightPlanName: string
+  uploadedAtIso: string
+}
+
+const DATASET_PAGE_SIZE = 500
+
+export async function loadDatasetEntriesBefore(
+  projectId: string,
+  beforeUploadedAt: string,
+): Promise<{ entries: DatasetEntry[]; taskCounts: Record<string, number>; hasMore: boolean }> {
+  const session = await getSession()
+  if (!session) return { entries: [], taskCounts: {}, hasMore: false }
+
+  const batch = await db
+    .select({
+      fileId: files.id,
+      key: files.key,
+      etag: files.etag,
+      split: files.split,
+      imageWidth: files.imageWidth,
+      imageHeight: files.imageHeight,
+      size: files.size,
+      flightId: flights.id,
+      flightTimestamp: flights.timestamp,
+      flightPlanName: flightPlans.name,
+      uploadedAt: files.uploadedAt,
+    })
+    .from(files)
+    .innerJoin(flights, eq(files.flightId, flights.id))
+    .innerJoin(flightPlans, eq(flights.flightPlanId, flightPlans.id))
+    .where(and(
+      eq(flightPlans.projectId, projectId),
+      lt(files.uploadedAt, new Date(beforeUploadedAt)),
+    ))
+    .orderBy(desc(files.uploadedAt))
+    .limit(DATASET_PAGE_SIZE + 1)
+
+  const hasMore = batch.length > DATASET_PAGE_SIZE
+  const page = batch.slice(0, DATASET_PAGE_SIZE)
+
+  const entries: DatasetEntry[] = page.map(r => ({
+    fileId: r.fileId,
+    key: r.key,
+    etag: r.etag,
+    split: r.split ?? null,
+    imageWidth: r.imageWidth ?? null,
+    imageHeight: r.imageHeight ?? null,
+    size: r.size ?? null,
+    flightId: r.flightId,
+    flightTimestampIso: r.flightTimestamp.toISOString(),
+    flightPlanName: r.flightPlanName,
+    uploadedAtIso: r.uploadedAt.toISOString(),
+  }))
+
+  const fileIds = page.map(r => r.fileId)
+  const taskCounts: Record<string, number> = {}
+  if (fileIds.length > 0) {
+    const rows = await db
+      .select({ fileId: labelingTasks.fileId, n: count() })
+      .from(labelingTasks)
+      .where(inArray(labelingTasks.fileId, fileIds))
+      .groupBy(labelingTasks.fileId)
+    for (const r of rows) taskCounts[r.fileId] = r.n
+  }
+
+  return { entries, taskCounts, hasMore }
 }
 
