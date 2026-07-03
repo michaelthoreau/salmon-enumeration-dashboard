@@ -174,9 +174,13 @@ export default async function MapPage({ params }: PageProps) {
     const fishAnnotations = await db
       .select({ fileId: annotations.fileId, fishCount: annotations.fishCount })
       .from(annotations)
-      .where(and(inArray(annotations.fileId, videoFileIds), eq(annotations.label, 'video-count')))
+      .where(and(
+        inArray(annotations.fileId, videoFileIds),
+        eq(annotations.label, 'video-count'),
+        isNull(annotations.deletedAt),
+      ))
     for (const a of fishAnnotations) {
-      if (a.fileId) fishCountMap.set(a.fileId, (fishCountMap.get(a.fileId) ?? 0) + (a.fishCount ?? 0))
+      if (a.fileId) fishCountMap.set(a.fileId, a.fishCount ?? 0)
     }
   }
 
