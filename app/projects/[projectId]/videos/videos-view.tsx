@@ -396,7 +396,15 @@ export default function VideosView({
             </div>
           </div>
         ) : (
-          <div className="flex gap-3 overflow-x-auto pb-2 snap-x snap-mandatory">
+          <div
+            className="flex gap-3 overflow-x-auto pb-2 snap-x snap-mandatory"
+            onScroll={(e) => {
+              const el = e.currentTarget
+              if (hasMore && !isLoadingMore && el.scrollLeft + el.clientWidth >= el.scrollWidth - 120) {
+                loadMore()
+              }
+            }}
+          >
             {queue.map((v) => {
               const filename = v.key.split('/').pop() ?? v.key
               const review = getReview(v)
@@ -465,6 +473,17 @@ export default function VideosView({
                 </div>
               )
             })}
+            {isLoadingMore && (
+              <div className="flex-none w-48 flex items-center justify-center rounded-xl border border-gray-200 bg-white text-gray-400 text-xs gap-2">
+                <Loader2 className="w-4 h-4 animate-spin" />
+                Loading…
+              </div>
+            )}
+            {!isLoadingMore && hasMore && (
+              <div className="flex-none w-12 flex items-center justify-center text-gray-300">
+                <ChevronRight className="w-5 h-5" />
+              </div>
+            )}
           </div>
         )}
       </section>
