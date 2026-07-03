@@ -93,59 +93,23 @@ function RatingBadge({ rating }: { rating: number | null }) {
 
 // ── Labeling task helpers — images ─────────────────────────────────────────────
 
-const TILE_SIZE = 640
-function computeTiles(width: number, height: number) {
-  const tiles: Array<{ x1: number; y1: number; x2: number; y2: number }> = []
-  for (let r = 0; r < Math.ceil(height / TILE_SIZE); r++) {
-    for (let c = 0; c < Math.ceil(width / TILE_SIZE); c++) {
-      tiles.push({
-        x1: c * TILE_SIZE,
-        y1: r * TILE_SIZE,
-        x2: (c + 1) * TILE_SIZE,
-        y2: (r + 1) * TILE_SIZE,
-      })
-    }
-  }
-  return tiles
-}
-
-function sampleN<T>(arr: T[], n: number): T[] {
-  if (n >= arr.length) return arr
-  const copy = arr.slice()
-  for (let i = copy.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [copy[i], copy[j]] = [copy[j], copy[i]]
-  }
-  return copy.slice(0, n)
-}
-
-const MAX_OPTIONS = [
-  { label: 'All tiles', value: null },
-  { label: '1', value: 1 },
-  { label: '5', value: 5 },
-  { label: '10', value: 10 },
-  { label: '20', value: 20 },
-  { label: '50', value: 50 },
-] as const
-
 function getImageDimensions(key: string): Promise<{ width: number; height: number }> {
   const params = new URLSearchParams({ key, meta: '1' })
   return fetch(`/api/files/thumbnail?${params}`)
     .then(r => { if (!r.ok) throw new Error('meta failed'); return r.json() as Promise<{ width: number; height: number }> })
 }
 
-type FileTileInfo = {
+type FileImageInfo = {
   key: string
   fileId: string
   filename: string
   width: number
   height: number
-  tiles: Array<{ x1: number; y1: number; x2: number; y2: number }>
 }
 
 type TaskDialogState =
   | { step: 'loading' }
-  | { step: 'ready'; fileTiles: FileTileInfo[] }
+  | { step: 'ready'; fileImages: FileImageInfo[] }
   | { step: 'creating' }
   | { step: 'done'; count: number }
   | { step: 'error'; message: string }
@@ -210,7 +174,6 @@ export default function DatasetView({ projectId, entries: initialEntries, taskCo
   const [pendingSplit, setPendingSplit] = useState<SplitChoice | null>(null)
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [taskDialog, setTaskDialog] = useState<TaskDialogState | null>(null)
-  const [maxPerImage, setMaxPerImage] = useState<number | null>(null)
   const [videoTaskDialog, setVideoTaskDialog] = useState<VideoTaskDialogState | null>(null)
   const [maxFramesPerVideo, setMaxFramesPerVideo] = useState<number | null>(null)
   const [collapsedFlights, setCollapsedFlights] = useState<Set<string>>(new Set())
@@ -379,20 +342,20 @@ export default function DatasetView({ projectId, entries: initialEntries, taskCo
     if (imageEntries.length === 0) return
     setTaskDialog({ step: 'loading' })
     try {
-      const fileTiles: FileTileInfo[] = await Promise.all(
+      const fileImages: FileImageInfo[] = await Promise.all(
         imageEntries.map(async entry => {
           const filename = entry.key.split('/').pop() ?? entry.key
           try {
             const { width, height } = (entry.imageWidth && entry.imageHeight)
               ? { width: entry.imageWidth, height: entry.imageHeight }
               : await getImageDimensions(entry.key)
-            return { key: entry.key, fileId: entry.fileId, filename, width, height, tiles: computeTiles(width, height) }
+            return { key: entry.key, fileId: entry.fileId, filename, width, height }
           } catch {
-            return { key: entry.key, fileId: entry.fileId, filename, width: 0, height: 0, tiles: [] }
+            return { key: entry.key, fileId: entry.fileId, filename, width: 0, height: 0 }
           }
         })
       )
-      setTaskDialog({ step: 'ready', fileTiles })
+      setTaskDialog({ step: 'ready', fileImages })
     } catch (e) {
       setTaskDialog({ step: 'error', message: String(e) })
     }
@@ -400,12 +363,11 @@ export default function DatasetView({ projectId, entries: initialEntries, taskCo
 
   const confirmCreateTasks = useCallback(async () => {
     if (!taskDialog || taskDialog.step !== 'ready') return
-    const { fileTiles } = taskDialog
+    const { fileImages } = taskDialog
     setTaskDialog({ step: 'creating' })
-    const allTasks: LabelingTaskInput[] = fileTiles.flatMap(f => {
-      const picked = maxPerImage !== null ? sampleN(f.tiles, maxPerImage) : f.tiles
-      return picked.map(t => ({ fileId: f.fileId, ...t, frame: 0 }))
-    })
+    const allTasks: LabelingTaskInput[] = fileImages
+      .filter(f => f.width > 0 && f.height > 0)
+      .map(f => ({ fileId: f.fileId, x1: 0, y1: 0, x2: f.width, y2: f.height, frame: 0 }))
     const result = await createLabelingTasks(allTasks)
     if (result.ok) {
       setTaskDialog({ step: 'done', count: result.count ?? 0 })
@@ -414,7 +376,7 @@ export default function DatasetView({ projectId, entries: initialEntries, taskCo
     } else {
       setTaskDialog({ step: 'error', message: result.error ?? 'Unknown error' })
     }
-  }, [taskDialog, maxPerImage, router])
+  }, [taskDialog, router])
 
   // ── Video labeling task creation ───────────────────────────────────────────
 
@@ -734,47 +696,19 @@ export default function DatasetView({ projectId, entries: initialEntries, taskCo
           )}
 
           {taskDialog?.step === 'ready' && (() => {
-            const totalTiles = taskDialog.fileTiles.reduce((s, f) => s + f.tiles.length, 0)
-            const effectiveTotal = taskDialog.fileTiles.reduce(
-              (s, f) => s + (maxPerImage !== null ? Math.min(f.tiles.length, maxPerImage) : f.tiles.length), 0
-            )
-            const imageCount = taskDialog.fileTiles.length
-            const isCapped = maxPerImage !== null && effectiveTotal < totalTiles
+            const imageCount = taskDialog.fileImages.length
+            const validCount = taskDialog.fileImages.filter(f => f.width > 0 && f.height > 0).length
             return (
-              <>
-                <div className="grid grid-cols-3 gap-3 my-1">
-                  <div className="flex flex-col items-center justify-center rounded-xl bg-gray-50 border border-gray-100 px-3 py-4">
-                    <span className="text-2xl font-black text-gray-900">{imageCount}</span>
-                    <span className="text-xs text-gray-500 mt-0.5">image{imageCount !== 1 ? 's' : ''}</span>
-                  </div>
-                  <div className="flex flex-col items-center justify-center rounded-xl bg-gray-50 border border-gray-100 px-3 py-4">
-                    <span className="text-2xl font-black text-gray-900">{totalTiles}</span>
-                    <span className="text-xs text-gray-500 mt-0.5">available tiles</span>
-                  </div>
-                  <div className={`flex flex-col items-center justify-center rounded-xl border px-3 py-4 ${isCapped ? 'bg-amber-50 border-amber-200' : 'bg-blue-50 border-blue-200'}`}>
-                    <span className={`text-2xl font-black ${isCapped ? 'text-amber-700' : 'text-blue-700'}`}>{effectiveTotal}</span>
-                    <span className={`text-xs mt-0.5 ${isCapped ? 'text-amber-600' : 'text-blue-600'}`}>tasks to create{isCapped ? ' (capped)' : ''}</span>
-                  </div>
+              <div className="grid grid-cols-2 gap-3 my-1">
+                <div className="flex flex-col items-center justify-center rounded-xl bg-gray-50 border border-gray-100 px-3 py-4">
+                  <span className="text-2xl font-black text-gray-900">{imageCount}</span>
+                  <span className="text-xs text-gray-500 mt-0.5">image{imageCount !== 1 ? 's' : ''} selected</span>
                 </div>
-                <div className="flex items-center justify-between gap-3 rounded-xl bg-gray-50 border border-gray-100 px-4 py-3">
-                  <div>
-                    <p className="text-xs font-medium text-gray-700">Tile size</p>
-                    <p className="text-xs text-gray-500">{TILE_SIZE}×{TILE_SIZE} px per task</p>
-                  </div>
-                  <div className="flex items-center gap-2 shrink-0">
-                    <label className="text-xs text-gray-500 whitespace-nowrap">Max per image</label>
-                    <select
-                      value={maxPerImage ?? ''}
-                      onChange={e => setMaxPerImage(e.target.value === '' ? null : Number(e.target.value))}
-                      className="text-xs border border-gray-200 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-blue-400 bg-white"
-                    >
-                      {MAX_OPTIONS.map(o => (
-                        <option key={String(o.value)} value={o.value ?? ''}>{o.label}</option>
-                      ))}
-                    </select>
-                  </div>
+                <div className="flex flex-col items-center justify-center rounded-xl bg-blue-50 border border-blue-200 px-3 py-4">
+                  <span className="text-2xl font-black text-blue-700">{validCount}</span>
+                  <span className="text-xs text-blue-600 mt-0.5">task{validCount !== 1 ? 's' : ''} to create</span>
                 </div>
-              </>
+              </div>
             )
           })()}
 
@@ -797,17 +731,12 @@ export default function DatasetView({ projectId, entries: initialEntries, taskCo
               <Button variant="outline" onClick={() => setTaskDialog(null)}>Close</Button>
             )}
             {taskDialog?.step === 'ready' && (() => {
-              const effectiveTotal = taskDialog.fileTiles.reduce(
-                (s, f) => s + (maxPerImage !== null ? Math.min(f.tiles.length, maxPerImage) : f.tiles.length), 0
-              )
+              const validCount = taskDialog.fileImages.filter(f => f.width > 0 && f.height > 0).length
               return (
                 <>
                   <Button variant="outline" onClick={() => setTaskDialog(null)}>Cancel</Button>
-                  <Button
-                    onClick={confirmCreateTasks}
-                    disabled={effectiveTotal === 0}
-                  >
-                    Create {effectiveTotal} task{effectiveTotal !== 1 ? 's' : ''}
+                  <Button onClick={confirmCreateTasks} disabled={validCount === 0}>
+                    Create {validCount} task{validCount !== 1 ? 's' : ''}
                   </Button>
                 </>
               )
