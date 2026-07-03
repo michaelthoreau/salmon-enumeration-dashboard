@@ -18,30 +18,11 @@ import {
   DialogDescription,
   DialogFooter,
 } from '@/components/ui/dialog'
-import { updateFileLocation, updateVideoReview, setVideoHidden } from '@/app/actions/files'
+import { updateFileLocation, updateVideoReview, setVideoHidden, loadVideosBefore } from '@/app/actions/files'
+import type { VideoRow } from '@/app/actions/files'
 import type { ReviewStatus } from '@/lib/schema'
 
-interface VideoEntry {
-  fileId: string
-  key: string
-  etag: string
-  uploadedAt: string
-  flightTimestamp: string
-  flightNotes: string | null
-  planName: string
-  flightId: string
-  flightPlanId: string
-  fishCount: number | null
-  durationSeconds: number | null
-  locationTags: { name: string; color: string }[]
-  latitude: number | null
-  longitude: number | null
-  reviewStatus: ReviewStatus
-  reviewRating: number | null
-  reviewedBy: string | null
-  reviewedAt: string | null
-  hidden: boolean
-}
+type VideoEntry = VideoRow
 
 interface ReviewState {
   status: ReviewStatus
@@ -125,18 +106,49 @@ export interface VideosViewProps {
   currentUserEmail?: string
   availableLocationTags?: string[]
   geofences?: GeofenceEntry[]
+  hasMore?: boolean
 }
 
 export default function VideosView({
   projectId,
   timezone,
-  videos,
+  videos: initialVideos,
   canWrite,
   currentUserEmail,
   availableLocationTags = [],
   geofences = [],
+  hasMore: initialHasMore = false,
 }: VideosViewProps) {
   const router = useRouter()
+
+  const [allVideos, setAllVideos] = useState<VideoEntry[]>(initialVideos)
+  const [hasMore, setHasMore] = useState(initialHasMore)
+  const [isLoadingMore, setIsLoadingMore] = useState(false)
+  const sentinelRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    const sentinel = sentinelRef.current
+    if (!sentinel) return
+    const observer = new IntersectionObserver(
+      (entries) => { if (entries[0].isIntersecting && hasMore && !isLoadingMore) loadMore() },
+      { rootMargin: '200px' },
+    )
+    observer.observe(sentinel)
+    return () => observer.disconnect()
+  }, [hasMore, isLoadingMore])
+
+  async function loadMore() {
+    if (isLoadingMore || !hasMore) return
+    setIsLoadingMore(true)
+    const dates = allVideos.map((v) => getDateKey(v.flightTimestamp, timezone)).sort()
+    const cursor = dates[0]
+    if (!cursor) { setIsLoadingMore(false); return }
+    const result = await loadVideosBefore(projectId, cursor, timezone)
+    setAllVideos((prev) => [...prev, ...result.videos])
+    setHasMore(result.hasMore)
+    setIsLoadingMore(false)
+  }
+
   const [search, setSearch] = useState('')
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [locationFilter, setLocationFilter] = useState<string>('')
@@ -301,7 +313,7 @@ export default function VideosView({
 
   // Partition into visible / hidden
   const { visible, archived } = useMemo(() => {
-    let result = videos
+    let result = allVideos
     if (locationFilter) result = result.filter((v) => v.locationTags.some((t) => t.name === locationFilter))
     if (search.trim()) {
       const q = search.toLowerCase()
@@ -318,7 +330,7 @@ export default function VideosView({
       else visible.push(v)
     }
     return { visible, archived }
-  }, [videos, search, locationFilter, isHidden])
+  }, [allVideos, search, locationFilter, isHidden])
 
   // Queue: not_reviewed + in_review, newest first
   const queue = useMemo(() =>
@@ -457,7 +469,7 @@ export default function VideosView({
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-lg font-semibold text-gray-900">
             Videos{' '}
-            <span className="text-sm font-normal text-gray-500">({videos.length})</span>
+            <span className="text-sm font-normal text-gray-500">({allVideos.length})</span>
           </h2>
           <div className="flex items-center gap-3">
             {availableLocationTags.length > 0 && (
@@ -496,7 +508,7 @@ export default function VideosView({
           </div>
         </div>
 
-        {videos.length === 0 ? (
+        {allVideos.length === 0 ? (
           <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
             <div className="text-center py-16 space-y-3">
               <Video className="w-12 h-12 text-gray-300 mx-auto" />
@@ -592,6 +604,14 @@ export default function VideosView({
                 </tbody>
               ))}
             </table>
+          </div>
+        )}
+
+        <div ref={sentinelRef} className="h-1" />
+        {isLoadingMore && (
+          <div className="flex items-center justify-center py-6 text-gray-400 text-xs gap-2">
+            <Loader2 className="w-4 h-4 animate-spin" />
+            Loading older videos…
           </div>
         )}
 

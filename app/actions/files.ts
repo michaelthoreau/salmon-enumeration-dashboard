@@ -1,8 +1,8 @@
 'use server'
 
 import { db } from '@/lib/db'
-import { files, flightPlans, flights } from '@/lib/schema'
-import { eq, and, isNull, inArray, isNotNull } from 'drizzle-orm'
+import { files, flightPlans, flights, annotations, geofences, fileGeofenceTags } from '@/lib/schema'
+import { eq, and, isNull, inArray, isNotNull, desc, lt, gte, sql } from 'drizzle-orm'
 import { getSession } from '@/lib/session'
 import { headObject, listFlightObjects } from '@/lib/s3'
 import { randomUUID } from 'crypto'
@@ -463,5 +463,152 @@ export async function setVideoHidden(
 
   await db.update(files).set({ hidden }).where(eq(files.id, fileId))
   return {}
+}
+
+const VIDEO_EXTS = ['mp4', 'mov', 'avi', 'mkv']
+
+export interface VideoRow {
+  fileId: string
+  key: string
+  etag: string
+  uploadedAt: string
+  flightTimestamp: string
+  flightNotes: string | null
+  planName: string
+  flightId: string
+  flightPlanId: string
+  fishCount: number | null
+  durationSeconds: number | null
+  locationTags: { name: string; color: string }[]
+  latitude: number | null
+  longitude: number | null
+  reviewStatus: ReviewStatus
+  reviewRating: number | null
+  reviewedBy: string | null
+  reviewedAt: string | null
+  hidden: boolean
+}
+
+function localMidnightUTC(dateStr: string, tz: string): Date {
+  const [y, m, d] = dateStr.split('-').map(Number)
+  const noon = new Date(Date.UTC(y, m - 1, d, 12))
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: tz, hour: '2-digit', minute: '2-digit', hour12: false,
+  }).formatToParts(noon)
+  const h = parseInt(parts.find((p) => p.type === 'hour')!.value)
+  const mi = parseInt(parts.find((p) => p.type === 'minute')!.value)
+  return new Date(noon.getTime() - (h * 60 + mi) * 60_000)
+}
+
+function getLocalDateStr(date: Date, tz: string): string {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit',
+  }).formatToParts(date)
+  return `${parts.find((p) => p.type === 'year')!.value}-${parts.find((p) => p.type === 'month')!.value}-${parts.find((p) => p.type === 'day')!.value}`
+}
+
+export async function loadVideosBefore(
+  projectId: string,
+  beforeDate: string,
+  timezone: string,
+): Promise<{ videos: VideoRow[]; hasMore: boolean }> {
+  const session = await getSession()
+  if (!session) return { videos: [], hasMore: false }
+
+  const beforeUTC = localMidnightUTC(beforeDate, timezone)
+
+  const plans = await db
+    .select()
+    .from(flightPlans)
+    .where(and(eq(flightPlans.projectId, projectId), isNull(flightPlans.deletedAt)))
+  if (plans.length === 0) return { videos: [], hasMore: false }
+
+  const planIds = plans.map((p) => p.id)
+
+  // Get flights before the cutoff, newest-first — enough to cover at least one full day
+  const batch = await db
+    .select()
+    .from(flights)
+    .where(and(
+      inArray(flights.flightPlanId, planIds),
+      isNull(flights.deletedAt),
+      lt(flights.timestamp, beforeUTC),
+    ))
+    .orderBy(desc(flights.timestamp))
+    .limit(200)
+
+  if (batch.length === 0) return { videos: [], hasMore: false }
+
+  // Isolate the most recent calendar day in this batch
+  const newestDay = getLocalDateStr(batch[0].timestamp, timezone)
+  const dayStart = localMidnightUTC(newestDay, timezone)
+  const dayFlights = batch.filter((f) => f.timestamp >= dayStart)
+  const hasMore = batch.length > dayFlights.length
+
+  const flightIds = dayFlights.map((f) => f.id)
+  const planMap = new Map(plans.map((p) => [p.id, p]))
+  const flightMap = new Map(dayFlights.map((f) => [f.id, f]))
+
+  const allFiles = await db
+    .select()
+    .from(files)
+    .where(inArray(files.flightId, flightIds))
+
+  const videoFiles = allFiles.filter((f) => VIDEO_EXTS.includes(f.key.split('.').pop()?.toLowerCase() ?? ''))
+  const videoFileIds = videoFiles.map((f) => f.id)
+
+  if (videoFileIds.length === 0) return { videos: [], hasMore }
+
+  const [videoAnnotations, allGeofences, allTags] = await Promise.all([
+    db.select().from(annotations)
+      .where(and(inArray(annotations.fileId, videoFileIds), isNull(annotations.deletedAt))),
+    db.select().from(geofences).where(eq(geofences.projectId, projectId)),
+    db.select().from(fileGeofenceTags).where(inArray(fileGeofenceTags.fileId, videoFileIds)),
+  ])
+
+  const fishCountMap = new Map<string, number>()
+  for (const a of videoAnnotations) {
+    if (a.fileId && a.label === 'video-count') fishCountMap.set(a.fileId, a.fishCount)
+  }
+
+  const geofenceMap = new Map(allGeofences.map((g) => [g.id, g]))
+  const tagsByFileId = new Map<string, { name: string; color: string }[]>()
+  for (const tag of allTags) {
+    const g = geofenceMap.get(tag.geofenceId)
+    if (!g) continue
+    const existing = tagsByFileId.get(tag.fileId) ?? []
+    if (!existing.find((t) => t.name === g.name)) existing.push({ name: g.name, color: g.color })
+    tagsByFileId.set(tag.fileId, existing)
+  }
+
+  const videos: VideoRow[] = videoFiles
+    .map((f) => {
+      const flight = flightMap.get(f.flightId)!
+      const plan = planMap.get(flight.flightPlanId)!
+      return {
+        fileId: f.id,
+        key: f.key,
+        etag: f.etag,
+        uploadedAt: f.uploadedAt.toISOString(),
+        flightTimestamp: flight.timestamp.toISOString(),
+        flightNotes: flight.notes,
+        planName: plan.displayName || plan.name,
+        flightId: flight.id,
+        flightPlanId: flight.flightPlanId,
+        fishCount: fishCountMap.get(f.id) ?? null,
+        durationSeconds: f.durationSeconds ?? null,
+        locationTags: tagsByFileId.get(f.id) ?? [],
+        latitude: f.latitude ?? null,
+        longitude: f.longitude ?? null,
+        reviewStatus: f.reviewStatus,
+        reviewRating: f.reviewRating ?? null,
+        reviewedBy: f.reviewedBy ?? null,
+        reviewedAt: f.reviewedAt?.toISOString() ?? null,
+        hidden: f.hidden ?? false,
+      }
+    })
+    .sort((a, b) => new Date(b.flightTimestamp).getTime() - new Date(a.flightTimestamp).getTime())
+
+  return { videos, hasMore }
 }
 

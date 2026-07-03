@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useActionState } from 'react'
+import { useEffect, useRef, useState, useActionState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { ChevronLeft, ChevronRight, Calendar, Layers, ArrowRight, CheckCircle2, AlertCircle, Sparkles, Pin, PinOff, EyeOff, Thermometer, Wind, Cloud, Waves, Plus, MapPin } from 'lucide-react'
@@ -16,22 +16,8 @@ import {
   DialogFooter,
 } from '@/components/ui/dialog'
 import { highlightFlight } from '@/app/actions/projects'
-import { setFlightPriority, logFlightWithRoute } from '@/app/actions/flights'
-
-
-interface FlightRow {
-  id: string
-  flightPlanId: string
-  flightPlanName: string
-  flightPlanLocation: string | null
-  locationTags: { name: string; color: string }[]
-  timestamp: Date
-  notes: string | null
-  fileCount: number
-  totalFish: number
-  taskStatus: 'uploading' | 'queued' | 'running' | 'failed' | 'completed' | 'canceled' | null
-  outputKey: string | null
-}
+import { setFlightPriority, logFlightWithRoute, loadFlightsBefore } from '@/app/actions/flights'
+import type { FlightRow } from '@/app/actions/flights'
 
 interface Props {
   projectId: string
@@ -45,6 +31,7 @@ interface Props {
   isAdmin: boolean
   highlightedFlightId: string | null
   totalFishCount: number
+  hasMore: boolean
 }
 
 function getLocalDateStr(date: Date | string, tz: string): string {
@@ -616,15 +603,51 @@ export default function TodayFlightsView({
   projectName,
   timezone,
   flightPlans,
-  flights,
+  flights: initialFlights,
   datesWithFlights,
   initialDate,
   canWrite,
   isAdmin,
   highlightedFlightId,
   totalFishCount,
+  hasMore: initialHasMore,
 }: Props) {
   const router = useRouter()
+
+  const [allFlights, setAllFlights] = useState<FlightRow[]>(initialFlights)
+  const [hasMore, setHasMore] = useState(initialHasMore)
+  const [isLoadingMore, setIsLoadingMore] = useState(false)
+  const sentinelRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    const sentinel = sentinelRef.current
+    if (!sentinel) return
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0].isIntersecting && hasMore && !isLoadingMore) {
+          loadMore()
+        }
+      },
+      { rootMargin: '200px' },
+    )
+    observer.observe(sentinel)
+    return () => observer.disconnect()
+  }, [hasMore, isLoadingMore])
+
+  async function loadMore() {
+    if (isLoadingMore || !hasMore) return
+    setIsLoadingMore(true)
+    const sortedDaysCurrent = Array.from(
+      new Set(allFlights.map((f) => getLocalDateStr(f.timestamp, timezone)))
+    ).sort((a, b) => b.localeCompare(a))
+    const cursor = sortedDaysCurrent[sortedDaysCurrent.length - 1]
+    if (!cursor) { setIsLoadingMore(false); return }
+    const result = await loadFlightsBefore(projectId, cursor, timezone)
+    setAllFlights((prev) => [...prev, ...result.flights])
+    setHasMore(result.hasMore)
+    setIsLoadingMore(false)
+  }
+
   const [isLogModalOpen, setIsLogModalOpen] = useState(false)
   const [isNewRoute, setIsNewRoute] = useState(false)
   const [selectedRouteId, setSelectedRouteId] = useState(() => {
@@ -706,11 +729,11 @@ export default function TodayFlightsView({
     }
   }
 
-  const highlightedFlights = flights.filter((f) => currentHighlightIds.includes(f.id))
+  const highlightedFlights = allFlights.filter((f) => currentHighlightIds.includes(f.id))
 
   // Group flights by calendar day in project timezone
-  const flightsByDay: Record<string, typeof flights> = {}
-  flights.forEach((flight) => {
+  const flightsByDay: Record<string, typeof allFlights> = {}
+  allFlights.forEach((flight) => {
     const dayStr = getLocalDateStr(flight.timestamp, timezone)
     if (!flightsByDay[dayStr]) {
       flightsByDay[dayStr] = []
@@ -722,10 +745,10 @@ export default function TodayFlightsView({
   const sortedDays = Object.keys(flightsByDay).sort((a, b) => b.localeCompare(a))
 
   // Stats Calculations on all flights
-  const totalFlights = flights.length
-  const totalImages = flights.reduce((acc, curr) => acc + curr.fileCount, 0)
-  const completedMaps = flights.filter((f) => f.taskStatus === 'completed').length
-  const pendingProcessing = flights.filter((f) =>
+  const totalFlights = allFlights.length
+  const totalImages = allFlights.reduce((acc, curr) => acc + curr.fileCount, 0)
+  const completedMaps = allFlights.filter((f) => f.taskStatus === 'completed').length
+  const pendingProcessing = allFlights.filter((f) =>
     ['queued', 'running', 'uploading'].includes(f.taskStatus || '')
   ).length
 
@@ -852,7 +875,7 @@ export default function TodayFlightsView({
 
       {/* Main Flights Section */}
       <section className="flex flex-col gap-4 max-w-5xl mx-auto min-h-[400px]">
-        {flights.length === 0 ? (
+        {allFlights.length === 0 ? (
           <div className="text-center py-16 text-gray-400 bg-white rounded-2xl border border-gray-200/60 p-6 shadow-sm border-dashed">
             <span className="text-3xl block mb-2">✈️</span>
             <p className="text-sm font-semibold text-gray-600">No flights logged in this project yet.</p>
@@ -886,6 +909,17 @@ export default function TodayFlightsView({
                 </div>
               </div>
             ))}
+          </div>
+        )}
+
+        <div ref={sentinelRef} className="h-1" />
+        {isLoadingMore && (
+          <div className="flex items-center justify-center py-6 text-gray-400 text-xs gap-2">
+            <svg className="w-4 h-4 animate-spin" viewBox="0 0 24 24" fill="none">
+              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+            </svg>
+            Loading older flights…
           </div>
         )}
       </section>

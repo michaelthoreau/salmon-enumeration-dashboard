@@ -2,7 +2,7 @@ import React from 'react'
 import { notFound } from 'next/navigation'
 import { db } from '@/lib/db'
 import { projects, flightPlans, flights, files as filesTable, odmTasks, georefTasks, annotations, geofences, fileGeofenceTags } from '@/lib/schema'
-import { eq, and, isNull, inArray, desc, sql } from 'drizzle-orm'
+import { eq, and, isNull, inArray, desc, sql, gte, lt } from 'drizzle-orm'
 import { getSession } from '@/lib/session'
 
 import TodayFlightsView from './today-view'
@@ -55,11 +55,14 @@ export default async function ProjectTodayPage({ params }: PageProps) {
         isAdmin={isAdmin}
         highlightedFlightId={project.highlightedFlightId || null}
         totalFishCount={0}
+        hasMore={false}
       />
     )
   }
 
   const activePlanIds = plans.map((p) => p.id)
+  const cutoff = new Date(Date.now() - 48 * 60 * 60 * 1000)
+
   const allFlights = activePlanIds.length > 0
     ? await db
         .select()
@@ -68,7 +71,8 @@ export default async function ProjectTodayPage({ params }: PageProps) {
           and(
             inArray(flights.flightPlanId, activePlanIds),
             isNull(flights.deletedAt),
-            eq(flights.lowPriority, false)
+            eq(flights.lowPriority, false),
+            gte(flights.timestamp, cutoff)
           )
         )
         .orderBy(desc(flights.timestamp))
@@ -88,6 +92,7 @@ export default async function ProjectTodayPage({ params }: PageProps) {
         isAdmin={isAdmin}
         highlightedFlightId={project.highlightedFlightId || null}
         totalFishCount={0}
+        hasMore={false}
       />
     )
   }
@@ -165,6 +170,19 @@ export default async function ProjectTodayPage({ params }: PageProps) {
 
   const totalFishCount = fishCountResult?.total ?? 0
 
+  const [olderCheck] = activePlanIds.length > 0
+    ? await db
+        .select({ count: sql<number>`count(*)`.as('count') })
+        .from(flights)
+        .where(and(
+          inArray(flights.flightPlanId, activePlanIds),
+          isNull(flights.deletedAt),
+          eq(flights.lowPriority, false),
+          lt(flights.timestamp, cutoff)
+        ))
+    : [{ count: 0 }]
+  const hasMore = (olderCheck?.count ?? 0) > 0
+
   const fileCountMap = new Map(fileCounts.map((r) => [r.flightId, r.count]))
 
   const fishCountsPerFlight = flightIds.length > 0
@@ -234,6 +252,7 @@ export default async function ProjectTodayPage({ params }: PageProps) {
       isAdmin={isAdmin}
       highlightedFlightId={project.highlightedFlightId || null}
       totalFishCount={totalFishCount}
+      hasMore={hasMore}
     />
   )
 }

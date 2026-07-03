@@ -1,7 +1,7 @@
 import { notFound } from 'next/navigation'
 import { db } from '@/lib/db'
 import { projects, flightPlans, flights, files as filesTable, annotations, geofences, fileGeofenceTags } from '@/lib/schema'
-import { eq, and, isNull, inArray, desc, sql } from 'drizzle-orm'
+import { eq, and, isNull, inArray, desc, sql, gte, lt } from 'drizzle-orm'
 import { getSession } from '@/lib/session'
 import VideosView from './videos-view'
 
@@ -40,6 +40,7 @@ export default async function VideosPage({ params }: PageProps) {
   }
 
   const planIds = allPlans.map((p) => p.id)
+  const cutoff = new Date(Date.now() - 48 * 60 * 60 * 1000)
 
   const allFlights = await db
     .select()
@@ -47,8 +48,19 @@ export default async function VideosPage({ params }: PageProps) {
     .where(and(
       inArray(flights.flightPlanId, planIds),
       isNull(flights.deletedAt),
+      gte(flights.timestamp, cutoff),
     ))
     .orderBy(desc(flights.timestamp))
+
+  const [olderCheck] = await db
+    .select({ count: sql<number>`count(*)`.as('count') })
+    .from(flights)
+    .where(and(
+      inArray(flights.flightPlanId, planIds),
+      isNull(flights.deletedAt),
+      lt(flights.timestamp, cutoff),
+    ))
+  const hasMore = (olderCheck?.count ?? 0) > 0
 
   if (allFlights.length === 0) {
     return (
@@ -167,6 +179,7 @@ export default async function VideosPage({ params }: PageProps) {
       currentUserEmail={session.email}
       availableLocationTags={availableTags}
       geofences={geofenceData}
+      hasMore={hasMore}
     />
   )
 }
