@@ -238,7 +238,7 @@ export default async function MapPage({ params }: PageProps) {
       try {
         const geom = JSON.parse(a.geometry)
         if (geom.type === 'Point') {
-          return [{ id: a.id, fishCount: a.fishCount, longitude: geom.coordinates[0], latitude: geom.coordinates[1], flightTimestamp: flightTimestampMap.get(a.flightId) ?? null }]
+          return [{ id: a.id, flightId: a.flightId, fishCount: a.fishCount, longitude: geom.coordinates[0], latitude: geom.coordinates[1], flightTimestamp: flightTimestampMap.get(a.flightId) ?? null }]
         }
       } catch { }
       return []

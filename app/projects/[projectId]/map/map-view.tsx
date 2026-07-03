@@ -67,6 +67,7 @@ interface FileMarker {
 
 interface FishPoint {
   id: string
+  flightId: string
   fishCount: number
   latitude: number
   longitude: number
@@ -303,30 +304,26 @@ export default function MapView({ projectId, timezone, routes, fileMarkers = [],
     return { type: 'FeatureCollection' as const, features: features as any[] }
   }, [filteredFileMarkers, rateMode])
 
-  const fishPointGeojson = useMemo(() => {
-    const toMs = (date: string, time: string) => {
-      const [y, mo, d] = date.split('-').map(Number)
-      const [h, m] = time ? time.split(':').map(Number) : [0, 0]
-      return new Date(y, mo - 1, d, h, m).getTime()
+  const activeOrthoFlightId = useMemo(() => {
+    if (!activeOrthoKey) return null
+    for (const route of routes) {
+      const ortho = route.flightOrthos.find((fo) => fo.outputKey === activeOrthoKey)
+      if (ortho) return ortho.flightId
     }
-    const startMs = startDate ? toMs(startDate, startTime) : null
-    const endMs = endDate ? toMs(endDate, endTime || '23:59') : null
+    return null
+  }, [activeOrthoKey, routes])
 
+  const fishPointGeojson = useMemo(() => {
+    if (!activeOrthoFlightId) return { type: 'FeatureCollection' as const, features: [] as any[] }
     const features = fishPoints
-      .filter((p) => {
-        if (!p.flightTimestamp) return false
-        const ts = new Date(p.flightTimestamp).getTime()
-        if (startMs !== null && ts < startMs) return false
-        if (endMs !== null && ts > endMs) return false
-        return true
-      })
+      .filter((p) => p.flightId === activeOrthoFlightId)
       .map((p) => ({
         type: 'Feature' as const,
         geometry: { type: 'Point' as const, coordinates: [p.longitude, p.latitude] },
         properties: { id: p.id, fishCount: p.fishCount },
       }))
     return { type: 'FeatureCollection' as const, features }
-  }, [fishPoints, startDate, startTime, endDate, endTime])
+  }, [fishPoints, activeOrthoFlightId])
 
   const geofenceGeojson = useMemo(() => {
     const features = geofences
@@ -448,11 +445,6 @@ export default function MapView({ projectId, timezone, routes, fileMarkers = [],
           id: 'fish-points-circle', type: 'circle', source: 'fish-points-source',
           paint: { 'circle-color': '#f97316', 'circle-radius': 6, 'circle-stroke-color': '#ffffff', 'circle-stroke-width': 1.5 },
         })
-        map.addLayer({
-          id: 'fish-points-label', type: 'symbol', source: 'fish-points-source',
-          layout: { 'text-field': ['to-string', ['get', 'fishCount']], 'text-size': 10, 'text-anchor': 'top', 'text-offset': [0, 0.9] },
-          paint: { 'text-color': '#ea580c', 'text-halo-color': '#ffffff', 'text-halo-width': 1.5 },
-        })
 
         map.on('click', 'fish-points-circle', (e: any) => {
           const props = e.features[0].properties
@@ -555,6 +547,7 @@ export default function MapView({ projectId, timezone, routes, fileMarkers = [],
       if (isDrawing) return
       if (activeOrthoKeyRef.current) return
       if (map.queryRenderedFeatures(e.point, { layers: ['file-markers-point'] }).length > 0) return
+      if (map.queryRenderedFeatures(e.point, { layers: ['routes-fill', 'routes-point'] }).length > 0) return
       const features = map.queryRenderedFeatures(e.point, { layers: ['geofences-fill'] })
       if (features.length === 0) { setSelectedGeofenceId(null); return }
       const id = features[0].properties?.id
