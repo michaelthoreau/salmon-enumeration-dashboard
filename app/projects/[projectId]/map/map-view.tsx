@@ -38,6 +38,7 @@ interface RouteEntry {
   thumbnails: { key: string; etag: string; fileId: string; flightId: string }[]
   latestFlightId: string | null
   latestFlightTimestamp: string | null
+  flightOrthos: { flightId: string; timestamp: string; outputKey: string }[]
 }
 
 interface GeofenceEntry {
@@ -140,6 +141,7 @@ export default function MapView({ projectId, timezone, routes, fileMarkers = [],
   const mapRef = useRef<any | null>(null)
   const filteredFileMarkersRef = useRef<typeof fileMarkers>([])
   const [mapReady, setMapReady] = useState(false)
+  const [activeOrthoKey, setActiveOrthoKey] = useState<string | null>(null)
   const [basemap, setBasemap] = useState<'street' | 'satellite'>('satellite')
 
   // Geofence drawing state
@@ -224,8 +226,25 @@ export default function MapView({ projectId, timezone, routes, fileMarkers = [],
   }, [fileMarkers, startDate, startTime, endDate, endTime, selectedGeofences, showAllPoints])
 
   const routeGeojson = useMemo(() => {
+    const toMs = (date: string, time: string) => {
+      const [y, mo, d] = date.split('-').map(Number)
+      const [h, m] = time ? time.split(':').map(Number) : [0, 0]
+      return new Date(y, mo - 1, d, h, m).getTime()
+    }
+    const startMs = startDate ? toMs(startDate, startTime) : null
+    const endMs = endDate ? toMs(endDate, endTime || '23:59') : null
+
     const features = routes
       .map((route) => {
+        // Pick the most recent flight ortho that falls within the current time window
+        const matchingOrtho = route.flightOrthos.find((fo) => {
+          const ts = new Date(fo.timestamp).getTime()
+          if (startMs !== null && ts < startMs) return false
+          if (endMs !== null && ts > endMs) return false
+          return true
+        })
+        // Only show this route if it has an ortho within the time window
+        if (!matchingOrtho) return null
         try {
           const geom = JSON.parse(route.location)
           return {
@@ -235,13 +254,14 @@ export default function MapView({ projectId, timezone, routes, fileMarkers = [],
               id: route.id, name: route.name, description: route.description ?? '',
               color: getRouteColor(route), imageCount: route.imageCount,
               videoCount: route.videoCount, flightCount: route.flightCount,
+              outputKey: matchingOrtho.outputKey,
             },
           }
         } catch { return null }
       })
       .filter(Boolean)
     return { type: 'FeatureCollection' as const, features: features as any[] }
-  }, [routes])
+  }, [routes, startDate, startTime, endDate, endTime])
 
   const fileMarkerGeojson = useMemo(() => {
     const coordCounts: Record<string, number> = {}
@@ -327,6 +347,10 @@ export default function MapView({ projectId, timezone, routes, fileMarkers = [],
         const firstLayerId = map.getStyle().layers?.[0]?.id
         map.addLayer({ id: 'esri-satellite-layer', type: 'raster', source: 'esri-satellite', layout: { visibility: 'visible' } }, firstLayerId)
         updateMapBasemap(map, basemap)
+
+        // Ortho raster overlay (shown when a route point is clicked)
+        map.addSource('ortho-source', { type: 'raster', tiles: [], tileSize: 256 })
+        map.addLayer({ id: 'ortho-layer', type: 'raster', source: 'ortho-source', layout: { visibility: 'none' }, paint: { 'raster-opacity': 0.9 } })
 
         // Geofence layers
         map.addSource('geofences-source', { type: 'geojson', data: geofenceGeojson as any })
@@ -437,12 +461,17 @@ export default function MapView({ projectId, timezone, routes, fileMarkers = [],
         map.on('mouseenter', 'file-markers-point', () => { map.getCanvas().style.cursor = 'pointer' })
         map.on('mouseleave', 'file-markers-point', () => { map.getCanvas().style.cursor = '' })
 
-        // Route popups
+        // Route popups + ortho toggle
         ;['routes-fill', 'routes-point'].forEach((layerId) => {
           map.on('click', layerId, (e: any) => {
-            const route = routes.find((r) => r.id === e.features[0].properties.id)
+            const props = e.features[0].properties
+            const route = routes.find((r) => r.id === props.id)
             if (!route) return
             new maplibre.Popup({ maxWidth: '320px' }).setLngLat(e.lngLat).setHTML(buildPopupHtml(route, projectId)).addTo(map)
+            const outputKey = props.outputKey
+            if (outputKey && typeof outputKey === 'string') {
+              setActiveOrthoKey((current) => current === outputKey ? null : outputKey)
+            }
           })
           map.on('mouseenter', layerId, () => { map.getCanvas().style.cursor = 'pointer' })
           map.on('mouseleave', layerId, () => { map.getCanvas().style.cursor = '' })
@@ -500,6 +529,31 @@ export default function MapView({ projectId, timezone, routes, fileMarkers = [],
   useEffect(() => {
     filteredFileMarkersRef.current = filteredFileMarkers
   }, [filteredFileMarkers])
+
+  // Sync active ortho layer with map
+  useEffect(() => {
+    if (!mapRef.current || !mapReady) return
+    const map = mapRef.current
+    if (!map.getLayer('ortho-layer')) return
+
+    if (!activeOrthoKey) {
+      map.setLayoutProperty('ortho-layer', 'visibility', 'none')
+      return
+    }
+
+    const tilesUrl = `/api/tiles/{z}/{x}/{y}?key=${encodeURIComponent(activeOrthoKey)}`
+    ;(map.getSource('ortho-source') as any)?.setTiles([tilesUrl])
+    map.setLayoutProperty('ortho-layer', 'visibility', 'visible')
+
+    fetch(`/api/tiles/info?key=${encodeURIComponent(activeOrthoKey)}`)
+      .then((r) => r.json())
+      .then((info) => {
+        if (info?.bounds && mapRef.current) {
+          mapRef.current.fitBounds(info.bounds, { padding: 40, maxZoom: 18, duration: 800 })
+        }
+      })
+      .catch(() => {})
+  }, [activeOrthoKey, mapReady])
 
   useEffect(() => {
     if (!mapRef.current || !mapReady) return
@@ -850,6 +904,14 @@ export default function MapView({ projectId, timezone, routes, fileMarkers = [],
                 {deletingId === selectedGeofenceId ? 'Deleting…' : 'Delete Geofence'}
               </button>
             </div>
+          </div>
+        )}
+
+        {/* Ortho dismiss button */}
+        {activeOrthoKey && (
+          <div className="absolute bottom-14 left-4 z-40 bg-white/90 backdrop-blur-sm px-3 py-1.5 rounded-xl shadow-md border border-blue-200 flex items-center gap-2 text-[11px] font-semibold text-blue-700 select-none">
+            <span>Ortho overlay active</span>
+            <button type="button" onClick={() => setActiveOrthoKey(null)} className="text-blue-400 hover:text-blue-700 transition-colors cursor-pointer">✕</button>
           </div>
         )}
 

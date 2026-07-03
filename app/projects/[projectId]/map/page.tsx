@@ -72,19 +72,28 @@ export default async function MapPage({ params }: PageProps) {
   // Find flights with a completed orthophoto (either ODM or georef pipeline)
   const [completedOdm, completedGeoref] = flightIds.length > 0
     ? await Promise.all([
-        db.select({ flightId: odmTasks.flightId })
+        db.select({ flightId: odmTasks.flightId, outputKey: odmTasks.outputKey, createdAt: odmTasks.createdAt })
           .from(odmTasks)
-          .where(and(inArray(odmTasks.flightId, flightIds), eq(odmTasks.status, 'completed'))),
-        db.select({ flightId: georefTasks.flightId })
+          .where(and(inArray(odmTasks.flightId, flightIds), eq(odmTasks.status, 'completed')))
+          .orderBy(desc(odmTasks.createdAt)),
+        db.select({ flightId: georefTasks.flightId, outputKey: georefTasks.outputKey, createdAt: georefTasks.createdAt })
           .from(georefTasks)
-          .where(and(inArray(georefTasks.flightId, flightIds), eq(georefTasks.status, 'completed'))),
+          .where(and(inArray(georefTasks.flightId, flightIds), eq(georefTasks.status, 'completed')))
+          .orderBy(desc(georefTasks.createdAt)),
       ])
     : [[], []]
 
-  const orthoFlightIds = new Set([
-    ...completedOdm.map((r) => r.flightId),
-    ...completedGeoref.map((r) => r.flightId),
-  ])
+  // Best outputKey per flight: most recent completed task (georef preferred over odm if tied)
+  const flightOutputKey: Record<string, { outputKey: string; createdAt: Date }> = {}
+  for (const t of [...completedOdm, ...completedGeoref]) {
+    if (!t.outputKey) continue
+    const existing = flightOutputKey[t.flightId]
+    if (!existing || t.createdAt > existing.createdAt) {
+      flightOutputKey[t.flightId] = { outputKey: t.outputKey, createdAt: t.createdAt }
+    }
+  }
+
+  const orthoFlightIds = new Set(Object.keys(flightOutputKey))
 
   const orthoFlightPlanIds = new Set(
     allFlights.filter((f) => orthoFlightIds.has(f.id)).map((f) => f.flightPlanId)
@@ -143,6 +152,16 @@ export default async function MapPage({ params }: PageProps) {
         }
       }
 
+      // Flights in this plan that have a completed ortho, newest first
+      const flightOrthos = planFlights
+        .filter((f) => flightOutputKey[f.id])
+        .map((f) => ({
+          flightId: f.id,
+          timestamp: f.timestamp.toISOString(),
+          outputKey: flightOutputKey[f.id]!.outputKey,
+        }))
+        .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
+
       return {
         id: plan.id,
         name: plan.displayName || plan.name,
@@ -155,6 +174,7 @@ export default async function MapPage({ params }: PageProps) {
         thumbnails,
         latestFlightId: latestFlight?.id ?? null,
         latestFlightTimestamp: latestFlight?.timestamp.toISOString() ?? null,
+        flightOrthos,
       }
     })
 
