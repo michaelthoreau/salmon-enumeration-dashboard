@@ -467,6 +467,7 @@ export default function MapView({ projectId, timezone, routes, fileMarkers = [],
     const map = mapRef.current
     const handleClick = (e: any) => {
       if (isDrawing) return
+      if (map.queryRenderedFeatures(e.point, { layers: ['file-markers-point'] }).length > 0) return
       const features = map.queryRenderedFeatures(e.point, { layers: ['geofences-fill'] })
       if (features.length === 0) { setSelectedGeofenceId(null); return }
       const id = features[0].properties?.id
