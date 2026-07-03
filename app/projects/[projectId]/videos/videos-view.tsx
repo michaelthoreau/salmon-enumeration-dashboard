@@ -107,6 +107,7 @@ export interface VideosViewProps {
   availableLocationTags?: string[]
   geofences?: GeofenceEntry[]
   hasMore?: boolean
+  totalQueueCount?: number
 }
 
 export default function VideosView({
@@ -118,6 +119,7 @@ export default function VideosView({
   availableLocationTags = [],
   geofences = [],
   hasMore: initialHasMore = false,
+  totalQueueCount,
 }: VideosViewProps) {
   const router = useRouter()
 
@@ -368,7 +370,10 @@ export default function VideosView({
           <div className="flex items-center gap-3">
             <h2 className="text-lg font-semibold text-gray-900">
               Review Queue{' '}
-              <span className="text-sm font-normal text-gray-500">({queue.length})</span>
+              <span className="text-sm font-normal text-gray-500">
+                ({totalQueueCount ?? queue.length}
+                {totalQueueCount !== undefined && totalQueueCount > queue.length ? ` total, ${queue.length} loaded` : ''})
+              </span>
             </h2>
             {queueCounts.notReviewed > 0 && (
               <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs bg-gray-100 text-gray-600 border border-gray-200">

@@ -63,7 +63,7 @@ export default async function ProjectTodayPage({ params }: PageProps) {
   const activePlanIds = plans.map((p) => p.id)
   const cutoff = new Date(Date.now() - 48 * 60 * 60 * 1000)
 
-  const allFlights = activePlanIds.length > 0
+  let allFlights = activePlanIds.length > 0
     ? await db
         .select()
         .from(flights)
@@ -77,6 +77,18 @@ export default async function ProjectTodayPage({ params }: PageProps) {
         )
         .orderBy(desc(flights.timestamp))
     : []
+
+  // Always load highlighted flights even if they're outside the 48h window
+  const highlightedIds = (project.highlightedFlightId || '').split(',').filter(Boolean)
+  if (highlightedIds.length > 0) {
+    const loadedIds = new Set(allFlights.map((f) => f.id))
+    const missingIds = highlightedIds.filter((id) => !loadedIds.has(id))
+    if (missingIds.length > 0) {
+      const extra = await db.select().from(flights)
+        .where(and(inArray(flights.id, missingIds), isNull(flights.deletedAt)))
+      allFlights = [...allFlights, ...extra]
+    }
+  }
 
   if (allFlights.length === 0) {
     return (
@@ -183,6 +195,40 @@ export default async function ProjectTodayPage({ params }: PageProps) {
     : [{ count: 0 }]
   const hasMore = (olderCheck?.count ?? 0) > 0
 
+  // All-time stats — run cheaply using count queries, not full data loads
+  const allFlightIdsForStats = activePlanIds.length > 0
+    ? (await db.select({ id: flights.id }).from(flights)
+        .where(and(
+          inArray(flights.flightPlanId, activePlanIds),
+          isNull(flights.deletedAt),
+          eq(flights.lowPriority, false),
+        ))).map((r) => r.id)
+    : []
+
+  const [[totalImagesRow], completedOdmRows, completedGeorefRows] = await Promise.all([
+    allFlightIdsForStats.length > 0
+      ? db.select({ count: sql<number>`count(*)`.as('count') }).from(filesTable)
+          .where(inArray(filesTable.flightId, allFlightIdsForStats))
+      : [{ count: 0 }],
+    allFlightIdsForStats.length > 0
+      ? db.selectDistinct({ flightId: odmTasks.flightId }).from(odmTasks)
+          .where(and(inArray(odmTasks.flightId, allFlightIdsForStats), eq(odmTasks.status, 'completed')))
+      : [],
+    allFlightIdsForStats.length > 0
+      ? db.selectDistinct({ flightId: georefTasks.flightId }).from(georefTasks)
+          .where(and(inArray(georefTasks.flightId, allFlightIdsForStats), eq(georefTasks.status, 'completed')))
+      : [],
+  ])
+
+  const globalStats = {
+    totalFlights: allFlightIdsForStats.length,
+    totalImages: totalImagesRow?.count ?? 0,
+    completedMaps: new Set([
+      ...completedOdmRows.map((r) => r.flightId),
+      ...completedGeorefRows.map((r) => r.flightId),
+    ]).size,
+  }
+
   const fileCountMap = new Map(fileCounts.map((r) => [r.flightId, r.count]))
 
   const fishCountsPerFlight = flightIds.length > 0
@@ -253,6 +299,7 @@ export default async function ProjectTodayPage({ params }: PageProps) {
       highlightedFlightId={project.highlightedFlightId || null}
       totalFishCount={totalFishCount}
       hasMore={hasMore}
+      globalStats={globalStats}
     />
   )
 }

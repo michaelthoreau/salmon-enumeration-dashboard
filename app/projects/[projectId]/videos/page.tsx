@@ -75,6 +75,23 @@ export default async function VideosPage({ params }: PageProps) {
 
   const flightIds = allFlights.map((f) => f.id)
 
+  // All-time flight IDs for accurate queue count (no date filter)
+  const allFlightIds = planIds.length > 0
+    ? (await db.select({ id: flights.id }).from(flights)
+        .where(and(inArray(flights.flightPlanId, planIds), isNull(flights.deletedAt)))).map((r) => r.id)
+    : []
+
+  const [totalQueueRow] = allFlightIds.length > 0
+    ? await db.select({ count: sql<number>`count(*)`.as('count') })
+        .from(filesTable)
+        .where(and(
+          inArray(filesTable.flightId, allFlightIds),
+          inArray(filesTable.reviewStatus, ['not_reviewed', 'in_review']),
+          sql`(lower(${filesTable.key}) like '%.mp4' or lower(${filesTable.key}) like '%.mov' or lower(${filesTable.key}) like '%.avi' or lower(${filesTable.key}) like '%.mkv')`,
+        ))
+    : [{ count: 0 }]
+  const totalQueueCount = totalQueueRow?.count ?? 0
+
   const allFiles = await db
     .select()
     .from(filesTable)
@@ -180,6 +197,7 @@ export default async function VideosPage({ params }: PageProps) {
       availableLocationTags={availableTags}
       geofences={geofenceData}
       hasMore={hasMore}
+      totalQueueCount={totalQueueCount}
     />
   )
 }

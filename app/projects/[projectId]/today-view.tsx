@@ -32,6 +32,7 @@ interface Props {
   highlightedFlightId: string | null
   totalFishCount: number
   hasMore: boolean
+  globalStats?: { totalFlights: number; totalImages: number; completedMaps: number }
 }
 
 function getLocalDateStr(date: Date | string, tz: string): string {
@@ -611,6 +612,7 @@ export default function TodayFlightsView({
   highlightedFlightId,
   totalFishCount,
   hasMore: initialHasMore,
+  globalStats,
 }: Props) {
   const router = useRouter()
 
@@ -744,10 +746,10 @@ export default function TodayFlightsView({
   // Get sorted list of days in descending order (newest first)
   const sortedDays = Object.keys(flightsByDay).sort((a, b) => b.localeCompare(a))
 
-  // Stats Calculations on all flights
-  const totalFlights = allFlights.length
-  const totalImages = allFlights.reduce((acc, curr) => acc + curr.fileCount, 0)
-  const completedMaps = allFlights.filter((f) => f.taskStatus === 'completed').length
+  // Stats — use all-time server values when available, fall back to loaded data
+  const totalFlights = globalStats?.totalFlights ?? allFlights.length
+  const totalImages = globalStats?.totalImages ?? allFlights.reduce((acc, curr) => acc + curr.fileCount, 0)
+  const completedMaps = globalStats?.completedMaps ?? allFlights.filter((f) => f.taskStatus === 'completed').length
   const pendingProcessing = allFlights.filter((f) =>
     ['queued', 'running', 'uploading'].includes(f.taskStatus || '')
   ).length
