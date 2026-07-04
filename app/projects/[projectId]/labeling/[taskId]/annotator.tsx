@@ -207,23 +207,22 @@ export default function Annotator({ task, initialPoints, canWrite, projectId }: 
             <button
               onClick={handleSaveAndDone}
               disabled={completing || saveStatus === 'saving'}
-              className={`min-w-32 px-4 py-1.5 rounded-lg text-sm font-medium border transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${
-                complete
+              className={`min-w-32 px-4 py-1.5 rounded-lg text-sm font-medium border transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${complete
                   ? 'border-green-200 bg-green-100 text-green-700 hover:bg-green-200'
                   : dirty
-                  ? 'border-transparent bg-blue-600 text-white hover:bg-blue-700'
-                  : 'border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100'
-              }`}
+                    ? 'border-transparent bg-blue-600 text-white hover:bg-blue-700'
+                    : 'border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100'
+                }`}
             >
               {completing || saveStatus === 'saving'
                 ? '…'
                 : dirty
-                ? complete
-                  ? 'Update'
-                  : (hasSaved ? 'Update & Done' : 'Save & Done')
-                : complete
-                ? '✓ Done — undo'
-                : 'Mark Done'}
+                  ? complete
+                    ? 'Update'
+                    : (hasSaved ? 'Update & Done' : 'Save & Done')
+                  : complete
+                    ? '✓ Done — undo'
+                    : 'Mark Done'}
             </button>
           )}
           {!canWrite && complete && (

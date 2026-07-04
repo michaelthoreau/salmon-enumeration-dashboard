@@ -17,12 +17,12 @@ export interface LabelingTaskInput {
 
 export async function createLabelingTasks(
   tasks: LabelingTaskInput[],
-): Promise<{ ok?: boolean; count?: number; error?: string }> {
+): Promise<{ ok?: boolean; count?: number; taskIds?: string[]; error?: string }> {
   const session = await getSession()
   if (!session || (session.role !== 'read-write' && session.role !== 'admin')) {
     return { error: 'Unauthorized' }
   }
-  if (tasks.length === 0) return { ok: true, count: 0 }
+  if (tasks.length === 0) return { ok: true, count: 0, taskIds: [] }
 
   const now = new Date()
   const rows = tasks.map(t => ({
@@ -42,7 +42,7 @@ export async function createLabelingTasks(
   for (let i = 0; i < rows.length; i += CHUNK) {
     await db.insert(labelingTasks).values(rows.slice(i, i + CHUNK))
   }
-  return { ok: true, count: tasks.length }
+  return { ok: true, count: tasks.length, taskIds: rows.map(r => r.id) }
 }
 
 // ─── Point CRUD ───────────────────────────────────────────────────────────────

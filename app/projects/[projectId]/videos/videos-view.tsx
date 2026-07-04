@@ -453,23 +453,40 @@ export default function VideosView({
                   <div className="border-t border-gray-100" />
 
                   {/* Status buttons */}
-                  <StatusButtons
-                    status={review.status}
-                    canWrite={canWrite}
-                    onChange={(s) => handleReviewChange(v, s, review.rating)}
-                  />
+                  <div className="flex flex-col gap-1">
+                    <span className="text-[10px] font-medium text-gray-400 uppercase tracking-wide">Review status</span>
+                    <StatusButtons
+                      status={review.status}
+                      canWrite={canWrite}
+                      onChange={(s) => handleReviewChange(v, s, review.rating)}
+                    />
+                  </div>
 
                   {/* Rating + reviewer */}
-                  <div className="flex items-center justify-between">
-                    <RatingButtons
-                      rating={review.rating}
-                      canWrite={canWrite}
-                      onChange={(r) => handleReviewChange(v, review.status, r)}
-                    />
-                    {review.reviewedBy && (
-                      <span className="text-xs text-gray-400 truncate ml-2">{shortEmail(review.reviewedBy)}</span>
+                  <div className="flex flex-col gap-1">
+                    <span className="text-[10px] font-medium text-gray-400 uppercase tracking-wide">Quality rating</span>
+                    <div className="flex items-center justify-between">
+                      <RatingButtons
+                        rating={review.rating}
+                        canWrite={canWrite}
+                        onChange={(r) => handleReviewChange(v, review.status, r)}
+                      />
+                      {review.reviewedBy && (
+                        <span className="text-xs text-gray-400 truncate ml-2">{shortEmail(review.reviewedBy)}</span>
+                      )}
+                    </div>
+                    {review.rating != null && (
+                      <span className={cn(
+                        'text-[10px] font-medium',
+                        review.rating === 1 && 'text-red-500',
+                        review.rating === 2 && 'text-yellow-600',
+                        review.rating === 3 && 'text-green-600',
+                      )}>
+                        {RATING_LABELS[review.rating]}
+                      </span>
                     )}
                   </div>
+
                 </div>
               )
             })}

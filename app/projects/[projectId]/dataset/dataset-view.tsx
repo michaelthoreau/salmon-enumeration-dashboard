@@ -2,6 +2,7 @@
 
 import { useState, useCallback, useEffect, useMemo, useRef } from 'react'
 import { useRouter } from 'next/navigation'
+import Link from 'next/link'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { buttonVariants } from '@/components/ui/button'
@@ -12,6 +13,7 @@ import type { Split } from '@/lib/schema'
 import { assignFileSplit, loadDatasetEntriesBefore } from '@/app/actions/files'
 import type { DatasetEntry } from '@/app/actions/files'
 import { createLabelingTasks, type LabelingTaskInput } from '@/app/actions/labeling-tasks'
+import { createLabelingQueue } from '@/app/actions/labeling-queues'
 
 type SplitChoice = Split | 'none'
 
@@ -135,15 +137,23 @@ type VideoFileSample = {
 type VideoTaskDialogState =
   | { step: 'ready'; videoEntries: VideoFileSample[] }
   | { step: 'creating' }
-  | { step: 'done'; count: number }
+  | { step: 'done'; count: number; queueId?: string }
   | { step: 'error'; message: string }
 
 function sampleVideoFrames(durationSeconds: number, maxFrames: number | null): number[] {
   const totalAtOneFps = Math.max(1, Math.floor(durationSeconds))
   const count = maxFrames !== null ? Math.min(totalAtOneFps, maxFrames) : totalAtOneFps
-  if (count <= 1) return [0]
+  // Never include frame 0 — "play last second" requires at least 1s of prior footage.
+  // For the 1/s case, sample at exactly 1, 2, 3 … whole seconds.
+  // For capped cases, distribute evenly starting from 1 second in.
+  const isOneFps = maxFrames === null
+  if (isOneFps) {
+    return Array.from({ length: count }, (_, i) => Math.round((i + 1) * VIDEO_FPS))
+  }
+  const lastFrame = Math.floor(durationSeconds * VIDEO_FPS)
+  const firstFrame = Math.round(VIDEO_FPS) // ~1 second in
   return Array.from({ length: count }, (_, i) =>
-    Math.round((i / (count - 1)) * Math.floor(durationSeconds * VIDEO_FPS))
+    Math.round(firstFrame + (i / (count - 1)) * (lastFrame - firstFrame))
   )
 }
 
@@ -176,11 +186,14 @@ export default function DatasetView({ projectId, entries: initialEntries, taskCo
   const [taskDialog, setTaskDialog] = useState<TaskDialogState | null>(null)
   const [videoTaskDialog, setVideoTaskDialog] = useState<VideoTaskDialogState | null>(null)
   const [maxFramesPerVideo, setMaxFramesPerVideo] = useState<number | null>(null)
+  const [videoCreateQueue, setVideoCreateQueue] = useState(true)
+  const [videoQueueName, setVideoQueueName] = useState('')
   const [collapsedFlights, setCollapsedFlights] = useState<Set<string>>(new Set())
   const [activeImageKey, setActiveImageKey] = useState<string | null>(null)
   const [activeDownloadUrl, setActiveDownloadUrl] = useState('')
   const [lightboxImages, setLightboxImages] = useState<DatasetEntry[]>([])
   const [excludeWithTasks, setExcludeWithTasks] = useState(false)
+  const [showImages, setShowImages] = useState(false)
 
   // Infinite scroll sentinel
   useEffect(() => {
@@ -215,17 +228,17 @@ export default function DatasetView({ projectId, entries: initialEntries, taskCo
     setIsLoadingMore(false)
   }
 
-  // Filter entries by active tab; hide videos with rating != 2 or 3
+  // Filter entries by active tab
   const filtered = useMemo(() => {
     return allEntries.filter(e => {
       const s = splits.get(e.key) ?? null
       if (activeTab === 'unassigned') { if (s !== null) return false }
       else { if (s !== activeTab) return false }
+      if (!showImages && isImageKey(e.key)) return false
       if (excludeWithTasks && isImageKey(e.key) && (taskCounts.get(e.fileId) ?? 0) > 0) return false
-      if (isVideoKey(e.key) && e.reviewRating !== 2 && e.reviewRating !== 3) return false
       return true
     })
-  }, [allEntries, splits, activeTab, excludeWithTasks, taskCounts])
+  }, [allEntries, splits, activeTab, excludeWithTasks, showImages, taskCounts])
 
   const activeEntry = useMemo(() => allEntries.find(e => e.key === activeImageKey) ?? null, [allEntries, activeImageKey])
   const filteredImages = useMemo(() => filtered.filter(e => isImageKey(e.key)), [filtered])
@@ -408,14 +421,25 @@ export default function DatasetView({ projectId, entries: initialEntries, taskCo
       return frames.map(frame => ({ fileId: v.fileId, x1: 0, y1: 0, x2: 0, y2: 0, frame }))
     })
     const result = await createLabelingTasks(allTasks)
-    if (result.ok) {
-      setVideoTaskDialog({ step: 'done', count: result.count ?? 0 })
-      setSelected(new Set())
-      router.refresh()
-    } else {
+    if (!result.ok) {
       setVideoTaskDialog({ step: 'error', message: result.error ?? 'Unknown error' })
+      return
     }
-  }, [videoTaskDialog, maxFramesPerVideo, router])
+    // Optionally create a queue and add all the new tasks
+    if (videoCreateQueue && videoQueueName.trim() && result.taskIds && result.taskIds.length > 0) {
+      const queueResult = await createLabelingQueue(
+        projectId,
+        videoQueueName.trim(),
+        null,
+        result.taskIds,
+      )
+      setVideoTaskDialog({ step: 'done', count: result.count ?? 0, queueId: queueResult.id })
+    } else {
+      setVideoTaskDialog({ step: 'done', count: result.count ?? 0 })
+    }
+    setSelected(new Set())
+    router.refresh()
+  }, [videoTaskDialog, maxFramesPerVideo, videoCreateQueue, videoQueueName, projectId, router])
 
   // ── Tab counts ─────────────────────────────────────────────────────────────
 
@@ -472,16 +496,30 @@ export default function DatasetView({ projectId, entries: initialEntries, taskCo
               </span>
             </button>
           ))}
-          {/* Hide files that already have tasks */}
-          <label className="ml-3 flex items-center gap-1.5 cursor-pointer select-none text-xs text-gray-500 hover:text-gray-700 pb-1">
-            <input
-              type="checkbox"
-              className="rounded"
-              checked={excludeWithTasks}
-              onChange={e => setExcludeWithTasks(e.target.checked)}
-            />
-            Hide images with tasks
-          </label>
+          {/* Show/hide images toggle */}
+          <button
+            onClick={() => setShowImages(v => !v)}
+            className={cn(
+              'ml-3 flex items-center gap-1.5 cursor-pointer select-none text-xs px-2 py-1 rounded border transition-colors pb-1',
+              showImages
+                ? 'bg-blue-50 border-blue-300 text-blue-700 hover:bg-blue-100'
+                : 'bg-white border-gray-200 text-gray-500 hover:text-gray-700 hover:border-gray-300'
+            )}
+          >
+            {showImages ? '🖼 Hide images' : '🖼 Show images'}
+          </button>
+          {/* Hide files that already have tasks — only visible when images are shown */}
+          {showImages && (
+            <label className="flex items-center gap-1.5 cursor-pointer select-none text-xs text-gray-500 hover:text-gray-700 pb-1">
+              <input
+                type="checkbox"
+                className="rounded"
+                checked={excludeWithTasks}
+                onChange={e => setExcludeWithTasks(e.target.checked)}
+              />
+              Hide images with tasks
+            </label>
+          )}
         </div>
 
         {/* Actions */}
@@ -600,6 +638,7 @@ export default function DatasetView({ projectId, entries: initialEntries, taskCo
                         <th className="text-right px-4 py-2 font-medium text-gray-600">Tasks</th>
                         <th className="text-left px-4 py-2 font-medium text-gray-600">Rating</th>
                         <th className="text-left px-4 py-2 font-medium text-gray-600">Uploaded</th>
+                        <th className="w-10 px-4 py-2" />
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-100">
@@ -607,16 +646,42 @@ export default function DatasetView({ projectId, entries: initialEntries, taskCo
                         const filename = entry.key.split('/').pop() ?? entry.key
                         const split = splits.get(entry.key) ?? null
                         const isVideo = isVideoKey(entry.key)
+                        const isInsufficientQuality = isVideo && entry.reviewRating !== 2 && entry.reviewRating !== 3
                         return (
-                          <tr key={entry.key} className={cn('transition-colors', selected.has(entry.key) ? 'bg-blue-50' : 'hover:bg-gray-50')}>
-                            <td className="px-4 py-2.5" onClick={() => setSelected(prev => { const n = new Set(prev); n.has(entry.key) ? n.delete(entry.key) : n.add(entry.key); return n })}>
-                              <input type="checkbox" className="rounded pointer-events-none" checked={selected.has(entry.key)} onChange={() => {}} />
+                          <tr
+                            key={entry.key}
+                            className={cn(
+                              'transition-colors',
+                              selected.has(entry.key) ? 'bg-blue-50' : 'hover:bg-gray-50',
+                              isInsufficientQuality && 'opacity-40 text-gray-400'
+                            )}
+                          >
+                            <td
+                              className="px-4 py-2.5"
+                              onClick={() => {
+                                if (isInsufficientQuality) return
+                                setSelected(prev => {
+                                  const n = new Set(prev)
+                                  n.has(entry.key) ? n.delete(entry.key) : n.add(entry.key)
+                                  return n
+                                })
+                              }}
+                            >
+                              <input
+                                type="checkbox"
+                                className="rounded pointer-events-none"
+                                checked={selected.has(entry.key)}
+                                disabled={isInsufficientQuality}
+                                onChange={() => {}}
+                              />
                             </td>
                             <td
                               className={cn(
                                 'px-4 py-2.5 font-mono text-xs max-w-xs truncate transition-all duration-100',
                                 isImageKey(entry.key)
                                   ? 'text-blue-600 hover:text-blue-800 hover:underline cursor-pointer font-medium'
+                                  : isVideo
+                                  ? 'text-blue-600 hover:text-blue-800 font-medium cursor-pointer'
                                   : 'text-gray-700'
                               )}
                               title={filename}
@@ -627,15 +692,24 @@ export default function DatasetView({ projectId, entries: initialEntries, taskCo
                                 }
                               }}
                             >
-                              {isVideo && (
-                                <span className="inline-block mr-1 text-gray-400">▶</span>
+                              {isVideo ? (
+                                <Link
+                                  href={`/projects/${projectId}/flight-plans/${entry.flightPlanId}/flights/${entry.flightId}?file=${entry.fileId}`}
+                                  className="flex items-center gap-1 hover:underline"
+                                  title={`Open in flight view: ${filename}`}
+                                >
+                                  <span className="text-gray-400">▶</span>
+                                  {filename}
+                                </Link>
+                              ) : (
+                                filename
                               )}
-                              {filename}
                             </td>
                             <td className="px-4 py-2.5">
                               {canWrite ? (
                                 <select
                                   value={split ?? 'none'}
+                                  disabled={isInsufficientQuality}
                                   onChange={e => handleSplitChange(entry.key, e.target.value as SplitChoice)}
                                   className={cn(
                                     'text-xs rounded border px-2 py-0.5 focus:outline-none focus:ring-1 focus:ring-blue-400 cursor-pointer',
@@ -660,12 +734,41 @@ export default function DatasetView({ projectId, entries: initialEntries, taskCo
                               })()}
                             </td>
                             <td className="px-4 py-2.5">
-                              {isVideo
-                                ? <RatingBadge rating={entry.reviewRating} />
-                                : <span className="text-xs text-gray-300">—</span>}
+                              {isVideo ? (
+                                <div className="flex items-center gap-2">
+                                  <RatingBadge rating={entry.reviewRating} />
+                                  {isInsufficientQuality && (
+                                    <span className="text-[10px] text-amber-600 bg-amber-50 border border-amber-200 rounded px-1.5 py-0.5 whitespace-nowrap">
+                                      Rate 2 or 3 to include
+                                    </span>
+                                  )}
+                                </div>
+                              ) : (
+                                <span className="text-xs text-gray-300">—</span>
+                              )}
                             </td>
                             <td className="px-4 py-2.5 text-gray-400 text-xs">
                               {new Date(entry.uploadedAtIso).toLocaleDateString()}
+                            </td>
+                            <td className="px-4 py-2.5">
+                              {canWrite && isVideo && !isInsufficientQuality && entry.durationSeconds && entry.durationSeconds > 0 && (
+                                <button
+                                  onClick={() => {
+                                    setVideoTaskDialog({
+                                      step: 'ready',
+                                      videoEntries: [{
+                                        fileId: entry.fileId,
+                                        filename: entry.key.split('/').pop() ?? entry.key,
+                                        durationSeconds: entry.durationSeconds!,
+                                      }],
+                                    })
+                                  }}
+                                  className="whitespace-nowrap text-xs px-2.5 py-1 rounded-lg border border-gray-200 bg-white text-gray-600 hover:bg-blue-50 hover:border-blue-300 hover:text-blue-700 transition-colors"
+                                  title="Create labeling tasks for this video"
+                                >
+                                  + Tasks
+                                </button>
+                              )}
                             </td>
                           </tr>
                         )
@@ -800,6 +903,30 @@ export default function DatasetView({ projectId, entries: initialEntries, taskCo
                     </select>
                   </div>
                 </div>
+
+                {/* Create queue option */}
+                <div className="rounded-xl border border-gray-200 overflow-hidden">
+                  <label className="flex items-center gap-3 px-4 py-3 cursor-pointer hover:bg-gray-50 transition-colors">
+                    <input
+                      type="checkbox"
+                      className="rounded"
+                      checked={videoCreateQueue}
+                      onChange={e => setVideoCreateQueue(e.target.checked)}
+                    />
+                    <span className="text-sm font-medium text-gray-700">Create a labeling queue with these tasks</span>
+                  </label>
+                  {videoCreateQueue && (
+                    <div className="px-4 pb-3 border-t border-gray-100">
+                      <label className="block text-xs font-medium text-gray-500 mb-1.5 mt-3">Queue name</label>
+                      <input
+                        className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+                        placeholder="e.g. Batch 1 — Flight A"
+                        value={videoQueueName}
+                        onChange={e => setVideoQueueName(e.target.value)}
+                      />
+                    </div>
+                  )}
+                </div>
               </>
             )
           })()}
@@ -809,9 +936,21 @@ export default function DatasetView({ projectId, entries: initialEntries, taskCo
           )}
 
           {videoTaskDialog?.step === 'done' && (
-            <p className="text-sm text-green-700 py-4 text-center">
-              ✓ Created <strong>{videoTaskDialog.count}</strong> video labeling tasks.
-            </p>
+            <div className="py-4 flex flex-col items-center gap-3">
+              <p className="text-sm text-green-700 text-center">
+                ✓ Created <strong>{videoTaskDialog.count}</strong> video labeling tasks.
+              </p>
+              {videoTaskDialog.queueId && (
+                <Link
+                  href={`/projects/${projectId}/labeling/queue/${videoTaskDialog.queueId}`}
+                  className="inline-flex items-center gap-2 px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white text-sm font-bold rounded-xl transition-colors"
+                  onClick={() => setVideoTaskDialog(null)}
+                >
+                  <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z" clipRule="evenodd" /></svg>
+                  Start Labeling
+                </Link>
+              )}
+            </div>
           )}
 
           {videoTaskDialog?.step === 'error' && (
@@ -826,11 +965,16 @@ export default function DatasetView({ projectId, entries: initialEntries, taskCo
               const effectiveTotal = videoTaskDialog.videoEntries.reduce(
                 (s, v) => s + sampleVideoFrames(v.durationSeconds, maxFramesPerVideo).length, 0
               )
+              const needsQueueName = videoCreateQueue && !videoQueueName.trim()
               return (
                 <>
                   <Button variant="outline" onClick={() => setVideoTaskDialog(null)}>Cancel</Button>
-                  <Button onClick={confirmCreateVideoTasks} disabled={effectiveTotal === 0}>
-                    Create {effectiveTotal} task{effectiveTotal !== 1 ? 's' : ''}
+                  <Button
+                    onClick={confirmCreateVideoTasks}
+                    disabled={effectiveTotal === 0 || needsQueueName}
+                    title={needsQueueName ? 'Enter a queue name to continue' : undefined}
+                  >
+                    {videoCreateQueue ? `Create & Start Labeling →` : `Create ${effectiveTotal} task${effectiveTotal !== 1 ? 's' : ''}`}
                   </Button>
                 </>
               )

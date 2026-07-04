@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
-import { Play, Pause, ChevronLeft, ChevronRight, History } from 'lucide-react'
+import { History } from 'lucide-react'
 import { saveTaskPoints, setTaskComplete } from '@/app/actions/labeling-tasks'
 
 interface Point {
@@ -38,9 +38,9 @@ interface Props {
   nextTaskId: string | null
 }
 
-const POINT_RADIUS = 6
-const HIT_RADIUS = 10
-const MAX_DISPLAY = 800
+const POINT_RADIUS = 4
+const HIT_RADIUS = 8
+const IMAGE_MAX_DISPLAY = 800
 const VIDEO_EXTS = new Set(['mp4', 'mov', 'avi', 'mkv'])
 
 function isVideoKey(key: string) {
@@ -85,15 +85,111 @@ export default function QueueAnnotator({
   const [videoUrl, setVideoUrl] = useState<string | null>(null)
   const [videoError, setVideoError] = useState(false)
   const [videoDims, setVideoDims] = useState<{ w: number; h: number } | null>(null)
+  const [frameReady, setFrameReady] = useState(false)
   const [isPlaying, setIsPlaying] = useState(false)
   const [fps] = useState(29.97)
   const videoRef = useRef<HTMLVideoElement>(null)
   const returnTimeRef = useRef<number | null>(null)
+  const rafRef = useRef<number | null>(null)
+
+  // ── Container size (for filling the window) ───────────────────────────────
+  const containerRef = useRef<HTMLDivElement>(null)
+  const [containerSize, setContainerSize] = useState<{ w: number; h: number } | null>(null)
+
+  useEffect(() => {
+    const el = containerRef.current
+    if (!el) return
+    const ro = new ResizeObserver(entries => {
+      const e = entries[0]
+      if (e) setContainerSize({ w: e.contentRect.width, h: e.contentRect.height })
+    })
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
+
+  // ── Zoom / pan state ──────────────────────────────────────────────────────
+  const [zoom, setZoom] = useState(1)
+  // zoomOrigin is in CSS px relative to the centered video element's top-left
+  const [zoomOrigin, setZoomOrigin] = useState({ x: 0, y: 0 })
+  const [pan, setPan] = useState({ x: 0, y: 0 })
+  const isPanningRef = useRef(false)
+  const didPanRef = useRef(false)
+  const panStartRef = useRef({ mx: 0, my: 0, px: 0, py: 0 })
+  // Ref to the centered video+overlay element for wheel events
+  const videoWrapperRef = useRef<HTMLDivElement>(null)
+
+  const resetZoom = useCallback(() => {
+    setZoom(1)
+    setZoomOrigin({ x: 0, y: 0 })
+    setPan({ x: 0, y: 0 })
+  }, [])
+
+  // Reset zoom when task changes
+  useEffect(() => { resetZoom() }, [task.id, resetZoom])
+
+  // Wheel to zoom around mouse — measure from the video wrapper element
+  useEffect(() => {
+    if (!isVideo) return
+    const el = containerRef.current
+    if (!el) return
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault()
+      const wrapper = videoWrapperRef.current
+      if (!wrapper) return
+      const rect = wrapper.getBoundingClientRect()
+      // Mouse relative to the video element's top-left (pre-transform)
+      // getBoundingClientRect gives the transformed rect, so divide by current zoom
+      // to get the untransformed local coordinates.
+      const mouseX = (e.clientX - rect.left) / zoom
+      const mouseY = (e.clientY - rect.top) / zoom
+      // (scale calc uses containerSize.h without offset — pb-8 removed)
+      const delta = e.deltaY < 0 ? 1.08 : 1 / 1.08
+      setZoom(prevZoom => {
+        const nextZoom = Math.max(1, Math.min(8, prevZoom * delta))
+        if (nextZoom === prevZoom) return prevZoom
+        if (nextZoom === 1) {
+          setZoomOrigin({ x: 0, y: 0 })
+          setPan({ x: 0, y: 0 })
+          return 1
+        }
+        // Set the transform origin to the mouse position in local (unzoomed) coords
+        setZoomOrigin({ x: mouseX, y: mouseY })
+        return nextZoom
+      })
+    }
+    el.addEventListener('wheel', onWheel, { passive: false })
+    return () => el.removeEventListener('wheel', onWheel)
+  }, [isVideo, zoom])
+
+  // Pan via drag
+  useEffect(() => {
+    if (!isVideo) return
+    const onMouseMove = (e: MouseEvent) => {
+      if (!isPanningRef.current) return
+      const dx = e.clientX - panStartRef.current.mx
+      const dy = e.clientY - panStartRef.current.my
+      if (Math.hypot(dx, dy) > 3) didPanRef.current = true
+      setPan({
+        x: panStartRef.current.px + dx,
+        y: panStartRef.current.py + dy,
+      })
+    }
+    const onMouseUp = () => { isPanningRef.current = false }
+    window.addEventListener('mousemove', onMouseMove)
+    window.addEventListener('mouseup', onMouseUp)
+    return () => {
+      window.removeEventListener('mousemove', onMouseMove)
+      window.removeEventListener('mouseup', onMouseUp)
+    }
+  }, [isVideo])
 
   // ── Display dimensions ────────────────────────────────────────────────────
   const { frameW, frameH, displayW, displayH, scale } = useMemo(() => {
     if (isVideo && videoDims) {
-      const s = Math.min(1, MAX_DISPLAY / Math.max(videoDims.w, videoDims.h))
+      // Fill the container, preserving aspect ratio
+      const maxW = containerSize?.w ?? window.innerWidth
+      const maxH = (containerSize?.h ?? window.innerHeight) - 32 // account for pb-8
+      const s = Math.min(maxW / videoDims.w, maxH / videoDims.h, 1)
       return {
         frameW: videoDims.w,
         frameH: videoDims.h,
@@ -105,7 +201,7 @@ export default function QueueAnnotator({
     if (!isVideo) {
       const tileW = task.x2 - task.x1
       const tileH = task.y2 - task.y1
-      const s = Math.min(1, MAX_DISPLAY / Math.max(tileW, tileH))
+      const s = Math.min(1, IMAGE_MAX_DISPLAY / Math.max(tileW, tileH))
       return {
         frameW: tileW,
         frameH: tileH,
@@ -115,7 +211,7 @@ export default function QueueAnnotator({
       }
     }
     return { frameW: 0, frameH: 0, displayW: 0, displayH: 0, scale: 1 }
-  }, [isVideo, videoDims, task.x1, task.y1, task.x2, task.y2])
+  }, [isVideo, videoDims, containerSize, task.x1, task.y1, task.x2, task.y2])
 
   // ── Load image tile ───────────────────────────────────────────────────────
   useEffect(() => {
@@ -143,77 +239,79 @@ export default function QueueAnnotator({
     setVideoUrl(null)
     setVideoError(false)
     setVideoDims(null)
+    setFrameReady(false)
     fetch(`/api/files/presign?key=${encodeURIComponent(task.fileKey)}`)
       .then(r => r.ok ? r.json() as Promise<{ url: string }> : null)
       .then(data => { if (data) setVideoUrl(data.url) })
       .catch(() => setVideoError(true))
   }, [isVideo, task.fileKey])
 
-  // Seek to task frame once video metadata is available
+  // Seek to task frame — handled via onLoadedMetadata on the video element
+
+  // Track play state — re-attach whenever the video element or URL changes
   useEffect(() => {
     if (!isVideo || !videoUrl) return
-    const video = videoRef.current
-    if (!video) return
-    const handleMeta = () => {
-      setVideoDims({ w: video.videoWidth, h: video.videoHeight })
-      video.currentTime = task.frame / fps
-    }
-    video.addEventListener('loadedmetadata', handleMeta)
-    return () => video.removeEventListener('loadedmetadata', handleMeta)
-  }, [isVideo, videoUrl, task.frame, fps])
-
-  // Track play state and handle "play last second" return
-  useEffect(() => {
-    if (!isVideo) return
-    const video = videoRef.current
-    if (!video) return
-
-    const onPlay = () => setIsPlaying(true)
-    const onPause = () => setIsPlaying(false)
-    const onTimeUpdate = () => {
-      if (returnTimeRef.current !== null && video.currentTime >= returnTimeRef.current) {
-        video.pause()
-        video.currentTime = returnTimeRef.current
-        returnTimeRef.current = null
+    // Wait a tick for the video element to be in the DOM
+    const attach = () => {
+      const video = videoRef.current
+      if (!video) return
+      const onPlay = () => setIsPlaying(true)
+      const onPause = () => {
+        setIsPlaying(false)
+        if (rafRef.current !== null) { cancelAnimationFrame(rafRef.current); rafRef.current = null }
+      }
+      const onError = () => setVideoError(true)
+      video.addEventListener('play', onPlay)
+      video.addEventListener('pause', onPause)
+      video.addEventListener('error', onError)
+      return () => {
+        video.removeEventListener('play', onPlay)
+        video.removeEventListener('pause', onPause)
+        video.removeEventListener('error', onError)
       }
     }
-    const onError = () => setVideoError(true)
+    const cleanup = attach()
+    return cleanup
+  }, [isVideo, videoUrl])
 
-    video.addEventListener('play', onPlay)
-    video.addEventListener('pause', onPause)
-    video.addEventListener('timeupdate', onTimeUpdate)
-    video.addEventListener('error', onError)
-    return () => {
-      video.removeEventListener('play', onPlay)
-      video.removeEventListener('pause', onPause)
-      video.removeEventListener('timeupdate', onTimeUpdate)
-      video.removeEventListener('error', onError)
+  // ── Hotkeys ───────────────────────────────────────────────────────────────
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return
+      if ((e.key === 'r' || e.key === 'R') && isVideo) {
+        e.preventDefault()
+        handlePlayLastSecond()
+      }
+      if ((e.key === 'Enter' || e.key === 'c' || e.key === 'C') && canWrite) {
+        e.preventDefault()
+        handleComplete()
+      }
     }
-  }, [isVideo])
+    document.addEventListener('keydown', handler)
+    return () => document.removeEventListener('keydown', handler)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isVideo, canWrite])
 
   // ── Video controls ────────────────────────────────────────────────────────
-  const togglePlay = useCallback(() => {
-    const video = videoRef.current
-    if (!video) return
-    if (video.paused) video.play().catch(() => {})
-    else video.pause()
-  }, [])
-
-  const stepFrame = useCallback((dir: 'prev' | 'next') => {
-    const video = videoRef.current
-    if (!video) return
-    video.pause()
-    const delta = dir === 'next' ? 1 / fps : -1 / fps
-    video.currentTime = Math.max(0, video.currentTime + delta)
-  }, [fps])
-
   const handlePlayLastSecond = useCallback(() => {
     const video = videoRef.current
     if (!video) return
     const targetTime = video.currentTime
-    returnTimeRef.current = targetTime
     video.currentTime = Math.max(0, targetTime - 1)
     video.play().catch(() => {})
+    // Poll with rAF for precise stopping — timeupdate only fires ~4x/sec
+    const stop = () => {
+      if (!videoRef.current) return
+      if (videoRef.current.currentTime >= targetTime) {
+        videoRef.current.pause()
+        videoRef.current.currentTime = targetTime
+        rafRef.current = null
+      } else {
+        rafRef.current = requestAnimationFrame(stop)
+      }
+    }
+    if (rafRef.current !== null) cancelAnimationFrame(rafRef.current)
+    rafRef.current = requestAnimationFrame(stop)
   }, [])
 
   // ── Drag handling ─────────────────────────────────────────────────────────
@@ -323,211 +421,210 @@ export default function QueueAnnotator({
   const progressPct = totalInQueue > 0 ? Math.round((completeCount / totalInQueue) * 100) : 0
   const filename = task.fileKey.split('/').pop() ?? task.fileKey
 
+  // ── Shared canvas interaction props ──────────────────────────────────────
+  const canvasProps = {
+    onClick: handleCanvasClick,
+    onMouseDown: handleMouseDown,
+    onMouseMove: handleMouseMove,
+    onContextMenu: handleContextMenu,
+    style: { cursor: canWrite ? cursor : 'default' } as React.CSSProperties,
+  }
+
+  const annotationDots = (
+    <svg
+      className="absolute inset-0 pointer-events-none"
+      width={displayW}
+      height={displayH}
+      viewBox={`0 0 ${displayW} ${displayH}`}
+    >
+      {points.map(p => {
+        const cx = p.x * scale
+        const cy = p.y * scale
+        return (
+          <g key={p.id}>
+            <circle cx={cx} cy={cy} r={POINT_RADIUS + 1} fill="rgba(0,0,0,0.5)" />
+            <circle cx={cx} cy={cy} r={POINT_RADIUS} fill="#ef4444" stroke="white" strokeWidth={1.5} />
+          </g>
+        )
+      })}
+    </svg>
+  )
+
   return (
-    <div className="flex flex-col gap-0 h-full">
+    <div className="fixed top-[100px] bottom-0 left-0 right-0 z-10 bg-gray-950 flex flex-col overflow-hidden">
 
-      {/* ── Queue Session Header ─────────────────────────────────────────── */}
-      <div className="bg-gradient-to-r from-blue-700 to-blue-600 text-white rounded-2xl px-6 py-4 mb-5">
-        <div className="flex items-center justify-between gap-4">
-          <div className="min-w-0">
-            <Link
-              href={`/projects/${projectId}/labeling`}
-              className="text-xs text-blue-300 hover:text-white transition-colors"
-            >
-              ← Back to labeling
-            </Link>
-            <h1 className="text-lg font-bold mt-0.5 truncate">{queueName}</h1>
-          </div>
-          <div className="flex flex-col items-center shrink-0">
-            <span className="text-3xl font-black tabular-nums leading-none">
-              {positionInQueue}
-              <span className="text-blue-300 text-xl font-semibold"> / {totalInQueue}</span>
-            </span>
-            <span className="text-xs text-blue-200 mt-0.5">{completeCount} complete</span>
-          </div>
-          <div className="w-40 shrink-0">
-            <div className="flex items-center justify-between text-xs text-blue-200 mb-1">
-              <span>Progress</span>
-              <span>{progressPct}%</span>
-            </div>
-            <div className="h-2 bg-white/20 rounded-full overflow-hidden">
-              <div
-                className="h-full bg-white rounded-full transition-all duration-500"
-                style={{ width: `${progressPct}%` }}
-              />
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* ── Task info + nav buttons ──────────────────────────────────────── */}
-      <div className="flex items-center justify-between gap-4 mb-4">
-        <div className="min-w-0">
-          <p className="text-base font-semibold text-gray-900 truncate">{filename}</p>
-          <p className="text-xs text-gray-400 font-mono">
-            {task.flightPlanName}
-            {isVideo
-              ? ` · Frame ${task.frame}`
-              : ` · ${task.x1},${task.y1} — ${task.x2},${task.y2}`}
-          </p>
-        </div>
+      {/* ── Top bar ───────────────────────────────────────────────────────── */}
+      <div className="flex items-center gap-3 px-4 h-12 bg-gray-900 border-b border-gray-800 flex-shrink-0 relative z-20">
+        {/* Back + queue + progress + filename */}
+        <Link href={`/projects/${projectId}/labeling`} className="text-xs text-gray-400 hover:text-white transition-colors shrink-0">← Labeling</Link>
+        <span className="text-gray-700 select-none">|</span>
+        <span className="text-sm font-semibold text-white truncate min-w-0">{queueName}</span>
         <div className="flex items-center gap-2 shrink-0">
-          {prevTaskId ? (
-            <button
-              onClick={handlePrev}
-              className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl border border-gray-200 bg-white text-sm font-medium text-gray-600 hover:bg-gray-50 hover:text-gray-900 transition-colors shadow-sm"
-            >
-              ← Prev
+          <span className="text-sm font-black tabular-nums text-white">{positionInQueue}<span className="text-gray-500 font-normal text-xs"> / {totalInQueue}</span></span>
+          <div className="w-20 h-1.5 bg-gray-700 rounded-full overflow-hidden">
+            <div className="h-full bg-blue-500 rounded-full transition-all duration-500" style={{ width: `${progressPct}%` }} />
+          </div>
+        </div>
+        <span className="text-gray-700 select-none">|</span>
+        <span className="text-xs font-mono text-gray-400 truncate min-w-0">
+          {filename}{isVideo ? <span className="text-gray-600"> · frame {task.frame}</span> : <span className="text-gray-600"> · {task.x1},{task.y1}–{task.x2},{task.y2}</span>}
+        </span>
+        <span className="text-gray-700 select-none">|</span>
+        {/* Play last second + zoom reset — video only */}
+        {isVideo && (
+          <div className="flex items-center gap-1.5 shrink-0">
+            <button onClick={handlePlayLastSecond} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gray-800 hover:bg-gray-700 border border-gray-700 text-white text-xs font-semibold transition-colors" title="Play last second (R)">
+              <History className="w-3.5 h-3.5 text-amber-400" />
+              Play last second
+              <kbd className="ml-1 text-[10px] text-gray-500 font-mono bg-gray-900 rounded px-1">R</kbd>
             </button>
-          ) : (
-            <span className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl border border-gray-100 bg-gray-50 text-sm font-medium text-gray-300 cursor-not-allowed select-none">
-              ← Prev
-            </span>
-          )}
-          {nextTaskId ? (
             <button
-              onClick={handleSkip}
-              className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl border border-gray-200 bg-white text-sm font-medium text-gray-500 hover:bg-gray-50 hover:text-gray-900 transition-colors shadow-sm"
+              onClick={resetZoom}
+              disabled={zoom === 1}
+              className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg border text-xs font-semibold transition-colors disabled:opacity-30 disabled:cursor-not-allowed bg-blue-900/60 hover:bg-blue-800 border-blue-700 text-blue-300 disabled:hover:bg-blue-900/60"
+              title="Reset zoom"
             >
-              Skip →
+              {Math.round(zoom * 100)}% — Reset
             </button>
-          ) : (
-            <span className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl border border-gray-100 bg-gray-50 text-sm font-medium text-gray-300 cursor-not-allowed select-none">
-              Skip →
-            </span>
-          )}
+            {isPlaying && <span className="text-[11px] text-white/50 animate-pulse">▶ playing…</span>}
+            <span className="text-gray-700 select-none">|</span>
+          </div>
+        )}
+        {/* Status */}
+        <div className="flex items-center gap-2 shrink-0">
+          {dirty && <span className="text-[11px] text-amber-400 font-medium">Unsaved</span>}
+          {saveStatus === 'saving' && <span className="text-[11px] text-gray-500 animate-pulse">Saving…</span>}
+          {saveStatus === 'saved' && !dirty && <span className="text-[11px] text-green-500">Saved</span>}
+          {saveStatus === 'error' && <span className="text-[11px] text-red-400">Save failed</span>}
+          {complete && !dirty && <span className="text-[11px] text-green-400 font-semibold">✓ Complete</span>}
+          {canWrite && dirty && <button onClick={doSave} className="text-[11px] text-blue-400 hover:text-blue-300 underline">Save</button>}
+          {canWrite && points.length > 0 && <button onClick={() => { setPoints([]); setDirty(true); setSaveStatus('idle') }} className="text-[11px] text-gray-500 hover:text-red-400 underline">Clear</button>}
+        </div>
+        {/* Nav + complete */}
+        <div className="ml-auto flex items-center gap-1.5 shrink-0">
+          <button onClick={handlePrev} disabled={!prevTaskId} className="px-3 py-1.5 rounded-lg border border-gray-700 bg-gray-800 text-xs font-medium text-gray-300 hover:bg-gray-700 hover:text-white transition-colors disabled:opacity-30 disabled:cursor-not-allowed">← Prev</button>
+          <button onClick={handleSkip} disabled={!nextTaskId} className="px-3 py-1.5 rounded-lg border border-gray-700 bg-gray-800 text-xs font-medium text-gray-300 hover:bg-gray-700 hover:text-white transition-colors disabled:opacity-30 disabled:cursor-not-allowed">Skip →</button>
           {canWrite && (
-            <button
-              onClick={handleComplete}
-              disabled={busy}
-              className={`inline-flex items-center gap-2 px-6 py-2 rounded-xl text-sm font-bold transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed ${
-                complete
-                  ? 'bg-green-500 hover:bg-green-600 text-white'
-                  : 'bg-blue-600 hover:bg-blue-700 text-white'
-              }`}
-            >
-              {busy ? <span className="animate-pulse">…</span>
-                : complete ? <>✓ Complete — next</>
-                : nextTaskId ? <>Complete & Next →</>
-                : <>✓ Complete</>}
+            <button onClick={handleComplete} disabled={busy} title="Complete & next (Enter or C)" className={`px-4 py-1.5 rounded-lg text-xs font-bold transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${complete ? 'bg-green-600 hover:bg-green-500 text-white' : 'bg-blue-600 hover:bg-blue-500 text-white'}`}>
+              {busy ? '…' : complete ? '✓ Next →' : nextTaskId ? 'Complete & Next →' : '✓ Complete'}
             </button>
           )}
-          {!canWrite && complete && (
-            <span className="inline-flex items-center rounded-xl bg-green-50 px-4 py-2 text-sm font-semibold text-green-700">
-              ✓ Complete
-            </span>
-          )}
+          {!canWrite && complete && <span className="px-3 py-1.5 rounded-lg bg-green-900/40 text-green-400 text-xs font-semibold">✓ Complete</span>}
         </div>
       </div>
 
-      {/* Status strip */}
-      <div className="h-7 flex items-center gap-3 mb-3 text-xs overflow-hidden">
-        {complete && !dirty && (
-          <span className="inline-flex items-center gap-1 rounded-full bg-green-50 px-2.5 py-1 font-medium text-green-700">
-            ✓ Marked complete
-          </span>
-        )}
-        {dirty && <span className="text-amber-600 font-medium">Unsaved changes</span>}
-        {saveStatus === 'saving' && <span className="text-gray-400 animate-pulse">Saving…</span>}
-        {saveStatus === 'saved' && !dirty && <span className="text-green-600">Saved</span>}
-        {saveStatus === 'error' && <span className="text-red-500">Save failed</span>}
-        {canWrite && dirty && (
-          <button onClick={doSave} className="text-blue-600 underline hover:text-blue-800">
-            Save now
-          </button>
-        )}
-        {canWrite && points.length > 0 && (
-          <button
-            onClick={() => { setPoints([]); setDirty(true); setSaveStatus('idle') }}
-            className="ml-auto text-gray-400 hover:text-red-500 underline"
-          >
-            Clear all points
-          </button>
-        )}
-      </div>
+      {/* ── Main content area ─────────────────────────────────────────────── */}
+      {isVideo ? (
+        /* ── Video mode: full-area canvas with overlay HUD ── */
+        <div ref={containerRef} className="flex-1 min-h-0 relative bg-black">
+          {videoError && (
+            <div className="absolute inset-0 flex items-center justify-center text-sm text-gray-400">Failed to load video</div>
+          )}
 
-      {/* ── Annotation canvas ────────────────────────────────────────────── */}
-      <div className="flex flex-col items-center gap-3">
-
-        {isVideo ? (
-          <>
-            {/* Video controls bar */}
-            <div className="flex items-center gap-2">
-              <button
-                onClick={() => stepFrame('prev')}
-                className="p-2 rounded-lg bg-gray-100 hover:bg-gray-200 text-gray-700 transition-colors"
-                title="Previous frame (←)"
-              >
-                <ChevronLeft className="w-4 h-4" />
-              </button>
-              <button
-                onClick={togglePlay}
-                className="p-2 rounded-lg bg-gray-100 hover:bg-gray-200 text-gray-700 transition-colors"
-                title="Play / Pause (Space)"
-              >
-                {isPlaying ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
-              </button>
-              <button
-                onClick={() => stepFrame('next')}
-                className="p-2 rounded-lg bg-gray-100 hover:bg-gray-200 text-gray-700 transition-colors"
-                title="Next frame (→)"
-              >
-                <ChevronRight className="w-4 h-4" />
-              </button>
-              <button
-                onClick={handlePlayLastSecond}
-                className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-amber-50 border border-amber-200 text-amber-700 hover:bg-amber-100 transition-colors text-xs font-semibold"
-                title="Rewind 1 second and play back to current frame"
-              >
-                <History className="w-3.5 h-3.5" />
-                Play last second
-              </button>
-            </div>
-
-            {/* Video + annotation overlay */}
-            {videoError ? (
-              <div className="flex items-center justify-center bg-gray-100 rounded-xl text-sm text-gray-400 w-[800px] h-[450px]">
-                Failed to load video
-              </div>
-            ) : !videoUrl || !videoDims ? (
-              <div className="flex items-center justify-center bg-gray-100 rounded-xl text-sm text-gray-400 animate-pulse w-[800px] h-[450px]">
-                Loading…
-              </div>
-            ) : (
+          {/* Centered video+overlay wrapper — zoom transform applied here */}
+          {/* Render as soon as videoUrl is known; onLoadedMetadata fires on the single video element */}
+          {videoUrl && containerSize && (() => {
+            // Use videoDims if known, otherwise render an invisible placeholder so the
+            // video element mounts early and fires onLoadedMetadata without remounting.
+            const dims = videoDims ?? { w: containerSize.w, h: containerSize.h }
+            const s = Math.min(containerSize.w / dims.w, containerSize.h / dims.h)
+            const ow = Math.round(dims.w * s)
+            const oh = Math.round(dims.h * s)
+            const overlayScale = s
+            return (
               <div
-                className="relative select-none rounded-xl overflow-hidden shadow-inner"
-                style={{ width: displayW, height: displayH, cursor: canWrite ? cursor : 'default' }}
-                onClick={handleCanvasClick}
-                onMouseDown={handleMouseDown}
-                onMouseMove={handleMouseMove}
-                onContextMenu={handleContextMenu}
+                ref={videoWrapperRef}
+                style={{
+                  position: 'absolute',
+                  width: ow, height: oh,
+                  top: '50%', left: '50%',
+                  transform: zoom === 1
+                    ? 'translate(-50%, -50%)'
+                    : `translate(calc(-50% + ${pan.x}px), calc(-50% + ${pan.y}px)) scale(${zoom})`,
+                  transformOrigin: `${zoomOrigin.x}px ${zoomOrigin.y}px`,
+                  willChange: 'transform',
+                  visibility: videoDims ? 'visible' : 'hidden',
+                  cursor: cursor === 'grabbing' ? 'grabbing' : canWrite ? 'crosshair' : zoom > 1 ? 'grab' : 'default',
+                }}
+                onMouseDown={(e) => {
+                  if (e.button !== 0) return
+                  const rect = e.currentTarget.getBoundingClientRect()
+                  const px = (e.clientX - rect.left) / zoom / overlayScale
+                  const py = (e.clientY - rect.top) / zoom / overlayScale
+                  const idx = canWrite ? points.findIndex(p => Math.hypot(p.x - px, p.y - py) < HIT_RADIUS / overlayScale) : -1
+                  if (idx >= 0) {
+                    dragRef.current = { id: points[idx].id }
+                    didDragRef.current = false
+                    setCursor('grabbing')
+                    e.preventDefault()
+                  } else if (zoom > 1) {
+                    isPanningRef.current = true
+                    didPanRef.current = false
+                    panStartRef.current = { mx: e.clientX, my: e.clientY, px: pan.x, py: pan.y }
+                    e.preventDefault()
+                  }
+                }}
+                onClick={(e) => {
+                  if (!canWrite) return
+                  if (didDragRef.current) { didDragRef.current = false; return }
+                  if (didPanRef.current) { didPanRef.current = false; return }
+                  const rect = e.currentTarget.getBoundingClientRect()
+                  const px = (e.clientX - rect.left) / zoom / overlayScale
+                  const py = (e.clientY - rect.top) / zoom / overlayScale
+                  const hit = points.findIndex(p => Math.hypot(p.x - px, p.y - py) < HIT_RADIUS / overlayScale)
+                  if (hit >= 0) return
+                  setPoints(prev => [...prev, { id: crypto.randomUUID(), x: px, y: py }])
+                  setDirty(true)
+                  setSaveStatus('idle')
+                }}
+                onMouseMove={(e) => {
+                  if (!dragRef.current || !canWrite) return
+                  didDragRef.current = true
+                  const rect = e.currentTarget.getBoundingClientRect()
+                  const px = Math.max(0, Math.min(videoDims.w, (e.clientX - rect.left) / zoom / overlayScale))
+                  const py = Math.max(0, Math.min(videoDims.h, (e.clientY - rect.top) / zoom / overlayScale))
+                  const id = dragRef.current.id
+                  setPoints(prev => prev.map(p => p.id === id ? { ...p, x: px, y: py } : p))
+                }}
+                onContextMenu={(e) => {
+                  if (!canWrite) return
+                  const rect = e.currentTarget.getBoundingClientRect()
+                  const px = (e.clientX - rect.left) / zoom / overlayScale
+                  const py = (e.clientY - rect.top) / zoom / overlayScale
+                  const hitIdx = points.findIndex(p => Math.hypot(p.x - px, p.y - py) < HIT_RADIUS / overlayScale)
+                  if (hitIdx >= 0) {
+                    e.preventDefault()
+                    setPoints(prev => prev.filter((_, i) => i !== hitIdx))
+                    setDirty(true)
+                    setSaveStatus('idle')
+                  }
+                }}
               >
-                {/* Hidden video element used for frame data */}
+                {/* Single video element — ref, metadata, seek, and playback all here */}
                 <video
                   ref={videoRef}
                   src={videoUrl}
                   preload="auto"
                   muted
                   playsInline
-                  style={{
-                    position: 'absolute',
-                    inset: 0,
-                    width: displayW,
-                    height: displayH,
-                    pointerEvents: 'none',
-                    objectFit: 'fill',
+                  onLoadedMetadata={() => {
+                    const v = videoRef.current
+                    if (!v) return
+                    setVideoDims({ w: v.videoWidth, h: v.videoHeight })
+                    v.currentTime = task.frame / fps
                   }}
+                  onSeeked={() => setFrameReady(true)}
+                  style={{ position: 'absolute', inset: 0, width: ow, height: oh, pointerEvents: 'none', opacity: frameReady ? 1 : 0, transition: 'opacity 0.15s' }}
                 />
-                {/* Annotation overlay */}
+                {/* Annotation dots */}
                 <svg
                   className="absolute inset-0 pointer-events-none"
-                  width={displayW}
-                  height={displayH}
-                  viewBox={`0 0 ${displayW} ${displayH}`}
+                  width={ow} height={oh}
+                  viewBox={`0 0 ${ow} ${oh}`}
                 >
-                  {points.map(p => {
-                    const cx = p.x * scale
-                    const cy = p.y * scale
+                  {frameReady && points.map(p => {
+                    const cx = p.x * overlayScale
+                    const cy = p.y * overlayScale
                     return (
                       <g key={p.id}>
                         <circle cx={cx} cy={cy} r={POINT_RADIUS + 1} fill="rgba(0,0,0,0.5)" />
@@ -537,17 +634,32 @@ export default function QueueAnnotator({
                   })}
                 </svg>
               </div>
+            )
+          })()}
+
+          {(!frameReady || !videoUrl) && (
+            <div className="absolute inset-0 flex items-center justify-center text-sm text-gray-500 animate-pulse pointer-events-none">Loading…</div>
+          )}
+
+          {/* Overlay HUD — bottom bar (hints only) */}
+          <div className="absolute bottom-0 left-0 right-0 flex items-center justify-end px-4 py-2 pointer-events-none">
+            {canWrite && (
+              <div className="flex items-center gap-3 text-[11px] text-white/40 pointer-events-none select-none">
+                <span><kbd className="font-mono bg-white/10 rounded px-1 py-0.5 text-white/60">click</kbd> add</span>
+                <span><kbd className="font-mono bg-white/10 rounded px-1 py-0.5 text-white/60">drag</kbd> move</span>
+                <span><kbd className="font-mono bg-white/10 rounded px-1 py-0.5 text-white/60">right-click</kbd> remove</span>
+                <span><kbd className="font-mono bg-white/10 rounded px-1 py-0.5 text-white/60">C / Enter</kbd> complete</span>
+              </div>
             )}
-          </>
-        ) : (
-          /* Image annotation canvas */
+          </div>
+        </div>
+      ) : (
+        /* ── Image mode: centered canvas on dark bg ── */
+        <div className="flex-1 min-h-0 flex flex-col items-center justify-center gap-3 bg-gray-950 p-6">
           <div
-            className="relative select-none bg-gray-100 rounded-xl overflow-hidden shadow-inner"
-            style={{ width: displayW, height: displayH, cursor: canWrite ? cursor : 'default' }}
-            onClick={handleCanvasClick}
-            onMouseDown={handleMouseDown}
-            onMouseMove={handleMouseMove}
-            onContextMenu={handleContextMenu}
+            className="relative select-none bg-gray-900 rounded-xl overflow-hidden shadow-2xl"
+            style={{ width: displayW, height: displayH }}
+            {...canvasProps}
           >
             {imageUrl && !imageError && (
               // eslint-disable-next-line @next/next/no-img-element
@@ -557,63 +669,24 @@ export default function QueueAnnotator({
                 draggable={false}
                 width={displayW}
                 height={displayH}
-                style={{
-                  position: 'absolute',
-                  inset: 0,
-                  width: displayW,
-                  height: displayH,
-                  imageRendering: 'pixelated',
-                  pointerEvents: 'none',
-                  userSelect: 'none',
-                }}
+                style={{ position: 'absolute', inset: 0, width: displayW, height: displayH, imageRendering: 'pixelated', pointerEvents: 'none', userSelect: 'none' }}
                 onError={() => setImageError(true)}
               />
             )}
-            {imageError && (
-              <div className="absolute inset-0 flex items-center justify-center text-sm text-gray-400">
-                Failed to load image
-              </div>
-            )}
-            {!imageUrl && !imageError && (
-              <div className="absolute inset-0 flex items-center justify-center text-sm text-gray-400 animate-pulse">
-                Loading…
-              </div>
-            )}
-            <svg
-              className="absolute inset-0 pointer-events-none"
-              width={displayW}
-              height={displayH}
-              viewBox={`0 0 ${displayW} ${displayH}`}
-            >
-              {points.map(p => {
-                const cx = p.x * scale
-                const cy = p.y * scale
-                return (
-                  <g key={p.id}>
-                    <circle cx={cx} cy={cy} r={POINT_RADIUS + 1} fill="rgba(0,0,0,0.5)" />
-                    <circle cx={cx} cy={cy} r={POINT_RADIUS} fill="#ef4444" stroke="white" strokeWidth={1.5} />
-                  </g>
-                )
-              })}
-            </svg>
+            {imageError && <div className="absolute inset-0 flex items-center justify-center text-sm text-gray-400">Failed to load image</div>}
+            {!imageUrl && !imageError && <div className="absolute inset-0 flex items-center justify-center text-sm text-gray-400 animate-pulse">Loading…</div>}
+            {annotationDots}
           </div>
-        )}
-
-        {/* Keyboard hints */}
-        {canWrite && (
-          <div className="flex items-center justify-center gap-6 text-xs text-gray-400">
-            <span><kbd className="font-mono bg-gray-100 border border-gray-200 rounded px-1 py-0.5">Left click</kbd> Add point</span>
-            <span><kbd className="font-mono bg-gray-100 border border-gray-200 rounded px-1 py-0.5">Drag</kbd> Move point</span>
-            <span><kbd className="font-mono bg-gray-100 border border-gray-200 rounded px-1 py-0.5">Right click</kbd> Remove point</span>
-            {isVideo && (
-              <>
-                <span><kbd className="font-mono bg-gray-100 border border-gray-200 rounded px-1 py-0.5">← →</kbd> Step frame</span>
-                <span><kbd className="font-mono bg-gray-100 border border-gray-200 rounded px-1 py-0.5">Space</kbd> Play/Pause</span>
-              </>
-            )}
-          </div>
-        )}
-      </div>
+          {canWrite && (
+            <div className="flex items-center gap-4 text-xs text-gray-500">
+              <span><kbd className="font-mono bg-gray-800 border border-gray-700 text-gray-300 rounded px-1 py-0.5">click</kbd> add</span>
+              <span><kbd className="font-mono bg-gray-800 border border-gray-700 text-gray-300 rounded px-1 py-0.5">drag</kbd> move</span>
+              <span><kbd className="font-mono bg-gray-800 border border-gray-700 text-gray-300 rounded px-1 py-0.5">right-click</kbd> remove</span>
+              <span><kbd className="font-mono bg-gray-800 border border-gray-700 text-gray-300 rounded px-1 py-0.5">C / Enter</kbd> complete</span>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   )
 }

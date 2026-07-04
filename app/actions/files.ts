@@ -525,89 +525,108 @@ export async function loadVideosBefore(
 
   const planIds = plans.map((p) => p.id)
 
-  // Get flights before the cutoff, newest-first — enough to cover at least one full day
-  const batch = await db
-    .select()
-    .from(flights)
-    .where(and(
-      inArray(flights.flightPlanId, planIds),
-      isNull(flights.deletedAt),
-      lt(flights.timestamp, beforeUTC),
-    ))
-    .orderBy(desc(flights.timestamp))
-    .limit(200)
+  let currentBeforeUTC = beforeUTC
+  let videos: VideoRow[] = []
+  let hasMore = false
 
-  if (batch.length === 0) return { videos: [], hasMore: false }
+  while (true) {
+    // Get flights before the cutoff, newest-first — enough to cover at least one full day
+    const batch = await db
+      .select()
+      .from(flights)
+      .where(and(
+        inArray(flights.flightPlanId, planIds),
+        isNull(flights.deletedAt),
+        lt(flights.timestamp, currentBeforeUTC),
+      ))
+      .orderBy(desc(flights.timestamp))
+      .limit(200)
 
-  // Isolate the most recent calendar day in this batch
-  const newestDay = getLocalDateStr(batch[0].timestamp, timezone)
-  const dayStart = localMidnightUTC(newestDay, timezone)
-  const dayFlights = batch.filter((f) => f.timestamp >= dayStart)
-  const hasMore = batch.length > dayFlights.length
+    if (batch.length === 0) {
+      hasMore = false
+      break
+    }
 
-  const flightIds = dayFlights.map((f) => f.id)
-  const planMap = new Map(plans.map((p) => [p.id, p]))
-  const flightMap = new Map(dayFlights.map((f) => [f.id, f]))
+    // Isolate the most recent calendar day in this batch
+    const newestDay = getLocalDateStr(batch[0].timestamp, timezone)
+    const dayStart = localMidnightUTC(newestDay, timezone)
+    const dayFlights = batch.filter((f) => f.timestamp >= dayStart)
+    const dayHasMore = batch.length > dayFlights.length
 
-  const allFiles = await db
-    .select()
-    .from(files)
-    .where(inArray(files.flightId, flightIds))
+    const flightIds = dayFlights.map((f) => f.id)
+    const planMap = new Map(plans.map((p) => [p.id, p]))
+    const flightMap = new Map(dayFlights.map((f) => [f.id, f]))
 
-  const videoFiles = allFiles.filter((f) => VIDEO_EXTS.includes(f.key.split('.').pop()?.toLowerCase() ?? ''))
-  const videoFileIds = videoFiles.map((f) => f.id)
+    const allFiles = await db
+      .select()
+      .from(files)
+      .where(inArray(files.flightId, flightIds))
 
-  if (videoFileIds.length === 0) return { videos: [], hasMore }
+    const videoFiles = allFiles.filter((f) => VIDEO_EXTS.includes(f.key.split('.').pop()?.toLowerCase() ?? ''))
+    const videoFileIds = videoFiles.map((f) => f.id)
 
-  const [videoAnnotations, allGeofences, allTags] = await Promise.all([
-    db.select().from(annotations)
-      .where(and(inArray(annotations.fileId, videoFileIds), isNull(annotations.deletedAt))),
-    db.select().from(geofences).where(eq(geofences.projectId, projectId)),
-    db.select().from(fileGeofenceTags).where(inArray(fileGeofenceTags.fileId, videoFileIds)),
-  ])
+    if (videoFileIds.length > 0) {
+      const [videoAnnotations, allGeofences, allTags] = await Promise.all([
+        db.select().from(annotations)
+          .where(and(inArray(annotations.fileId, videoFileIds), isNull(annotations.deletedAt))),
+        db.select().from(geofences).where(eq(geofences.projectId, projectId)),
+        db.select().from(fileGeofenceTags).where(inArray(fileGeofenceTags.fileId, videoFileIds)),
+      ])
 
-  const fishCountMap = new Map<string, number>()
-  for (const a of videoAnnotations) {
-    if (a.fileId && a.label === 'video-count') fishCountMap.set(a.fileId, a.fishCount)
-  }
-
-  const geofenceMap = new Map(allGeofences.map((g) => [g.id, g]))
-  const tagsByFileId = new Map<string, { name: string; color: string }[]>()
-  for (const tag of allTags) {
-    const g = geofenceMap.get(tag.geofenceId)
-    if (!g) continue
-    const existing = tagsByFileId.get(tag.fileId) ?? []
-    if (!existing.find((t) => t.name === g.name)) existing.push({ name: g.name, color: g.color })
-    tagsByFileId.set(tag.fileId, existing)
-  }
-
-  const videos: VideoRow[] = videoFiles
-    .map((f) => {
-      const flight = flightMap.get(f.flightId)!
-      const plan = planMap.get(flight.flightPlanId)!
-      return {
-        fileId: f.id,
-        key: f.key,
-        etag: f.etag,
-        uploadedAt: f.uploadedAt.toISOString(),
-        flightTimestamp: flight.timestamp.toISOString(),
-        flightNotes: flight.notes,
-        planName: plan.displayName || plan.name,
-        flightId: flight.id,
-        flightPlanId: flight.flightPlanId,
-        fishCount: fishCountMap.get(f.id) ?? null,
-        durationSeconds: f.durationSeconds ?? null,
-        locationTags: tagsByFileId.get(f.id) ?? [],
-        latitude: f.latitude ?? null,
-        longitude: f.longitude ?? null,
-        reviewStatus: f.reviewStatus,
-        reviewRating: f.reviewRating ?? null,
-        reviewedBy: f.reviewedBy ?? null,
-        reviewedAt: f.reviewedAt?.toISOString() ?? null,
-        hidden: f.hidden ?? false,
+      const fishCountMap = new Map<string, number>()
+      for (const a of videoAnnotations) {
+        if (a.fileId && a.label === 'video-count') fishCountMap.set(a.fileId, a.fishCount ?? 0)
       }
-    })
-    .sort((a, b) => new Date(b.flightTimestamp).getTime() - new Date(a.flightTimestamp).getTime())
+
+      const geofenceMap = new Map(allGeofences.map((g) => [g.id, g]))
+      const tagsByFileId = new Map<string, { name: string; color: string }[]>()
+      for (const tag of allTags) {
+        const g = geofenceMap.get(tag.geofenceId)
+        if (!g) continue
+        const existing = tagsByFileId.get(tag.fileId) ?? []
+        if (!existing.find((t) => t.name === g.name)) existing.push({ name: g.name, color: g.color })
+        tagsByFileId.set(tag.fileId, existing)
+      }
+
+      videos = videoFiles
+        .map((f) => {
+          const flight = flightMap.get(f.flightId)!
+          const plan = planMap.get(flight.flightPlanId)!
+          return {
+            fileId: f.id,
+            key: f.key,
+            etag: f.etag,
+            uploadedAt: f.uploadedAt.toISOString(),
+            flightTimestamp: flight.timestamp.toISOString(),
+            flightNotes: flight.notes,
+            planName: plan.displayName || plan.name,
+            flightId: flight.id,
+            flightPlanId: flight.flightPlanId,
+            fishCount: fishCountMap.get(f.id) ?? null,
+            durationSeconds: f.durationSeconds ?? null,
+            locationTags: tagsByFileId.get(f.id) ?? [],
+            latitude: f.latitude ?? null,
+            longitude: f.longitude ?? null,
+            reviewStatus: f.reviewStatus,
+            reviewRating: f.reviewRating ?? null,
+            reviewedBy: f.reviewedBy ?? null,
+            reviewedAt: f.reviewedAt?.toISOString() ?? null,
+            hidden: f.hidden ?? false,
+          }
+        })
+        .sort((a, b) => new Date(b.flightTimestamp).getTime() - new Date(a.flightTimestamp).getTime())
+
+      hasMore = dayHasMore
+      break
+    } else {
+      // No videos in this day's flights. Move cutoff to dayStart to search previous days.
+      if (!dayHasMore) {
+        hasMore = false
+        break
+      }
+      currentBeforeUTC = dayStart
+    }
+  }
 
   return { videos, hasMore }
 }
@@ -625,6 +644,7 @@ export interface DatasetEntry {
   reviewRating: number | null
   durationSeconds: number | null
   flightId: string
+  flightPlanId: string
   flightTimestampIso: string
   flightPlanName: string
   uploadedAtIso: string
@@ -651,6 +671,7 @@ export async function loadDatasetEntriesBefore(
       reviewRating: files.reviewRating,
       durationSeconds: files.durationSeconds,
       flightId: flights.id,
+      flightPlanId: sql<string>`${flights.flightPlanId}`.as('flight_plan_id_alias'),
       flightTimestamp: flights.timestamp,
       flightPlanName: flightPlans.name,
       uploadedAt: files.uploadedAt,
@@ -679,6 +700,7 @@ export async function loadDatasetEntriesBefore(
     reviewRating: r.reviewRating ?? null,
     durationSeconds: r.durationSeconds ?? null,
     flightId: r.flightId,
+    flightPlanId: r.flightPlanId,
     flightTimestampIso: r.flightTimestamp.toISOString(),
     flightPlanName: r.flightPlanName,
     uploadedAtIso: r.uploadedAt.toISOString(),

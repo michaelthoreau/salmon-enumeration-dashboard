@@ -100,6 +100,7 @@ export default function LabelingView({ projectId, tasks: initialTasks, queues: i
   const [createQueueOpen, setCreateQueueOpen] = useState(false)
   const [newQueueName, setNewQueueName] = useState('')
   const [newQueueAssignee, setNewQueueAssignee] = useState<string>('')
+  const [addUnassignedToQueue, setAddUnassignedToQueue] = useState(true)
   const [createQueueBusy, setCreateQueueBusy] = useState(false)
 
   const [assignQueueOpen, setAssignQueueOpen] = useState(false)
@@ -115,6 +116,7 @@ export default function LabelingView({ projectId, tasks: initialTasks, queues: i
 
   const [deleteQueueId, setDeleteQueueId] = useState<string | null>(null)
   const [deleteQueueBusy, setDeleteQueueBusy] = useState(false)
+  const [deleteQueueWithTasks, setDeleteQueueWithTasks] = useState(true)
 
   // ── Derived ───────────────────────────────────────────────────────────────
   const userById = useMemo(() => new Map(users.map(u => [u.id, u])), [users])
@@ -176,12 +178,17 @@ export default function LabelingView({ projectId, tasks: initialTasks, queues: i
   const handleCreateQueue = useCallback(async () => {
     if (!newQueueName.trim()) return
     setCreateQueueBusy(true)
-    const selectedIds = Array.from(selected)
+    // If addUnassignedToQueue is checked, include all unassigned tasks;
+    // otherwise fall back to whatever is manually selected in the table.
+    const unassignedIds = tasks.filter(t => !t.queueId).map(t => t.taskId)
+    const taskIds = addUnassignedToQueue && unassignedIds.length > 0
+      ? unassignedIds
+      : Array.from(selected)
     const res = await createLabelingQueue(
       projectId,
       newQueueName.trim(),
       newQueueAssignee || null,
-      selectedIds,
+      taskIds,
     )
     if (res.ok && res.id) {
       const newQueue: QueueRow = {
@@ -193,9 +200,9 @@ export default function LabelingView({ projectId, tasks: initialTasks, queues: i
         createdAtIso: new Date().toISOString(),
       }
       setQueues(prev => [newQueue, ...prev])
-      if (selectedIds.length > 0) {
+      if (taskIds.length > 0) {
         setTasks(prev => prev.map(t =>
-          selectedIds.includes(t.taskId) ? { ...t, queueId: res.id! } : t
+          taskIds.includes(t.taskId) ? { ...t, queueId: res.id! } : t
         ))
         setSelected(new Set())
       }
@@ -206,7 +213,7 @@ export default function LabelingView({ projectId, tasks: initialTasks, queues: i
     setNewQueueName('')
     setNewQueueAssignee('')
     startTransition(() => router.refresh())
-  }, [newQueueName, newQueueAssignee, selected, projectId, router])
+  }, [newQueueName, newQueueAssignee, addUnassignedToQueue, tasks, selected, projectId, router])
 
   const handleAssignToQueue = useCallback(async () => {
     if (!assignTargetQueueId) return
@@ -255,18 +262,22 @@ export default function LabelingView({ projectId, tasks: initialTasks, queues: i
   const handleDeleteQueue = useCallback(async () => {
     if (!deleteQueueId) return
     setDeleteQueueBusy(true)
-    const res = await deleteLabelingQueue(deleteQueueId)
+    const res = await deleteLabelingQueue(deleteQueueId, deleteQueueWithTasks)
     if (res.ok) {
       setQueues(prev => prev.filter(q => q.id !== deleteQueueId))
-      setTasks(prev => prev.map(t =>
-        t.queueId === deleteQueueId ? { ...t, queueId: null } : t
-      ))
+      if (deleteQueueWithTasks) {
+        setTasks(prev => prev.filter(t => t.queueId !== deleteQueueId))
+      } else {
+        setTasks(prev => prev.map(t =>
+          t.queueId === deleteQueueId ? { ...t, queueId: null } : t
+        ))
+      }
       if (queueFilter === deleteQueueId) setQueueFilter('__unassigned')
     }
     setDeleteQueueBusy(false)
     setDeleteQueueId(null)
     startTransition(() => router.refresh())
-  }, [deleteQueueId, queueFilter, router])
+  }, [deleteQueueId, deleteQueueWithTasks, queueFilter, router])
 
   // ── Tab counts ────────────────────────────────────────────────────────────
   const tabCounts = useMemo(() => {
@@ -280,193 +291,223 @@ export default function LabelingView({ projectId, tasks: initialTasks, queues: i
     }
   }, [tasks, queueFilter])
 
+  // ── Derived: queues split by completion ──────────────────────────────────
+  const { incompleteQueues, completeQueues } = useMemo(() => {
+    const incomplete: QueueRow[] = []
+    const complete: QueueRow[] = []
+    for (const q of queues) {
+      if (firstIncompleteByQueueId.has(q.id)) incomplete.push(q)
+      else complete.push(q)
+    }
+    return { incompleteQueues: incomplete, completeQueues: complete }
+  }, [queues, firstIncompleteByQueueId])
+
   // ── Render ────────────────────────────────────────────────────────────────
   return (
-    <div className="flex gap-6 min-h-0">
-      {/* ── Left Sidebar: Queue Panel ────────────────────────────────────── */}
-      <aside className="w-60 shrink-0 flex flex-col gap-1">
-        <div className="flex items-center justify-between mb-1">
-          <h2 className="text-xs font-semibold uppercase tracking-wider text-gray-400">Queues</h2>
-          {canWrite && (
-            <button
-              onClick={() => setCreateQueueOpen(true)}
-              className="p-1 rounded hover:bg-gray-100 text-gray-400 hover:text-gray-700 transition-colors"
-              title="Create queue"
-            >
-              <PlusIcon className="w-3.5 h-3.5" />
-            </button>
-          )}
+    <div className="flex flex-col gap-8">
+
+      {/* ── Page header ──────────────────────────────────────────────────── */}
+      <div className="flex items-start justify-between">
+        <div>
+          <h1 className="text-2xl font-semibold text-gray-900">Labeling</h1>
+          <p className="text-sm text-gray-500 mt-0.5">
+            {incompleteCount} task{incompleteCount !== 1 ? 's' : ''} remaining of {totalCount} total
+          </p>
         </div>
+        {canWrite && (
+          <Button onClick={() => setCreateQueueOpen(true)} size="sm" className="gap-1.5 shrink-0">
+            <PlusIcon className="w-3.5 h-3.5" /> New Queue
+          </Button>
+        )}
+      </div>
 
-        {/* Not in a queue */}
-        <SidebarItem
-          active={queueFilter === '__unassigned'}
-          onClick={() => setQueueFilter('__unassigned')}
-          icon={<InboxIcon className="w-3.5 h-3.5" />}
-          label="Not in a queue"
-          count={unassignedCount}
-          countColor={unassignedCount > 0 ? 'text-amber-600 bg-amber-50' : undefined}
-        />
-
-        {queues.length > 0 && (
-          <div className="mt-2 pt-2 border-t border-gray-100 flex flex-col gap-1.5">
-            {queues.map(q => {
+      {/* ── Incomplete queues (hero) ──────────────────────────────────────── */}
+      {incompleteQueues.length > 0 && (
+        <section>
+          <h2 className="text-xs font-semibold uppercase tracking-wider text-gray-400 mb-3">In progress</h2>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+            {incompleteQueues.map(q => {
               const assignee = q.assignedTo ? userById.get(q.assignedTo) : null
-              const qCount = taskCountByQueueId.get(q.id) ?? 0
+              const total = taskCountByQueueId.get(q.id) ?? 0
+              const incomplete = tasks.filter(t => t.queueId === q.id && !t.completedBy).length
+              const done = total - incomplete
+              const pct = total > 0 ? Math.round((done / total) * 100) : 0
               const firstTaskId = firstIncompleteByQueueId.get(q.id)
               return (
-                <div
-                  key={q.id}
-                  className={cn(
-                    'group rounded-xl border transition-colors overflow-hidden',
-                    queueFilter === q.id
-                      ? 'border-blue-200 bg-blue-50'
-                      : 'border-gray-100 bg-white hover:border-gray-200',
-                  )}
-                >
-                  {/* Queue header — click to filter */}
-                  <div
-                    className="flex items-start justify-between gap-1 px-3 py-2.5 cursor-pointer"
-                    onClick={() => setQueueFilter(q.id)}
-                  >
-                    <div className="min-w-0 flex-1">
-                      <p className={cn(
-                        'text-xs font-semibold truncate leading-snug',
-                        queueFilter === q.id ? 'text-blue-700' : 'text-gray-800',
-                      )}>{q.name}</p>
-                      {assignee && (
-                        <p className="text-[10px] text-gray-400 flex items-center gap-0.5 mt-0.5 truncate">
-                          <UserIcon className="w-2.5 h-2.5 shrink-0" />
-                          {assignee.email}
-                        </p>
-                      )}
-                    </div>
-                    <div className="flex items-center gap-1 shrink-0 mt-0.5">
-                      <span className={cn(
-                        'text-[10px] rounded-full px-1.5 py-0.5 font-medium',
-                        queueFilter === q.id ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-500',
-                      )}>
-                        {qCount}
-                      </span>
+                <div key={q.id} className="group bg-white rounded-2xl border border-gray-200 hover:border-blue-300 hover:shadow-md transition-all overflow-hidden flex flex-col">
+                  <div className="px-5 pt-5 pb-4 flex-1">
+                    <div className="flex items-start justify-between gap-2 mb-3">
+                      <h3 className="text-base font-bold text-gray-900 leading-snug">{q.name}</h3>
                       {canWrite && (
-                        <div className="opacity-0 group-hover:opacity-100 flex items-center gap-0.5 transition-opacity">
+                        <div className="opacity-0 group-hover:opacity-100 flex items-center gap-0.5 transition-opacity shrink-0">
                           <button
-                            onClick={e => {
-                              e.stopPropagation()
-                              setEditQueueId(q.id)
-                              setEditQueueName(q.name)
-                              setEditQueueAssignee(q.assignedTo ?? '')
-                            }}
-                            className="p-0.5 rounded hover:bg-blue-100 text-gray-400 hover:text-blue-600"
+                            onClick={() => { setEditQueueId(q.id); setEditQueueName(q.name); setEditQueueAssignee(q.assignedTo ?? '') }}
+                            className="p-1 rounded hover:bg-gray-100 text-gray-400 hover:text-gray-700"
                             title="Edit queue"
                           >
-                            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>
+                            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>
                           </button>
                           <button
-                            onClick={e => { e.stopPropagation(); setDeleteQueueId(q.id) }}
-                            className="p-0.5 rounded hover:bg-red-100 text-gray-400 hover:text-red-600"
+                            onClick={() => setDeleteQueueId(q.id)}
+                            className="p-1 rounded hover:bg-red-50 text-gray-400 hover:text-red-600"
                             title="Delete queue"
                           >
-                            <Trash2Icon className="w-3 h-3" />
+                            <Trash2Icon className="w-3.5 h-3.5" />
                           </button>
                         </div>
                       )}
                     </div>
+                    <div className="flex items-center gap-1.5 mb-3">
+                      <UserIcon className="w-3 h-3 text-gray-400 shrink-0" />
+                      <span className="text-xs text-gray-500">
+                        {assignee ? assignee.email : <span className="italic text-gray-400">Unassigned</span>}
+                      </span>
+                      {canWrite && (
+                        <button
+                          onClick={() => { setEditQueueId(q.id); setEditQueueName(q.name); setEditQueueAssignee(q.assignedTo ?? '') }}
+                          className="p-0.5 rounded hover:bg-gray-100 text-gray-300 hover:text-gray-600 transition-colors"
+                          title="Reassign"
+                        >
+                          <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>
+                        </button>
+                      )}
+                    </div>
+                    <div className="flex items-center justify-between text-sm mb-1.5">
+                      <span className="text-gray-500">{done} / {total} done</span>
+                      <span className="font-semibold text-gray-700">{pct}%</span>
+                    </div>
+                    <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
+                      <div
+                        className="h-full bg-blue-500 rounded-full transition-all duration-500"
+                        style={{ width: `${pct}%` }}
+                      />
+                    </div>
+                    <p className="text-xs text-amber-600 font-medium mt-2">{incomplete} remaining</p>
                   </div>
-
-                  {/* Start Labeling button */}
                   {firstTaskId ? (
                     <Link
-                      href={`/projects/${projectId}/labeling/${firstTaskId}`}
-                      onClick={e => e.stopPropagation()}
-                      className={cn(
-                        'flex items-center justify-center gap-1.5 w-full px-3 py-2 text-xs font-semibold transition-colors border-t',
-                        queueFilter === q.id
-                          ? 'bg-blue-600 hover:bg-blue-700 text-white border-blue-500'
-                          : 'bg-gray-50 hover:bg-blue-600 hover:text-white text-gray-500 border-gray-100 group-hover:bg-blue-600 group-hover:text-white group-hover:border-blue-500',
-                      )}
+                      href={`/projects/${projectId}/labeling/queue/${q.id}`}
+                      className="flex items-center justify-center gap-2 w-full px-4 py-3 bg-blue-600 hover:bg-blue-700 text-white text-sm font-bold transition-colors"
                     >
-                      <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z" clipRule="evenodd" /></svg>
+                      <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z" clipRule="evenodd" /></svg>
                       Start Labeling
                     </Link>
-                  ) : (
-                    <div className="flex items-center justify-center w-full px-3 py-1.5 text-[10px] text-gray-300 border-t border-gray-100">
-                      All complete
+                  ) : null}
+                </div>
+              )
+            })}
+          </div>
+        </section>
+      )}
+
+      {/* ── Complete queues ───────────────────────────────────────────────── */}
+      {completeQueues.length > 0 && (
+        <section>
+          <h2 className="text-xs font-semibold uppercase tracking-wider text-gray-400 mb-3">Complete</h2>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+            {completeQueues.map(q => {
+              const assignee = q.assignedTo ? userById.get(q.assignedTo) : null
+              const total = taskCountByQueueId.get(q.id) ?? 0
+              return (
+                <div key={q.id} className="group bg-white rounded-xl border border-gray-200 px-4 py-3 flex items-center justify-between gap-3 hover:border-gray-300 transition-colors">
+                  <div className="min-w-0">
+                    <p className="text-sm font-semibold text-gray-700 truncate">{q.name}</p>
+                    <div className="flex items-center gap-1 mt-0.5">
+                      <UserIcon className="w-3 h-3 text-gray-400 shrink-0" />
+                      <span className="text-xs text-gray-400 truncate">
+                        {assignee ? assignee.email : <span className="italic">Unassigned</span>}
+                      </span>
+                      {canWrite && (
+                        <button
+                          onClick={() => { setEditQueueId(q.id); setEditQueueName(q.name); setEditQueueAssignee(q.assignedTo ?? '') }}
+                          className="p-0.5 rounded hover:bg-gray-100 text-gray-300 hover:text-gray-600 transition-colors shrink-0"
+                          title="Reassign"
+                        >
+                          <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>
+                        </button>
+                      )}
+                    </div>
+                    <p className="text-xs text-green-600 font-medium mt-0.5">✓ {total} tasks done</p>
+                  </div>
+                  {canWrite && (
+                    <div className="opacity-0 group-hover:opacity-100 flex items-center gap-0.5 transition-opacity shrink-0">
+                      <button
+                        onClick={() => { setEditQueueId(q.id); setEditQueueName(q.name); setEditQueueAssignee(q.assignedTo ?? '') }}
+                        className="p-1 rounded hover:bg-gray-100 text-gray-400 hover:text-gray-600"
+                        title="Edit"
+                      >
+                        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>
+                      </button>
+                      <button
+                        onClick={() => setDeleteQueueId(q.id)}
+                        className="p-1 rounded hover:bg-red-50 text-gray-400 hover:text-red-500"
+                        title="Delete"
+                      >
+                        <Trash2Icon className="w-3.5 h-3.5" />
+                      </button>
                     </div>
                   )}
                 </div>
               )
             })}
           </div>
-        )}
-      </aside>
+        </section>
+      )}
 
-      {/* ── Right Panel: Tasks ───────────────────────────────────────────── */}
-      <div className="flex-1 min-w-0 flex flex-col gap-4">
-        {/* Header row */}
-        {(() => {
-          const activeQueue = typeof queueFilter === 'string' && queueFilter !== '__all' && queueFilter !== '__unassigned'
-            ? queues.find(q => q.id === queueFilter)
-            : null
-          const firstTaskId = activeQueue ? firstIncompleteByQueueId.get(activeQueue.id) : null
-          const assignee = activeQueue?.assignedTo ? userById.get(activeQueue.assignedTo) : null
+      {/* ── No queues yet ─────────────────────────────────────────────────── */}
+      {queues.length === 0 && tasks.length > 0 && (
+        <div className="bg-amber-50 border border-amber-200 rounded-2xl px-6 py-5 flex items-center justify-between gap-4">
+          <div>
+            <p className="text-sm font-semibold text-amber-800">{unassignedCount} unassigned task{unassignedCount !== 1 ? 's' : ''}</p>
+            <p className="text-xs text-amber-600 mt-0.5">Create a queue to start labeling.</p>
+          </div>
+          {canWrite && (
+            <Button onClick={() => setCreateQueueOpen(true)} size="sm" className="gap-1.5 shrink-0 bg-amber-600 hover:bg-amber-700 text-white border-0">
+              <PlusIcon className="w-3.5 h-3.5" /> New Queue
+            </Button>
+          )}
+        </div>
+      )}
 
-          if (activeQueue) {
-            return (
-              <div className="flex items-center justify-between gap-4 bg-gradient-to-r from-blue-600 to-blue-500 rounded-2xl px-6 py-5 text-white">
-                <div className="min-w-0">
-                  <p className="text-xs font-semibold uppercase tracking-wider text-blue-200 mb-0.5">Active Queue</p>
-                  <h1 className="text-xl font-bold truncate">{activeQueue.name}</h1>
-                  <p className="text-sm text-blue-200 mt-0.5">
-                    {tabCounts.incomplete} incomplete · {tabCounts.complete} done · {tabCounts.all} total
-                    {assignee && <span className="ml-2">· <UserIcon className="inline w-3 h-3 mb-0.5" /> {assignee.email}</span>}
-                  </p>
-                </div>
-                <div className="flex items-center gap-2 shrink-0">
-                  {canWrite && (
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => setCreateQueueOpen(true)}
-                      className="bg-white/10 border-white/30 text-white hover:bg-white/20 hover:text-white gap-1.5"
-                    >
-                      <PlusIcon className="w-3.5 h-3.5" /> New Queue
-                    </Button>
-                  )}
-                  {firstTaskId ? (
-                    <Link
-                      href={`/projects/${projectId}/labeling/queue/${activeQueue.id}`}
-                      className="inline-flex items-center gap-2 rounded-xl bg-white text-blue-600 font-bold text-sm px-5 py-2.5 hover:bg-blue-50 transition-colors shadow-sm"
-                    >
-                      <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z" clipRule="evenodd" /></svg>
-                      Start Labeling
-                    </Link>
-                  ) : (
-                    <div className="inline-flex items-center gap-2 rounded-xl bg-white/20 text-white/70 font-semibold text-sm px-5 py-2.5">
-                      ✓ All complete
-                    </div>
-                  )}
-                </div>
-              </div>
-            )
-          }
-
-          return (
-            <div className="flex items-start justify-between">
-              <div>
-                <h1 className="text-2xl font-semibold text-gray-900">Labeling</h1>
-                <p className="text-sm text-gray-500 mt-0.5">
-                  {incompleteCount} task{incompleteCount !== 1 ? 's' : ''} remaining of {totalCount} total
-                </p>
-              </div>
-              {canWrite && (
-                <Button onClick={() => setCreateQueueOpen(true)} size="sm" className="gap-1.5 shrink-0">
-                  <PlusIcon className="w-3.5 h-3.5" /> New Queue
-                </Button>
+      {/* ── Task management (collapsible) ─────────────────────────────────── */}
+      <section>
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="text-xs font-semibold uppercase tracking-wider text-gray-400">
+            Tasks
+            {unassignedCount > 0 && (
+              <span className="ml-2 text-[10px] bg-amber-50 text-amber-600 border border-amber-200 rounded-full px-1.5 py-0.5 font-medium normal-case tracking-normal">
+                {unassignedCount} unassigned
+              </span>
+            )}
+          </h2>
+          {/* Queue filter pills */}
+          <div className="flex items-center gap-1 flex-wrap">
+            <button
+              onClick={() => setQueueFilter('__unassigned')}
+              className={cn(
+                'px-2.5 py-1 rounded-full text-xs font-medium transition-colors',
+                queueFilter === '__unassigned' ? 'bg-gray-800 text-white' : 'bg-gray-100 text-gray-500 hover:bg-gray-200',
               )}
-            </div>
-          )
-        })()}
+            >
+              Unassigned
+            </button>
+            {queues.map(q => (
+              <button
+                key={q.id}
+                onClick={() => setQueueFilter(q.id)}
+                className={cn(
+                  'px-2.5 py-1 rounded-full text-xs font-medium transition-colors',
+                  queueFilter === q.id ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-500 hover:bg-gray-200',
+                )}
+              >
+                {q.name}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="flex flex-col gap-4">
+          {/* Status tabs + bulk bar */}
 
         {/* Status tabs */}
         <div className="flex items-center gap-1 border-b border-gray-200">
@@ -615,7 +656,8 @@ export default function LabelingView({ projectId, tasks: initialTasks, queues: i
             </table>
           )}
         </div>
-      </div>
+        </div>
+      </section>
 
       {/* ── Create Queue Dialog ───────────────────────────────────────────── */}
       <Dialog open={createQueueOpen} onOpenChange={o => { if (!o) { setCreateQueueOpen(false); setNewQueueName(''); setNewQueueAssignee('') } }}>
@@ -646,7 +688,20 @@ export default function LabelingView({ projectId, tasks: initialTasks, queues: i
                 {users.map(u => <option key={u.id} value={u.id}>{u.email}</option>)}
               </select>
             </div>
-            {selected.size > 0 && (
+            {unassignedCount > 0 && (
+              <label className="flex items-center gap-2.5 px-3 py-2.5 rounded-lg border border-gray-200 bg-gray-50 cursor-pointer hover:bg-gray-100 transition-colors">
+                <input
+                  type="checkbox"
+                  className="rounded"
+                  checked={addUnassignedToQueue}
+                  onChange={e => setAddUnassignedToQueue(e.target.checked)}
+                />
+                <span className="text-sm text-gray-700">
+                  Add all <span className="font-semibold">{unassignedCount}</span> unassigned task{unassignedCount !== 1 ? 's' : ''} to this queue
+                </span>
+              </label>
+            )}
+            {!addUnassignedToQueue && selected.size > 0 && (
               <p className="text-xs text-blue-600 bg-blue-50 rounded-lg px-3 py-2">
                 {selected.size} selected task{selected.size !== 1 ? 's' : ''} will be added to this queue.
               </p>
@@ -730,9 +785,30 @@ export default function LabelingView({ projectId, tasks: initialTasks, queues: i
           <DialogHeader>
             <DialogTitle>Delete queue?</DialogTitle>
           </DialogHeader>
-          <p className="text-sm text-gray-600 mt-1">
-            The queue will be deleted. Tasks in this queue will <strong>not</strong> be deleted — they will simply become unassigned.
-          </p>
+          <div className="flex flex-col gap-3 mt-1">
+            <p className="text-sm text-gray-600">
+              {deleteQueueWithTasks
+                ? <>The queue and all its labeling tasks will be <strong>permanently deleted</strong>.</>
+                : <>The queue will be deleted. Its tasks will become <strong>unassigned</strong>.</>
+              }
+            </p>
+            {(() => {
+              const taskCount = deleteQueueId ? tasks.filter(t => t.queueId === deleteQueueId).length : 0
+              return (
+                <label className="flex items-center gap-2.5 px-3 py-2.5 rounded-lg border border-gray-200 bg-gray-50 cursor-pointer hover:bg-gray-100 transition-colors">
+                  <input
+                    type="checkbox"
+                    className="rounded"
+                    checked={deleteQueueWithTasks}
+                    onChange={e => setDeleteQueueWithTasks(e.target.checked)}
+                  />
+                  <span className="text-sm text-gray-700">
+                    Also delete the <span className="font-semibold">{taskCount}</span> labeling task{taskCount !== 1 ? 's' : ''} in this queue
+                  </span>
+                </label>
+              )
+            })()}
+          </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setDeleteQueueId(null)}>Cancel</Button>
             <Button
@@ -740,7 +816,7 @@ export default function LabelingView({ projectId, tasks: initialTasks, queues: i
               disabled={deleteQueueBusy}
               className="bg-red-600 hover:bg-red-700 text-white border-red-600"
             >
-              {deleteQueueBusy ? 'Deleting…' : 'Delete queue'}
+              {deleteQueueBusy ? 'Deleting…' : deleteQueueWithTasks ? 'Delete queue & tasks' : 'Delete queue'}
             </Button>
           </DialogFooter>
         </DialogContent>

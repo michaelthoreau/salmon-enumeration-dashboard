@@ -326,7 +326,7 @@ export default function VideoPlayer({
         <div className="flex-1 min-h-0 flex items-center justify-center cursor-pointer" onClick={togglePlay}>
           <video
             ref={videoRef}
-            src={videoUrl}
+            src={videoUrl || null}
             preload="auto"
             muted={isMuted}
             playsInline

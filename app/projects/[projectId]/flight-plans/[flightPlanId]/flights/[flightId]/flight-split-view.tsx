@@ -22,9 +22,9 @@ import OrthoMap from './ortho-map'
 import ProcessingModal from './processing-modal'
 import VideoPlayer from './video-player'
 import { Layers } from 'lucide-react'
-import { assignFileSplit, syncFlightFiles, updateBulkFileLocation, updateFileLocation } from '@/app/actions/files'
+import { assignFileSplit, syncFlightFiles, updateBulkFileLocation, updateFileLocation, updateVideoReview } from '@/app/actions/files'
 import { updateFlightPlanLocation } from '@/app/actions/flight-plans'
-import type { Split, flights, flightPlans, projects, odmTasks, georefTasks } from '@/lib/schema'
+import type { Split, ReviewStatus, flights, flightPlans, projects, odmTasks, georefTasks } from '@/lib/schema'
 import type { InferSelectModel } from 'drizzle-orm'
 
 type Flight = InferSelectModel<typeof flights>
@@ -82,6 +82,8 @@ interface FileEntry {
   latitude?: number | null
   longitude?: number | null
   durationSeconds?: number | null
+  reviewStatus?: string | null
+  reviewRating?: number | null
 }
 
 interface FlightSplitViewProps {
@@ -985,7 +987,32 @@ export default function FlightSplitView({
     router.refresh()
   }
 
-  // Pre-generate download link for active image
+  // ── Video review state ─────────────────────────────────────────────────────
+  type ReviewState = { status: ReviewStatus; rating: number | null }
+  const [videoReviews, setVideoReviews] = useState<Record<string, ReviewState>>(() => {
+    const init: Record<string, ReviewState> = {}
+    for (const o of displayObjects) {
+      if (isVideo(o.key) && o.reviewStatus) {
+        init[o.id] = {
+          status: o.reviewStatus as ReviewStatus,
+          rating: o.reviewRating ?? null,
+        }
+      }
+    }
+    return init
+  })
+
+  const activeVideoReview: ReviewState | null = activeImage && isVideo(activeImage.key)
+    ? (videoReviews[activeImage.id] ?? { status: 'not_reviewed' as ReviewStatus, rating: null })
+    : null
+
+  const handleVideoReviewChange = async (status: ReviewStatus, rating: number | null) => {
+    if (!activeImage) return
+    setVideoReviews(prev => ({ ...prev, [activeImage.id]: { status, rating } }))
+    await updateVideoReview(activeImage.id, status, rating)
+  }
+
+
   const [activeImageDownloadUrl, setActiveImageDownloadUrl] = useState('')
   useEffect(() => {
     if (!activeImage) return
@@ -1639,62 +1666,130 @@ export default function FlightSplitView({
                   {/* Large Viewport Area */}
                   {activeImage && (
                     <div className="flex-1 min-h-0 flex flex-col overflow-hidden bg-gray-950">
-                      {/* Combined Metadata & Actions Header */}
-                      <div className="bg-gray-900 border-b border-gray-800 px-6 py-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-gray-300 flex-shrink-0">
-                        <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+                      {/* Row 1: file info + split */}
+                      <div className="bg-gray-900 border-b border-gray-800 px-6 py-2.5 flex items-center justify-between gap-4 text-gray-300 flex-shrink-0">
+                        <div className="flex items-center gap-4 min-w-0">
                           <span className="text-xs font-mono font-medium text-white truncate max-w-[240px]" title={activeImage.key.split('/').pop()}>
                             {activeImage.key.split('/').pop()}
                           </span>
-                          <span className="text-[11px] text-gray-500 font-mono">{formatBytes(activeImage.size)}</span>
+                          <span className="text-[11px] text-gray-500 font-mono flex-none">{formatBytes(activeImage.size)}</span>
+                          <span className="text-[10px] text-gray-600 font-mono flex-none hidden sm:inline">
+                            {new Date(activeImage.lastModifiedIso).toLocaleString()}
+                          </span>
                           {activeImageDownloadUrl && (
                             <a
                               href={activeImageDownloadUrl}
-                              className="text-xs text-blue-400 hover:text-blue-300 flex items-center gap-1 font-medium transition-colors"
+                              className="text-xs text-blue-400 hover:text-blue-300 flex items-center gap-1 font-medium transition-colors flex-none"
                             >
                               <DownloadIcon className="w-3.5 h-3.5" /> Download
                             </a>
                           )}
                         </div>
-
-                        <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
-                          <div className="flex items-center gap-2">
-                            <span className="text-xs text-gray-400">Dataset Split:</span>
-                            {canWrite ? (
-                              <select
-                                value={activeSplit}
-                                onChange={(e) => handleSplitChange(e.target.value)}
-                                className={cn(
-                                  'text-xs rounded border px-3 py-1 font-medium focus:outline-none focus:ring-1 cursor-pointer transition-colors',
-                                  SPLIT_SELECT_CLASSES[activeSplit]
-                                )}
-                              >
-                                <option value="none">Unassigned</option>
-                                <option value="train">Train</option>
-                                <option value="val">Validation</option>
-                                <option value="test">Testing</option>
-                              </select>
-                            ) : (
-                              <span
-                                className={cn(
-                                  'inline-flex items-center rounded px-2.5 py-0.5 text-xs font-semibold capitalize',
-                                  activeSplit === 'train' && 'bg-blue-900/30 text-blue-300',
-                                  activeSplit === 'val' && 'bg-amber-900/30 text-amber-300',
-                                  activeSplit === 'test' && 'bg-green-900/30 text-green-300',
-                                  activeSplit === 'none' && 'bg-gray-800 text-gray-500'
-                                )}
-                              >
-                                {activeSplit === 'none' ? 'unassigned' : activeSplit}
-                              </span>
-                            )}
-                          </div>
-                          <p className="text-[10px] text-gray-500 font-mono">
-                            Modified: {new Date(activeImage.lastModifiedIso).toLocaleString()}
-                          </p>
+                        <div className="flex items-center gap-2 flex-none">
+                          <span className="text-xs text-gray-500">Split:</span>
+                          {canWrite ? (
+                            <select
+                              value={activeSplit}
+                              onChange={(e) => handleSplitChange(e.target.value)}
+                              className={cn(
+                                'text-xs rounded border px-2 py-0.5 font-medium focus:outline-none focus:ring-1 cursor-pointer transition-colors',
+                                SPLIT_SELECT_CLASSES[activeSplit]
+                              )}
+                            >
+                              <option value="none">Unassigned</option>
+                              <option value="train">Train</option>
+                              <option value="val">Validation</option>
+                              <option value="test">Testing</option>
+                            </select>
+                          ) : (
+                            <span className={cn(
+                              'inline-flex items-center rounded px-2 py-0.5 text-xs font-semibold capitalize',
+                              activeSplit === 'train' && 'bg-blue-900/30 text-blue-300',
+                              activeSplit === 'val' && 'bg-amber-900/30 text-amber-300',
+                              activeSplit === 'test' && 'bg-green-900/30 text-green-300',
+                              activeSplit === 'none' && 'bg-gray-800 text-gray-500'
+                            )}>
+                              {activeSplit === 'none' ? 'unassigned' : activeSplit}
+                            </span>
+                          )}
                         </div>
                       </div>
 
+                      {/* Row 2: review controls — video only */}
+                      {activeVideoReview && (
+                        <div className="bg-gray-950 border-b border-gray-800 px-6 py-2 flex items-center gap-6 flex-shrink-0">
+                          {/* Status */}
+                          <div className="flex items-center gap-2">
+                            <span className="text-[10px] font-medium text-gray-500 uppercase tracking-wide w-12">Status</span>
+                            {canWrite ? (
+                              <div className="flex rounded overflow-hidden border border-gray-800">
+                                {([
+                                  { value: 'not_reviewed' as ReviewStatus, label: 'Unreviewed', active: 'bg-gray-600 text-gray-100' },
+                                  { value: 'in_review'    as ReviewStatus, label: 'In review',  active: 'bg-blue-600 text-white' },
+                                  { value: 'reviewed'     as ReviewStatus, label: 'Reviewed',   active: 'bg-green-600 text-white' },
+                                ]).map(opt => (
+                                  <button
+                                    key={opt.value}
+                                    type="button"
+                                    onClick={() => handleVideoReviewChange(opt.value, activeVideoReview.rating)}
+                                    className={cn(
+                                      'px-3 py-1 text-[11px] font-medium border-r last:border-r-0 border-gray-800 transition-all',
+                                      activeVideoReview.status === opt.value
+                                        ? opt.active
+                                        : 'bg-gray-900 text-gray-500 hover:bg-gray-800 hover:text-gray-300'
+                                    )}
+                                  >
+                                    {opt.label}
+                                  </button>
+                                ))}
+                              </div>
+                            ) : (
+                              <span className="text-xs text-gray-300 capitalize">{activeVideoReview.status.replace('_', ' ')}</span>
+                            )}
+                          </div>
+
+                          {/* Quality */}
+                          <div className="flex items-center gap-2">
+                            <span className="text-[10px] font-medium text-gray-500 uppercase tracking-wide w-12">Quality</span>
+                            {canWrite ? (
+                              <div className="flex gap-1.5">
+                                {([
+                                  { n: 1, label: 'Not usable',      active: 'bg-red-600 text-white border-red-700',     inactive: 'bg-gray-900 text-gray-500 border-gray-700 hover:border-red-600 hover:text-red-400 hover:bg-red-950' },
+                                  { n: 2, label: 'Somewhat usable', active: 'bg-amber-500 text-white border-amber-600',  inactive: 'bg-gray-900 text-gray-500 border-gray-700 hover:border-amber-500 hover:text-amber-400 hover:bg-amber-950' },
+                                  { n: 3, label: 'Very usable',     active: 'bg-green-600 text-white border-green-700', inactive: 'bg-gray-900 text-gray-500 border-gray-700 hover:border-green-600 hover:text-green-400 hover:bg-green-950' },
+                                ]).map(({ n, label, active, inactive }) => (
+                                  <button
+                                    key={n}
+                                    type="button"
+                                    title={label}
+                                    onClick={() => handleVideoReviewChange(activeVideoReview.status, activeVideoReview.rating === n ? null : n)}
+                                    className={cn(
+                                      'w-7 h-7 rounded text-xs font-bold border transition-all',
+                                      activeVideoReview.rating === n ? active : inactive
+                                    )}
+                                  >
+                                    {n}
+                                  </button>
+                                ))}
+                              </div>
+                            ) : (
+                              <span className="text-xs text-gray-300">{activeVideoReview.rating ?? '—'}</span>
+                            )}
+                            {activeVideoReview.rating != null && (
+                              <span className={cn('text-[11px] font-medium',
+                                activeVideoReview.rating === 1 && 'text-red-400',
+                                activeVideoReview.rating === 2 && 'text-amber-400',
+                                activeVideoReview.rating === 3 && 'text-green-400',
+                              )}>
+                                {['', 'Not usable for training', 'Somewhat usable', 'Very usable'][activeVideoReview.rating]}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      )}
+
                       {/* Interactive Viewport (Takes up full area) */}
-                      <div className="flex-1 min-h-0 flex items-center justify-center relative bg-gray-950">
+                      <div className={cn("min-h-0 flex items-center justify-center relative bg-gray-950", isVideo(activeImage.key) ? "flex-[1_1_0%]" : "flex-1")}>
                         {isVideo(activeImage.key) ? (
                           <div className="w-full h-full">
                             <VideoPlayer

@@ -33,6 +33,7 @@ export default async function DatasetPage({ params }: PageProps) {
       reviewRating: files.reviewRating,
       durationSeconds: files.durationSeconds,
       flightId: flights.id,
+      flightPlanId: flights.flightPlanId,
       flightTimestamp: flights.timestamp,
       flightPlanName: flightPlans.name,
     })
@@ -57,6 +58,7 @@ export default async function DatasetPage({ params }: PageProps) {
     reviewRating: r.reviewRating ?? null,
     durationSeconds: r.durationSeconds ?? null,
     flightId: r.flightId,
+    flightPlanId: r.flightPlanId,
     flightTimestampIso: r.flightTimestamp.toISOString(),
     flightPlanName: r.flightPlanName,
     uploadedAtIso: r.uploadedAt.toISOString(),

@@ -221,6 +221,8 @@ export default async function FlightDetailPage({ params, searchParams }: PagePro
         latitude: o.latitude,
         longitude: o.longitude,
         durationSeconds: o.durationSeconds ?? null,
+        reviewStatus: o.reviewStatus ?? null,
+        reviewRating: o.reviewRating ?? null,
       }))}
       geotiffKey={geotiffKey ?? null}
       reportPdfKey={reportPdfKey ?? null}
