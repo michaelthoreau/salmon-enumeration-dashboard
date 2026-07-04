@@ -309,7 +309,7 @@ export default function QueueAnnotator({
   const handlePlayLastSecond = useCallback(() => {
     const video = videoRef.current
     if (!video) return
-    const targetTime = video.currentTime
+    const targetTime = task.frame / fps
     video.currentTime = Math.max(0, targetTime - 1)
     video.play().catch(() => {})
     // Poll with rAF for precise stopping — timeupdate only fires ~4x/sec
@@ -325,7 +325,7 @@ export default function QueueAnnotator({
     }
     if (rafRef.current !== null) cancelAnimationFrame(rafRef.current)
     rafRef.current = requestAnimationFrame(stop)
-  }, [])
+  }, [task.frame, fps])
 
   // ── Drag handling ─────────────────────────────────────────────────────────
   const endDrag = useCallback(() => {
