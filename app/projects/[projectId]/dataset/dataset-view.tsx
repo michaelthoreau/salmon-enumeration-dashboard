@@ -40,6 +40,23 @@ function formatBytes(bytes: number | null): string {
   return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} GB`
 }
 
+function getDateKey(iso: string, tz: string): string {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit',
+  }).formatToParts(new Date(iso))
+  const y = parts.find(p => p.type === 'year')!.value
+  const m = parts.find(p => p.type === 'month')!.value
+  const d = parts.find(p => p.type === 'day')!.value
+  return `${y}-${m}-${d}`
+}
+
+function formatDateLabel(dateKey: string): string {
+  const [y, m, d] = dateKey.split('-').map(Number)
+  return new Date(y, m - 1, d).toLocaleDateString('en-US', {
+    weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
+  })
+}
+
 const TABS = ['unassigned', 'train', 'val', 'test'] as const
 type Tab = (typeof TABS)[number]
 
@@ -222,7 +239,6 @@ export default function DatasetView({ projectId, entries: initialEntries, taskCo
       if (activeTab === 'unassigned') { if (s !== null) return false }
       else { if (s !== activeTab) return false }
       if (excludeWithTasks && isImageKey(e.key) && (taskCounts.get(e.fileId) ?? 0) > 0) return false
-      if (isVideoKey(e.key) && e.reviewRating !== 2 && e.reviewRating !== 3) return false
       return true
     })
   }, [allEntries, splits, activeTab, excludeWithTasks, taskCounts])
@@ -381,14 +397,12 @@ export default function DatasetView({ projectId, entries: initialEntries, taskCo
   // ── Video labeling task creation ───────────────────────────────────────────
 
   const selectedVideoEntries = allEntries.filter(
-    e => selected.has(e.key) && isVideoKey(e.key) &&
-      (e.reviewRating === 2 || e.reviewRating === 3)
+    e => selected.has(e.key) && isVideoKey(e.key)
   )
 
   const openVideoTaskDialog = useCallback(() => {
     const videoEntries = allEntries
       .filter(e => selected.has(e.key) && isVideoKey(e.key) &&
-        (e.reviewRating === 2 || e.reviewRating === 3) &&
         e.durationSeconds != null && e.durationSeconds > 0)
       .map(e => ({
         fileId: e.fileId,
@@ -421,17 +435,16 @@ export default function DatasetView({ projectId, entries: initialEntries, taskCo
 
   const counts = globalCounts
 
-  // Group filtered entries by flight
+  // Group filtered entries by calendar day (newest first)
   const flightGroups = useMemo(() => {
-    const map = new Map<string, { flightPlanName: string; flightTimestampIso: string; entries: DatasetEntry[] }>()
+    const map = new Map<string, { label: string; entries: DatasetEntry[] }>()
     for (const entry of filtered) {
-      if (!map.has(entry.flightId)) {
-        map.set(entry.flightId, { flightPlanName: entry.flightPlanName, flightTimestampIso: entry.flightTimestampIso, entries: [] })
-      }
-      map.get(entry.flightId)!.entries.push(entry)
+      const key = getDateKey(entry.flightTimestampIso, timezone)
+      if (!map.has(key)) map.set(key, { label: formatDateLabel(key), entries: [] })
+      map.get(key)!.entries.push(entry)
     }
-    return Array.from(map.entries())
-  }, [filtered])
+    return Array.from(map.entries()).sort((a, b) => b[0].localeCompare(a[0]))
+  }, [filtered, timezone])
 
   const tabLabel: Record<Tab, string> = {
     unassigned: 'Unassigned',
@@ -549,13 +562,13 @@ export default function DatasetView({ projectId, entries: initialEntries, taskCo
         </div>
       ) : (
         <div className="space-y-3">
-          {flightGroups.map(([flightId, group]) => {
-            const isCollapsed = collapsedFlights.has(flightId)
+          {flightGroups.map(([dateKey, group]) => {
+            const isCollapsed = collapsedFlights.has(dateKey)
             const groupKeys = group.entries.map(e => e.key)
             const allGroupSelected = groupKeys.every(k => selected.has(k))
             const someGroupSelected = groupKeys.some(k => selected.has(k))
             return (
-              <div key={flightId} className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+              <div key={dateKey} className="bg-white rounded-xl border border-gray-200 overflow-hidden">
                 {/* Section header */}
                 <div className="flex items-center gap-3 px-4 py-3 bg-gray-50 border-b border-gray-200">
                   <input
@@ -567,16 +580,14 @@ export default function DatasetView({ projectId, entries: initialEntries, taskCo
                       if (e.target.checked) setSelected(prev => new Set([...prev, ...groupKeys]))
                       else setSelected(prev => { const n = new Set(prev); groupKeys.forEach(k => n.delete(k)); return n })
                     }}
-                    aria-label={`Select all files in ${group.flightPlanName}`}
+                    aria-label={`Select all files for ${group.label}`}
                     onClick={ev => ev.stopPropagation()}
                   />
                   <button
-                    onClick={() => toggleFlight(flightId)}
+                    onClick={() => toggleFlight(dateKey)}
                     className="flex-1 flex items-center gap-3 text-left"
                   >
-                    <span className="text-sm font-semibold text-gray-800">{group.flightPlanName}</span>
-                    <span className="text-gray-300">–</span>
-                    <span className="text-sm text-gray-500">{fmt.format(new Date(group.flightTimestampIso))}</span>
+                    <span className="text-sm font-semibold text-gray-800">{group.label}</span>
                     <span className="text-xs text-gray-400 bg-gray-100 rounded-full px-2 py-0.5 ml-1">
                       {group.entries.length} file{group.entries.length !== 1 ? 's' : ''}
                     </span>
