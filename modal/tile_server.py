@@ -36,7 +36,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 image = (
     modal.Image.debian_slim(python_version="3.11")
-    .pip_install("fastapi[standard]", "rio-tiler[http]", "Pillow")
+    .pip_install("fastapi[standard]", "rio-tiler[http]", "Pillow", "boto3", "av")
 )
 
 app = modal.App("salmon-tile-server", image=image)
@@ -331,5 +331,81 @@ def web() -> FastAPI:
         print(f"[DIFF_TILE] Tile {z}/{x}/{y} diff for key1: {key1}, key2: {key2} finished in {total_duration:.1f}ms "
               f"(Read1: {t1_duration:.1f}ms, Read2: {t2_duration:.1f}ms, Calc: {diff_duration:.1f}ms, PNG: {png_duration:.1f}ms)")
         return Response(content=content, media_type="image/png")
+
+    # ── GET /frame ─────────────────────────────────────────────────────────────
+
+    @web_app.get("/frame")
+    async def get_frame(
+        url: str | None = Query(None),
+        key: str | None = Query(None),
+        frame: int = Query(...),
+        quality: int = Query(95),
+        bucket: str | None = Query(None),
+        _: None = Depends(_require_auth),
+    ) -> Response:
+        import time
+        import io
+        import boto3
+        from botocore.config import Config
+        from PIL import Image
+        import av
+
+        start_time = time.time()
+        print(f"[FRAME] Started frame extraction, frame: {frame}")
+        try:
+            if url:
+                presigned_url = url
+            else:
+                if not key:
+                    from fastapi import HTTPException
+                    raise HTTPException(status_code=400, detail="Either 'url' or 'key' is required")
+                b = bucket or os.environ["S3_BUCKET_NAME"]
+                s3_client = boto3.client(
+                    "s3",
+                    region_name=os.environ.get("AWS_REGION", "us-east-1"),
+                    aws_access_key_id=os.environ["AWS_ACCESS_KEY_ID"],
+                    aws_secret_access_key=os.environ["AWS_SECRET_ACCESS_KEY"],
+                    config=Config(signature_version="s3v4"),
+                )
+                presigned_url = s3_client.generate_presigned_url(
+                    ClientMethod="get_object",
+                    Params={"Bucket": b, "Key": key},
+                    ExpiresIn=3600,
+                )
+
+            container = av.open(presigned_url)
+            stream = container.streams.video[0]
+
+            fps = float(stream.average_rate) if stream.average_rate else 29.97
+            time_base = float(stream.time_base) if stream.time_base else 1/90000
+            target_sec = frame / fps
+            target_ts = int(target_sec / time_base)
+
+            container.seek(target_ts, stream=stream, backward=True)
+
+            result_frame = None
+            for f in container.decode(video=0):
+                if f.pts is not None and f.pts >= target_ts:
+                    result_frame = f
+                    break
+
+            if not result_frame:
+                print(f"[FRAME] Warning: seek did not find exact pts >= {target_ts}, taking first decoded frame after seek.")
+                raise HTTPException(status_code=404, detail="Frame not found in video stream")
+
+            pil_img = result_frame.to_image()
+
+            buf = io.BytesIO()
+            pil_img.save(buf, format="JPEG", quality=quality)
+            content = buf.getvalue()
+
+            total_duration = (time.time() - start_time) * 1000
+            print(f"[FRAME] Completed frame extraction for key: {key}, frame: {frame} in {total_duration:.1f}ms")
+            return Response(content=content, media_type="image/jpeg")
+
+        except Exception as exc:
+            total_duration = (time.time() - start_time) * 1000
+            print(f"[FRAME] Error extracting frame {frame} for key: {key} after {total_duration:.1f}ms: {exc}")
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
 
     return web_app
