@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
-import { History } from 'lucide-react'
+import { History, X } from 'lucide-react'
 import { saveTaskPoints, setTaskComplete } from '@/app/actions/labeling-tasks'
 
 interface Point {
@@ -66,6 +66,19 @@ export default function QueueAnnotator({
 }: Props) {
   const router = useRouter()
   const isVideo = isVideoKey(task.fileKey)
+
+  // ── Instructions modal ───────────────────────────────────────────────
+  const storageKey = `labeling-instructions-seen-${queueId}`
+  const [showInstructions, setShowInstructions] = useState(false)
+  useEffect(() => {
+    if (typeof window !== 'undefined' && !localStorage.getItem(storageKey)) {
+      setShowInstructions(true)
+    }
+  }, [storageKey])
+  const dismissInstructions = () => {
+    localStorage.setItem(storageKey, '1')
+    setShowInstructions(false)
+  }
 
   // ── Annotation state ──────────────────────────────────────────────────────
   const [points, setPoints] = useState<Point[]>(() => initialPoints.map(p => ({ ...p })))
@@ -578,7 +591,7 @@ export default function QueueAnnotator({
                   setSaveStatus('idle')
                 }}
                 onMouseMove={(e) => {
-                  if (!dragRef.current || !canWrite) return
+                  if (!dragRef.current || !canWrite || !videoDims) return
                   didDragRef.current = true
                   const rect = e.currentTarget.getBoundingClientRect()
                   const px = Math.max(0, Math.min(videoDims.w, (e.clientX - rect.left) / zoom / overlayScale))
@@ -658,8 +671,11 @@ export default function QueueAnnotator({
         <div className="flex-1 min-h-0 flex flex-col items-center justify-center gap-3 bg-gray-950 p-6">
           <div
             className="relative select-none bg-gray-900 rounded-xl overflow-hidden shadow-2xl"
-            style={{ width: displayW, height: displayH }}
-            {...canvasProps}
+            style={{ width: displayW, height: displayH, cursor: canWrite ? cursor : 'default' }}
+            onClick={handleCanvasClick}
+            onMouseDown={handleMouseDown}
+            onMouseMove={handleMouseMove}
+            onContextMenu={handleContextMenu}
           >
             {imageUrl && !imageError && (
               // eslint-disable-next-line @next/next/no-img-element
@@ -685,6 +701,50 @@ export default function QueueAnnotator({
               <span><kbd className="font-mono bg-gray-800 border border-gray-700 text-gray-300 rounded px-1 py-0.5">C / Enter</kbd> complete</span>
             </div>
           )}
+        </div>
+      )}
+
+      {/* ── Instructions modal ─────────────────────────────────────────────── */}
+      {showInstructions && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+          <div className="bg-gray-900 border border-gray-700 rounded-2xl shadow-2xl w-full max-w-lg mx-4 overflow-hidden">
+            <div className="flex items-center justify-between px-6 pt-5 pb-3">
+              <h2 className="text-base font-bold text-white">Labeling tips</h2>
+              <button onClick={dismissInstructions} className="text-gray-500 hover:text-white transition-colors p-1">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <ul className="px-6 pb-5 space-y-3 text-sm text-gray-300">
+              <li className="flex gap-3">
+                <span className="text-blue-400 font-bold shrink-0">1.</span>
+                <span>Click to place a dot on every visible fish in the frame.</span>
+              </li>
+              <li className="flex gap-3">
+                <span className="text-blue-400 font-bold shrink-0">2.</span>
+                <span>If fish are too hard to make out, skip the frame and move on — it's better to skip than to guess.</span>
+              </li>
+              <li className="flex gap-3">
+                <span className="text-blue-400 font-bold shrink-0">3.</span>
+                <span>You don't need to label every frame. Spread your effort across the video rather than spending too long on one clip.</span>
+              </li>
+              <li className="flex gap-3">
+                <span className="text-blue-400 font-bold shrink-0">4.</span>
+                <span>Use <span className="font-semibold text-white">zoom</span> to get a closer look, and <span className="font-semibold text-white">Replay last second</span> to watch motion before deciding.</span>
+              </li>
+              <li className="flex gap-3">
+                <span className="text-amber-400 font-bold shrink-0">★</span>
+                <span><span className="font-semibold text-white">Quality over quantity.</span> A bad label teaches the model the wrong thing. When in doubt, skip.</span>
+              </li>
+            </ul>
+            <div className="px-6 pb-5">
+              <button
+                onClick={dismissInstructions}
+                className="w-full py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-sm font-bold transition-colors"
+              >
+                Got it, let's go
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>
