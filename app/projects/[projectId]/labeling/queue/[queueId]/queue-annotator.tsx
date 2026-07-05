@@ -33,6 +33,7 @@ interface QueueTaskItem {
   y2: number
   frame: number
   completedBy: string | null
+  completedByEmail?: string | null
   pointCount: number
 }
 
@@ -614,7 +615,12 @@ export default function QueueAnnotator({
                         )}
                         <div className="min-w-0 flex flex-col">
                           <span className="text-[11px] font-medium truncate">{displayFilename}</span>
-                          <span className="text-[9px] text-gray-500 font-mono truncate">{labelStr}</span>
+                          <span className="text-[9px] text-gray-500 font-mono truncate">
+                            {labelStr}
+                            {t.completedByEmail && (
+                              <span className="text-gray-600 font-normal ml-1.5 font-sans">({t.completedByEmail})</span>
+                            )}
+                          </span>
                         </div>
                       </div>
                       <div className="flex items-center gap-1.5 shrink-0">

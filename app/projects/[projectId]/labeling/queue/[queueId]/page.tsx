@@ -8,6 +8,7 @@ import {
   flights,
   flightPlans,
   projects,
+  users,
 } from '@/lib/schema'
 import { eq, asc, sql, count } from 'drizzle-orm'
 import { getSession } from '@/lib/session'
@@ -43,6 +44,7 @@ export default async function QueueLabelingPage({ params, searchParams }: PagePr
       y2: labelingTasks.y2,
       frame: labelingTasks.frame,
       completedBy: labelingTasks.completedBy,
+      completedByEmail: users.email,
       createdAt: labelingTasks.createdAt,
       flightPlanName: flightPlans.name,
       pointCount: count(labelingTaskPoints.id),
@@ -52,8 +54,9 @@ export default async function QueueLabelingPage({ params, searchParams }: PagePr
     .innerJoin(flights, eq(files.flightId, flights.id))
     .innerJoin(flightPlans, eq(flights.flightPlanId, flightPlans.id))
     .leftJoin(labelingTaskPoints, eq(labelingTasks.id, labelingTaskPoints.taskId))
+    .leftJoin(users, eq(labelingTasks.completedBy, users.id))
     .where(eq(labelingTasks.queueId, queueId))
-    .groupBy(labelingTasks.id)
+    .groupBy(labelingTasks.id, users.email)
     .orderBy(asc(labelingTasks.createdAt))
 
   if (queueTaskRows.length === 0) {
@@ -116,6 +119,7 @@ export default async function QueueLabelingPage({ params, searchParams }: PagePr
         y2: t.y2,
         frame: t.frame,
         completedBy: t.completedBy ?? null,
+        completedByEmail: t.completedByEmail ?? null,
         pointCount: t.pointCount,
       }))}
     />
