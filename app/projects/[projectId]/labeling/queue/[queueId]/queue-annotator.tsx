@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
-import { History, X } from 'lucide-react'
+import { History, X, ChevronDown, Check, Circle, List, MoreHorizontal } from 'lucide-react'
 import { saveTaskPoints, setTaskComplete } from '@/app/actions/labeling-tasks'
 
 interface Point {
@@ -24,6 +24,18 @@ interface Task {
   flightPlanName: string
 }
 
+interface QueueTaskItem {
+  id: string
+  fileKey: string
+  x1: number
+  y1: number
+  x2: number
+  y2: number
+  frame: number
+  completedBy: string | null
+  pointCount: number
+}
+
 interface Props {
   projectId: string
   queueId: string
@@ -36,6 +48,7 @@ interface Props {
   completeCount: number
   prevTaskId: string | null
   nextTaskId: string | null
+  queueTasks?: QueueTaskItem[]
 }
 
 const POINT_RADIUS = 4
@@ -63,9 +76,44 @@ export default function QueueAnnotator({
   completeCount,
   prevTaskId,
   nextTaskId,
+  queueTasks = [],
 }: Props) {
   const router = useRouter()
   const isVideo = isVideoKey(task.fileKey)
+
+  // ── Task selector state ──────────────────────────────────────────────
+  const [showTaskSelector, setShowTaskSelector] = useState(false)
+  const [filterTab, setFilterTab] = useState<'all' | 'completed' | 'incomplete'>('all')
+  const selectorRef = useRef<HTMLDivElement>(null)
+
+  // Click outside to close selector
+  useEffect(() => {
+    const handleOutsideClick = (e: MouseEvent) => {
+      if (selectorRef.current && !selectorRef.current.contains(e.target as Node)) {
+        setShowTaskSelector(false)
+      }
+    }
+    if (showTaskSelector) {
+      document.addEventListener('mousedown', handleOutsideClick)
+    }
+    return () => document.removeEventListener('mousedown', handleOutsideClick)
+  }, [showTaskSelector])
+
+  const [showActionsMenu, setShowActionsMenu] = useState(false)
+  const actionsMenuRef = useRef<HTMLDivElement>(null)
+
+  // Click outside to close actions menu
+  useEffect(() => {
+    const handleOutsideClick = (e: MouseEvent) => {
+      if (actionsMenuRef.current && !actionsMenuRef.current.contains(e.target as Node)) {
+        setShowActionsMenu(false)
+      }
+    }
+    if (showActionsMenu) {
+      document.addEventListener('mousedown', handleOutsideClick)
+    }
+    return () => document.removeEventListener('mousedown', handleOutsideClick)
+  }, [showActionsMenu])
 
   // ── Instructions modal ───────────────────────────────────────────────
   const storageKey = `labeling-instructions-seen-${queueId}`
@@ -379,6 +427,35 @@ export default function QueueAnnotator({
     }
   }, [canWrite, dirty, complete, task.id, doSave, nextTaskId, projectId, queueId, router])
 
+  const handleMarkIncomplete = useCallback(async () => {
+    if (!canWrite) return
+    setBusy(true)
+    await setTaskComplete(task.id, false)
+    setComplete(false)
+    setBusy(false)
+    router.refresh()
+  }, [canWrite, task.id, router])
+
+  const handleNavigateToTask = useCallback(async (targetTaskId: string) => {
+    if (targetTaskId === task.id) return
+    if (dirty && canWrite) {
+      setBusy(true)
+      const ok = await doSave()
+      setBusy(false)
+      if (!ok) return
+    }
+    router.push(queueTaskUrl(projectId, queueId, targetTaskId))
+    setShowTaskSelector(false)
+  }, [task.id, dirty, canWrite, doSave, projectId, queueId, router])
+
+  const filteredTasks = useMemo(() => {
+    return queueTasks.filter(t => {
+      if (filterTab === 'completed') return !!t.completedBy
+      if (filterTab === 'incomplete') return !t.completedBy
+      return true
+    })
+  }, [queueTasks, filterTab])
+
   // ── Canvas interaction ────────────────────────────────────────────────────
   const handleMouseDown = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
     if (e.button !== 0 || !canWrite) return
@@ -472,11 +549,88 @@ export default function QueueAnnotator({
         <Link href={`/projects/${projectId}/labeling`} className="text-xs text-gray-400 hover:text-white transition-colors shrink-0">← Labeling</Link>
         <span className="text-gray-700 select-none">|</span>
         <span className="text-sm font-semibold text-white truncate min-w-0">{queueName}</span>
-        <div className="flex items-center gap-2 shrink-0">
-          <span className="text-sm font-black tabular-nums text-white">{positionInQueue}<span className="text-gray-500 font-normal text-xs"> / {totalInQueue}</span></span>
+        <div ref={selectorRef} className="relative flex items-center gap-2 shrink-0">
+          <button
+            onClick={() => setShowTaskSelector(!showTaskSelector)}
+            className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-gray-800 hover:bg-gray-700 border border-gray-700 text-white text-xs font-semibold transition-colors"
+          >
+            <List className="w-3.5 h-3.5 text-blue-400 animate-pulse" />
+            <span className="text-sm font-black tabular-nums text-white">
+              {positionInQueue}
+              <span className="text-gray-500 font-normal text-xs"> / {totalInQueue}</span>
+            </span>
+            <ChevronDown className={`w-3 h-3 text-gray-400 transition-transform ${showTaskSelector ? 'rotate-180' : ''}`} />
+          </button>
+          
           <div className="w-20 h-1.5 bg-gray-700 rounded-full overflow-hidden">
             <div className="h-full bg-blue-500 rounded-full transition-all duration-500" style={{ width: `${progressPct}%` }} />
           </div>
+
+          {showTaskSelector && (
+            <div className="absolute top-9 left-0 z-30 w-80 max-h-[480px] overflow-hidden bg-gray-900 border border-gray-800 rounded-xl shadow-2xl flex flex-col">
+              {/* Header */}
+              <div className="flex items-center justify-between px-4 py-2.5 border-b border-gray-800 bg-gray-950">
+                <span className="text-xs font-semibold text-gray-300">Queue Tasks</span>
+                <span className="text-[10px] bg-gray-800 px-2 py-0.5 rounded text-gray-400 font-medium">{completeCount} / {totalInQueue} Complete</span>
+              </div>
+              
+              {/* Tab Filters */}
+              <div className="flex border-b border-gray-800 bg-gray-950/50 p-1 gap-1">
+                {(['all', 'completed', 'incomplete'] as const).map(tab => (
+                  <button
+                    key={tab}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      setFilterTab(tab)
+                    }}
+                    className={`flex-1 py-1 text-[10px] font-semibold rounded capitalize transition-colors ${filterTab === tab ? 'bg-gray-800 text-white' : 'text-gray-400 hover:text-white'}`}
+                  >
+                    {tab}
+                  </button>
+                ))}
+              </div>
+
+              {/* Scrollable list */}
+              <div className="flex-1 overflow-y-auto p-1.5 max-h-[350px] space-y-0.5">
+                {filteredTasks.map((t) => {
+                  const isActive = t.id === task.id
+                  const isItemVideo = isVideoKey(t.fileKey)
+                  const displayFilename = t.fileKey.split('/').pop() ?? t.fileKey
+                  const labelStr = isItemVideo 
+                    ? `Frame ${t.frame}`
+                    : `${t.x1},${t.y1}–${t.x2},${t.y2}`
+
+                  return (
+                    <button
+                      key={t.id}
+                      onClick={() => handleNavigateToTask(t.id)}
+                      className={`w-full flex items-center justify-between p-2 rounded-lg text-left transition-colors ${isActive ? 'bg-blue-600/20 border border-blue-500/40 text-white' : 'hover:bg-gray-800/60 text-gray-300 hover:text-white'}`}
+                    >
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        {t.completedBy ? (
+                          <Check className="w-3.5 h-3.5 text-green-500 shrink-0" />
+                        ) : (
+                          <Circle className="w-3.5 h-3.5 text-gray-600 shrink-0" />
+                        )}
+                        <div className="min-w-0 flex flex-col">
+                          <span className="text-[11px] font-medium truncate">{displayFilename}</span>
+                          <span className="text-[9px] text-gray-500 font-mono truncate">{labelStr}</span>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <span className="text-[10px] font-black tabular-nums bg-gray-800/80 px-1.5 py-0.5 rounded text-blue-400">
+                          {t.pointCount} fish
+                        </span>
+                      </div>
+                    </button>
+                  )
+                })}
+                {filteredTasks.length === 0 && (
+                  <div className="text-center py-6 text-xs text-gray-500">No {filterTab} tasks found</div>
+                )}
+              </div>
+            </div>
+          )}
         </div>
         <span className="text-gray-700 select-none">|</span>
         <span className="text-xs font-mono text-gray-400 truncate min-w-0">
@@ -517,6 +671,33 @@ export default function QueueAnnotator({
         <div className="ml-auto flex items-center gap-1.5 shrink-0">
           <button onClick={handlePrev} disabled={!prevTaskId} className="px-3 py-1.5 rounded-lg border border-gray-700 bg-gray-800 text-xs font-medium text-gray-300 hover:bg-gray-700 hover:text-white transition-colors disabled:opacity-30 disabled:cursor-not-allowed">← Prev</button>
           <button onClick={handleSkip} disabled={!nextTaskId} className="px-3 py-1.5 rounded-lg border border-gray-700 bg-gray-800 text-xs font-medium text-gray-300 hover:bg-gray-700 hover:text-white transition-colors disabled:opacity-30 disabled:cursor-not-allowed">Skip →</button>
+          {canWrite && complete && (
+            <div ref={actionsMenuRef} className="relative">
+              <button
+                onClick={() => setShowActionsMenu(!showActionsMenu)}
+                disabled={busy}
+                className="flex items-center justify-center w-8 h-8 rounded-lg border border-gray-700 bg-gray-800 text-gray-400 hover:text-white hover:bg-gray-700 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+                title="More actions"
+              >
+                <MoreHorizontal className="w-4 h-4" />
+              </button>
+              
+              {showActionsMenu && (
+                <div className="absolute right-0 top-full mt-1.5 z-30 w-40 bg-gray-900 border border-gray-800 rounded-lg shadow-2xl p-1">
+                  <button
+                    onClick={() => {
+                      setShowActionsMenu(false)
+                      handleMarkIncomplete()
+                    }}
+                    disabled={busy}
+                    className="w-full text-left px-2.5 py-1.5 rounded text-xs font-semibold text-red-400 hover:bg-gray-800 hover:text-red-300 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+                  >
+                    Mark Incomplete
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
           {canWrite && (
             <button onClick={handleComplete} disabled={busy} title="Complete & next (Enter or C)" className={`px-4 py-1.5 rounded-lg text-xs font-bold transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${complete ? 'bg-green-600 hover:bg-green-500 text-white' : 'bg-blue-600 hover:bg-blue-500 text-white'}`}>
               {busy ? '…' : complete ? '✓ Next →' : nextTaskId ? 'Complete & Next →' : '✓ Complete'}

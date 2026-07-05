@@ -9,7 +9,7 @@ import {
   flightPlans,
   projects,
 } from '@/lib/schema'
-import { eq, asc } from 'drizzle-orm'
+import { eq, asc, sql, count } from 'drizzle-orm'
 import { getSession } from '@/lib/session'
 import QueueAnnotator from './queue-annotator'
 
@@ -45,12 +45,15 @@ export default async function QueueLabelingPage({ params, searchParams }: PagePr
       completedBy: labelingTasks.completedBy,
       createdAt: labelingTasks.createdAt,
       flightPlanName: flightPlans.name,
+      pointCount: count(labelingTaskPoints.id),
     })
     .from(labelingTasks)
     .innerJoin(files, eq(labelingTasks.fileId, files.id))
     .innerJoin(flights, eq(files.flightId, flights.id))
     .innerJoin(flightPlans, eq(flights.flightPlanId, flightPlans.id))
+    .leftJoin(labelingTaskPoints, eq(labelingTasks.id, labelingTaskPoints.taskId))
     .where(eq(labelingTasks.queueId, queueId))
+    .groupBy(labelingTasks.id)
     .orderBy(asc(labelingTasks.createdAt))
 
   if (queueTaskRows.length === 0) {
@@ -104,6 +107,17 @@ export default async function QueueLabelingPage({ params, searchParams }: PagePr
       completeCount={completeCount}
       prevTaskId={prevTask?.id ?? null}
       nextTaskId={nextTask?.id ?? null}
+      queueTasks={queueTaskRows.map(t => ({
+        id: t.id,
+        fileKey: t.fileKey,
+        x1: t.x1,
+        y1: t.y1,
+        x2: t.x2,
+        y2: t.y2,
+        frame: t.frame,
+        completedBy: t.completedBy ?? null,
+        pointCount: t.pointCount,
+      }))}
     />
   )
 }
