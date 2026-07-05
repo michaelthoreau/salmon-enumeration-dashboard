@@ -1,7 +1,7 @@
 import { notFound } from 'next/navigation'
 import { db } from '@/lib/db'
-import { projects, flightPlans, flights, files, labelingTasks, labelingTaskPoints, labelingQueues, users } from '@/lib/schema'
-import { eq, desc, count, inArray } from 'drizzle-orm'
+import { projects, flightPlans, flights, files, labelingTasks, labelingTaskPoints, labelingQueues, users, annotations } from '@/lib/schema'
+import { eq, desc, count, inArray, sql } from 'drizzle-orm'
 import { getSession } from '@/lib/session'
 import LabelingView from './labeling-view'
 
@@ -62,6 +62,45 @@ export default async function LabelingPage({ params }: PageProps) {
   // All users (for assignee display and selection)
   const allUsers = await db.select({ id: users.id, email: users.email }).from(users)
 
+  // Labeled points from task annotator
+  const labelingTaskFishCounts = await db
+    .select({
+      createdBy: labelingTaskPoints.createdBy,
+      count: count(labelingTaskPoints.id),
+    })
+    .from(labelingTaskPoints)
+    .innerJoin(labelingTasks, eq(labelingTaskPoints.taskId, labelingTasks.id))
+    .innerJoin(files, eq(labelingTasks.fileId, files.id))
+    .innerJoin(flights, eq(files.flightId, flights.id))
+    .innerJoin(flightPlans, eq(flights.flightPlanId, flightPlans.id))
+    .where(eq(flightPlans.projectId, projectId))
+    .groupBy(labelingTaskPoints.createdBy)
+
+  // Labeled fish from map annotations
+  const mapFishCounts = await db
+    .select({
+      createdBy: annotations.createdBy,
+      count: sql<number>`sum(${annotations.fishCount})`,
+    })
+    .from(annotations)
+    .innerJoin(flights, eq(annotations.flightId, flights.id))
+    .innerJoin(flightPlans, eq(flights.flightPlanId, flightPlans.id))
+    .where(eq(flightPlans.projectId, projectId))
+    .groupBy(annotations.createdBy)
+
+  const fishCountByUser = new Map<string, number>()
+  labelingTaskFishCounts.forEach(r => {
+    fishCountByUser.set(r.createdBy, (fishCountByUser.get(r.createdBy) ?? 0) + r.count)
+  })
+  mapFishCounts.forEach(r => {
+    fishCountByUser.set(r.createdBy, (fishCountByUser.get(r.createdBy) ?? 0) + (r.count ?? 0))
+  })
+
+  const fishLeaderboard = Array.from(fishCountByUser.entries()).map(([userId, count]) => ({
+    userId,
+    count,
+  }))
+
   const tasks = taskRows.map(r => ({
     ...r,
     completedAt: r.completedBy ? r.createdAt : null, // placeholder – use completedBy presence
@@ -76,6 +115,7 @@ export default async function LabelingPage({ params }: PageProps) {
       queues={queues.map(q => ({ ...q, createdAtIso: q.createdAt.toISOString() }))}
       users={allUsers}
       canWrite={canWrite}
+      fishLeaderboard={fishLeaderboard}
     />
   )
 }

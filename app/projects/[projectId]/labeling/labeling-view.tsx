@@ -69,6 +69,7 @@ interface Props {
   queues: QueueRow[]
   users: UserRow[]
   canWrite: boolean
+  fishLeaderboard?: { userId: string; count: number }[]
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -84,7 +85,7 @@ const TASK_TABS: { key: TaskFilter; label: string }[] = [
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
-export default function LabelingView({ projectId, tasks: initialTasks, queues: initialQueues, users, canWrite }: Props) {
+export default function LabelingView({ projectId, tasks: initialTasks, queues: initialQueues, users, canWrite, fishLeaderboard = [] }: Props) {
   const router = useRouter()
   const [isPending, startTransition] = useTransition()
 
@@ -302,6 +303,32 @@ export default function LabelingView({ projectId, tasks: initialTasks, queues: i
     return { incompleteQueues: incomplete, completeQueues: complete }
   }, [queues, firstIncompleteByQueueId])
 
+  const leaderboard = useMemo(() => {
+    const counts: Record<string, { email: string; count: number }> = {}
+    users.forEach(u => {
+      counts[u.id] = { email: u.email, count: 0 }
+    })
+    tasks.forEach(t => {
+      if (t.completedBy && counts[t.completedBy]) {
+        counts[t.completedBy].count += 1
+      }
+    })
+    return Object.values(counts)
+      .filter(item => item.count > 0)
+      .sort((a, b) => b.count - a.count)
+  }, [tasks, users])
+
+  const processedFishLeaderboard = useMemo(() => {
+    const userMap = new Map(users.map(u => [u.id, u.email]))
+    return fishLeaderboard
+      .map(item => ({
+        email: userMap.get(item.userId) ?? 'Unknown',
+        count: item.count,
+      }))
+      .filter(item => item.count > 0)
+      .sort((a, b) => b.count - a.count)
+  }, [fishLeaderboard, users])
+
   // ── Render ────────────────────────────────────────────────────────────────
   return (
     <div className="flex flex-col gap-8">
@@ -320,6 +347,127 @@ export default function LabelingView({ projectId, tasks: initialTasks, queues: i
           </Button>
         )}
       </div>
+
+      {/* ── Leaderboards ──────────────────────────────────────────────────── */}
+      {(leaderboard.length > 0 || processedFishLeaderboard.length > 0) && (
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          {/* Main Leaderboard (Images) - Span 2 */}
+          {leaderboard.length > 0 && (
+            <div className="lg:col-span-2 bg-white border border-gray-200 rounded-2xl p-5 text-gray-900 shadow-sm flex flex-col justify-between">
+              <div>
+                <div className="flex items-center justify-between mb-4 border-b border-gray-100 pb-3">
+                  <div>
+                    <h2 className="text-sm font-bold tracking-wide uppercase text-blue-600">Labeling Leaderboard</h2>
+                    <p className="text-[11px] text-gray-505 mt-0.5">Top contributors by completed image/frame tasks</p>
+                  </div>
+                  <span className="text-xs bg-blue-55 text-blue-700 px-2.5 py-1 rounded-full font-semibold border border-blue-200">
+                    🏆 {leaderboard.reduce((acc, u) => acc + u.count, 0)} Images
+                  </span>
+                </div>
+
+                <div className="divide-y divide-gray-100">
+                  {leaderboard.map((item, idx) => {
+                    const rankColor =
+                      idx === 0 ? 'bg-amber-100 text-amber-800 border-amber-200' :
+                        idx === 1 ? 'bg-slate-100 text-slate-800 border-slate-200' :
+                          idx === 2 ? 'bg-orange-100 text-orange-800 border-orange-200' :
+                            'bg-gray-100 text-gray-600 border-gray-200'
+
+                    const rankBadge =
+                      idx === 0 ? '🥇' :
+                        idx === 1 ? '🥈' :
+                          idx === 2 ? '🥉' :
+                            `#${idx + 1}`
+
+                    return (
+                      <div
+                        key={item.email}
+                        className="flex items-center justify-between py-2.5 first:pt-0 last:pb-0"
+                      >
+                        <div className="flex items-center gap-3 min-w-0">
+                          <span className={cn(
+                            "flex items-center justify-center w-6 h-6 rounded-lg text-xs font-black shrink-0 border",
+                            rankColor
+                          )}>
+                            {rankBadge}
+                          </span>
+                          <div className="min-w-0">
+                            <p className="text-sm font-semibold text-gray-900 truncate" title={item.email}>
+                              {item.email.split('@')[0]}
+                            </p>
+                            <p className="text-xs text-gray-500 truncate">{item.email}</p>
+                          </div>
+                        </div>
+                        <div className="text-right shrink-0 font-bold tabular-nums text-blue-600">
+                          {item.count} <span className="text-[11px] text-gray-550 font-normal">images</span>
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Side Leaderboard (Fish) - Span 1 */}
+          {processedFishLeaderboard.length > 0 && (
+            <div className="bg-white border border-gray-200 rounded-2xl p-5 text-gray-900 shadow-sm flex flex-col justify-between">
+              <div>
+                <div className="flex items-center justify-between mb-4 border-b border-gray-100 pb-3">
+                  <div>
+                    <h2 className="text-sm font-bold tracking-wide uppercase text-teal-600">Total Fish Leaderboard</h2>
+                    <p className="text-[11px] text-gray-505 mt-0.5">Total fish counted across tasks & maps</p>
+                  </div>
+                  <span className="text-xs bg-teal-50 text-teal-700 px-2 py-0.5 rounded border border-teal-200 font-semibold shrink-0">
+                    🐟 {processedFishLeaderboard.reduce((acc, u) => acc + u.count, 0)} Fish
+                  </span>
+                </div>
+
+                <div className="divide-y divide-gray-100">
+                  {processedFishLeaderboard.slice(0, 5).map((item, idx) => {
+                    const rankColor =
+                      idx === 0 ? 'bg-amber-100 text-amber-800 border-amber-200' :
+                        idx === 1 ? 'bg-slate-100 text-slate-800 border-slate-200' :
+                          idx === 2 ? 'bg-orange-100 text-orange-800 border-orange-200' :
+                            'bg-gray-100 text-gray-600 border-gray-200'
+
+                    const rankBadge =
+                      idx === 0 ? '🥇' :
+                        idx === 1 ? '🥈' :
+                          idx === 2 ? '🥉' :
+                            `#${idx + 1}`
+
+                    return (
+                      <div
+                        key={item.email}
+                        className="flex items-center justify-between py-2.5 first:pt-0 last:pb-0"
+                      >
+                        <div className="flex items-center gap-3 min-w-0">
+                          <span className={cn(
+                            "flex items-center justify-center w-6 h-6 rounded-lg text-xs font-black shrink-0 border",
+                            rankColor
+                          )}>
+                            {rankBadge}
+                          </span>
+                          <div className="min-w-0">
+                            <p className="text-sm font-semibold text-gray-900 truncate" title={item.email}>
+                              {item.email.split('@')[0]}
+                            </p>
+                            <p className="text-xs text-gray-500 truncate">{item.email}</p>
+                          </div>
+                        </div>
+                        <div className="text-right shrink-0 font-bold tabular-nums text-teal-600">
+                          {item.count} <span className="text-[11px] text-gray-505 font-normal">fish</span>
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* ── Incomplete queues (hero) ──────────────────────────────────────── */}
       {incompleteQueues.length > 0 && (
@@ -509,153 +657,153 @@ export default function LabelingView({ projectId, tasks: initialTasks, queues: i
         <div className="flex flex-col gap-4">
           {/* Status tabs + bulk bar */}
 
-        {/* Status tabs */}
-        <div className="flex items-center gap-1 border-b border-gray-200">
-          {TASK_TABS.map(tab => (
-            <button
-              key={tab.key}
-              onClick={() => setTaskFilter(tab.key)}
-              className={cn(
-                'px-3 py-2 text-sm font-medium transition-colors border-b-2 -mb-px',
-                taskFilter === tab.key
-                  ? 'border-blue-600 text-blue-600'
-                  : 'border-transparent text-gray-500 hover:text-gray-800',
-              )}
-            >
-              {tab.label}
-              <span className={cn(
-                'ml-1.5 rounded-full px-1.5 py-0.5 text-xs',
-                taskFilter === tab.key ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-500',
-              )}>
-                {tabCounts[tab.key]}
-              </span>
-            </button>
-          ))}
-        </div>
-
-        {/* Bulk action bar */}
-        {selected.size > 0 && (
-          <div className="flex items-center gap-2 px-4 py-2 bg-blue-50 border border-blue-200 rounded-lg text-sm">
-            <span className="text-blue-700 font-medium">{selected.size} selected</span>
-            <span className="text-blue-300 mx-1">·</span>
-            {canWrite && (
-              <>
-                <button
-                  onClick={() => setAssignQueueOpen(true)}
-                  className={cn(buttonVariants({ variant: 'outline', size: 'sm' }))}
-                  disabled={queues.length === 0}
-                >
-                  Add to queue
-                </button>
-                {selectedInView.some(t => t.queueId) && (
-                  <button
-                    onClick={handleRemoveFromQueue}
-                    className={cn(buttonVariants({ variant: 'outline', size: 'sm' }))}
-                  >
-                    Remove from queue
-                  </button>
+          {/* Status tabs */}
+          <div className="flex items-center gap-1 border-b border-gray-200">
+            {TASK_TABS.map(tab => (
+              <button
+                key={tab.key}
+                onClick={() => setTaskFilter(tab.key)}
+                className={cn(
+                  'px-3 py-2 text-sm font-medium transition-colors border-b-2 -mb-px',
+                  taskFilter === tab.key
+                    ? 'border-blue-600 text-blue-600'
+                    : 'border-transparent text-gray-500 hover:text-gray-800',
                 )}
-                <button
-                  onClick={() => setDeleteTasksOpen(true)}
-                  className={cn(
-                    buttonVariants({ variant: 'outline', size: 'sm' }),
-                    'text-red-600 border-red-200 hover:bg-red-50 hover:border-red-300 hover:text-red-700'
-                  )}
-                >
-                  <Trash2Icon className="w-3.5 h-3.5 mr-1" />
-                  Delete
-                </button>
-              </>
-            )}
-            <button
-              onClick={() => setSelected(new Set())}
-              className="ml-auto text-xs text-gray-400 hover:text-gray-600 flex items-center gap-0.5"
-            >
-              <XIcon className="w-3.5 h-3.5" /> Clear
-            </button>
+              >
+                {tab.label}
+                <span className={cn(
+                  'ml-1.5 rounded-full px-1.5 py-0.5 text-xs',
+                  taskFilter === tab.key ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-500',
+                )}>
+                  {tabCounts[tab.key]}
+                </span>
+              </button>
+            ))}
           </div>
-        )}
 
-        {/* Task table */}
-        <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-          {filteredTasks.length === 0 ? (
-            <p className="text-sm text-gray-500 p-6">No tasks.</p>
-          ) : (
-            <table className="w-full text-sm">
-              <thead className="bg-gray-50 border-b border-gray-200">
-                <tr>
-                  {canWrite && (
-                    <th className="w-10 px-4 py-3">
-                      <input
-                        type="checkbox"
-                        className="rounded"
-                        checked={allFilteredSelected}
-                        ref={el => { if (el) el.indeterminate = !allFilteredSelected && someFilteredSelected }}
-                        onChange={e => {
-                          if (e.target.checked) setSelected(prev => new Set([...prev, ...filteredTasks.map(t => t.taskId)]))
-                          else setSelected(prev => {
-                            const n = new Set(prev)
-                            filteredTasks.forEach(t => n.delete(t.taskId))
-                            return n
-                          })
-                        }}
-                      />
-                    </th>
+          {/* Bulk action bar */}
+          {selected.size > 0 && (
+            <div className="flex items-center gap-2 px-4 py-2 bg-blue-50 border border-blue-200 rounded-lg text-sm">
+              <span className="text-blue-700 font-medium">{selected.size} selected</span>
+              <span className="text-blue-300 mx-1">·</span>
+              {canWrite && (
+                <>
+                  <button
+                    onClick={() => setAssignQueueOpen(true)}
+                    className={cn(buttonVariants({ variant: 'outline', size: 'sm' }))}
+                    disabled={queues.length === 0}
+                  >
+                    Add to queue
+                  </button>
+                  {selectedInView.some(t => t.queueId) && (
+                    <button
+                      onClick={handleRemoveFromQueue}
+                      className={cn(buttonVariants({ variant: 'outline', size: 'sm' }))}
+                    >
+                      Remove from queue
+                    </button>
                   )}
-                  <th className="text-left px-4 py-3 font-medium text-gray-600">File</th>
-                  <th className="text-left px-4 py-3 font-medium text-gray-600">Flight route</th>
-                  <th className="text-left px-4 py-3 font-medium text-gray-600">Queue</th>
-                  <th className="text-right px-4 py-3 font-medium text-gray-600">Points</th>
-                  <th className="text-center px-4 py-3 font-medium text-gray-600">Status</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-100">
-                {filteredTasks.map(task => {
-                  const filename = task.fileKey.split('/').pop() ?? task.fileKey
-                  const complete = !!task.completedBy
-                  const queue = task.queueId ? queues.find(q => q.id === task.queueId) : null
-                  return (
-                    <tr key={task.taskId} className={cn('transition-colors', selected.has(task.taskId) ? 'bg-blue-50' : 'hover:bg-gray-50')}>
-                      {canWrite && (
-                        <td className="px-4 py-3" onClick={() => setSelected(prev => {
-                          const n = new Set(prev)
-                          n.has(task.taskId) ? n.delete(task.taskId) : n.add(task.taskId)
-                          return n
-                        })}>
-                          <input type="checkbox" className="rounded pointer-events-none" checked={selected.has(task.taskId)} onChange={() => {}} />
-                        </td>
-                      )}
-                      <td className="px-4 py-3 font-mono text-xs text-gray-700 max-w-[200px] truncate" title={filename}>
-                        {filename}
-                      </td>
-                      <td className="px-4 py-3 text-gray-500">{task.flightPlanName}</td>
-                      <td className="px-4 py-3">
-                        {queue ? (
-                          <span className="inline-flex items-center gap-1 rounded-full bg-indigo-50 px-2 py-0.5 text-xs font-medium text-indigo-700">
-                            <LayersIcon className="w-3 h-3" />
-                            {queue.name}
-                          </span>
-                        ) : (
-                          <span className="text-xs text-gray-300">—</span>
-                        )}
-                      </td>
-                      <td className="px-4 py-3 text-right">
-                        {task.pointCount > 0
-                          ? <span className="inline-flex items-center rounded-full bg-indigo-50 px-2 py-0.5 text-xs font-medium text-indigo-700">{task.pointCount}</span>
-                          : <span className="text-xs text-gray-300">—</span>}
-                      </td>
-                      <td className="px-4 py-3 text-center">
-                        {complete
-                          ? <span className="inline-flex items-center rounded-full bg-green-50 px-2 py-0.5 text-xs font-medium text-green-700">Done</span>
-                          : <span className="inline-flex items-center rounded-full bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700">Pending</span>}
-                      </td>
-                    </tr>
-                  )
-                })}
-              </tbody>
-            </table>
+                  <button
+                    onClick={() => setDeleteTasksOpen(true)}
+                    className={cn(
+                      buttonVariants({ variant: 'outline', size: 'sm' }),
+                      'text-red-600 border-red-200 hover:bg-red-50 hover:border-red-300 hover:text-red-700'
+                    )}
+                  >
+                    <Trash2Icon className="w-3.5 h-3.5 mr-1" />
+                    Delete
+                  </button>
+                </>
+              )}
+              <button
+                onClick={() => setSelected(new Set())}
+                className="ml-auto text-xs text-gray-400 hover:text-gray-600 flex items-center gap-0.5"
+              >
+                <XIcon className="w-3.5 h-3.5" /> Clear
+              </button>
+            </div>
           )}
-        </div>
+
+          {/* Task table */}
+          <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+            {filteredTasks.length === 0 ? (
+              <p className="text-sm text-gray-500 p-6">No tasks.</p>
+            ) : (
+              <table className="w-full text-sm">
+                <thead className="bg-gray-50 border-b border-gray-200">
+                  <tr>
+                    {canWrite && (
+                      <th className="w-10 px-4 py-3">
+                        <input
+                          type="checkbox"
+                          className="rounded"
+                          checked={allFilteredSelected}
+                          ref={el => { if (el) el.indeterminate = !allFilteredSelected && someFilteredSelected }}
+                          onChange={e => {
+                            if (e.target.checked) setSelected(prev => new Set([...prev, ...filteredTasks.map(t => t.taskId)]))
+                            else setSelected(prev => {
+                              const n = new Set(prev)
+                              filteredTasks.forEach(t => n.delete(t.taskId))
+                              return n
+                            })
+                          }}
+                        />
+                      </th>
+                    )}
+                    <th className="text-left px-4 py-3 font-medium text-gray-600">File</th>
+                    <th className="text-left px-4 py-3 font-medium text-gray-600">Flight route</th>
+                    <th className="text-left px-4 py-3 font-medium text-gray-600">Queue</th>
+                    <th className="text-right px-4 py-3 font-medium text-gray-600">Points</th>
+                    <th className="text-center px-4 py-3 font-medium text-gray-600">Status</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {filteredTasks.map(task => {
+                    const filename = task.fileKey.split('/').pop() ?? task.fileKey
+                    const complete = !!task.completedBy
+                    const queue = task.queueId ? queues.find(q => q.id === task.queueId) : null
+                    return (
+                      <tr key={task.taskId} className={cn('transition-colors', selected.has(task.taskId) ? 'bg-blue-50' : 'hover:bg-gray-50')}>
+                        {canWrite && (
+                          <td className="px-4 py-3" onClick={() => setSelected(prev => {
+                            const n = new Set(prev)
+                            n.has(task.taskId) ? n.delete(task.taskId) : n.add(task.taskId)
+                            return n
+                          })}>
+                            <input type="checkbox" className="rounded pointer-events-none" checked={selected.has(task.taskId)} onChange={() => { }} />
+                          </td>
+                        )}
+                        <td className="px-4 py-3 font-mono text-xs text-gray-700 max-w-[200px] truncate" title={filename}>
+                          {filename}
+                        </td>
+                        <td className="px-4 py-3 text-gray-500">{task.flightPlanName}</td>
+                        <td className="px-4 py-3">
+                          {queue ? (
+                            <span className="inline-flex items-center gap-1 rounded-full bg-indigo-50 px-2 py-0.5 text-xs font-medium text-indigo-700">
+                              <LayersIcon className="w-3 h-3" />
+                              {queue.name}
+                            </span>
+                          ) : (
+                            <span className="text-xs text-gray-300">—</span>
+                          )}
+                        </td>
+                        <td className="px-4 py-3 text-right">
+                          {task.pointCount > 0
+                            ? <span className="inline-flex items-center rounded-full bg-indigo-50 px-2 py-0.5 text-xs font-medium text-indigo-700">{task.pointCount}</span>
+                            : <span className="text-xs text-gray-300">—</span>}
+                        </td>
+                        <td className="px-4 py-3 text-center">
+                          {complete
+                            ? <span className="inline-flex items-center rounded-full bg-green-50 px-2 py-0.5 text-xs font-medium text-green-700">Done</span>
+                            : <span className="inline-flex items-center rounded-full bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700">Pending</span>}
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            )}
+          </div>
         </div>
       </section>
 
