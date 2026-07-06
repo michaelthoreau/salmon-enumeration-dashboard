@@ -3,6 +3,7 @@ import os
 from aws_cdk import (
     Stack,
     Duration,
+    Size,
     CfnOutput,
     aws_lambda as lambda_,
     aws_lambda_event_sources as lambda_es,
@@ -212,7 +213,7 @@ class DjiAwsPipelineStack(Stack):
             code=lambda_.Code.from_asset("../lambda"),
             timeout=Duration.minutes(15),
             memory_size=4096,
-            ephemeral_storage_size=lambda_.Size.gibibytes(10),
+            ephemeral_storage_size=Size.gibibytes(10),
             layers=[ffmpeg_layer],
             environment={
                 "BUCKET_NAME": BUCKET_NAME,

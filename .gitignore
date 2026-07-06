@@ -1,5 +1,8 @@
 # See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
 
+# FFmpeg binary (too large for git — download from https://johnvansickle.com/ffmpeg/ before deploying)
+dji-pipeline/ffmpeg-layer/bin/ffmpeg
+
 # dependencies
 /node_modules
 /.pnp

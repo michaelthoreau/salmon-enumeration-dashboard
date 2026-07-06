@@ -85,6 +85,20 @@ export default async function AdminPage() {
           </div>
         </section>
 
+        {/* Compression backfill */}
+        <section>
+          <h2 className="text-lg font-semibold text-gray-900 mb-4">Video Compression</h2>
+          <div className="bg-white rounded-xl border border-gray-200 p-6 flex items-center justify-between">
+            <div>
+              <p className="text-sm font-medium text-gray-900">Backfill Compression</p>
+              <p className="text-xs text-gray-500 mt-0.5">Compress existing videos that were uploaded before the pipeline was set up</p>
+            </div>
+            <Link href="/admin/compression" className="text-sm font-medium text-blue-600 hover:underline">
+              Open tool →
+            </Link>
+          </div>
+        </section>
+
         {/* API access */}
         <section>
           <h2 className="text-lg font-semibold text-gray-900 mb-4">API access</h2>
