@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
-import { History, X, ChevronDown, Check, Circle, List, MoreHorizontal } from 'lucide-react'
+import { History, X, ChevronDown, Check, Circle, List, MoreHorizontal, Brain, Loader2, Sparkles, Fish, Zap } from 'lucide-react'
 import { saveTaskPoints, setTaskComplete } from '@/app/actions/labeling-tasks'
 
 interface Point {
@@ -12,8 +12,17 @@ interface Point {
   y: number
 }
 
+interface PredictedPoint {
+  x: number
+  y: number
+  crop_x: number
+  crop_y: number
+  score: number
+}
+
 interface Task {
   id: string
+  fileId: string
   fileKey: string
   x1: number
   y1: number
@@ -138,6 +147,51 @@ export default function QueueAnnotator({
   const [cursor, setCursor] = useState<'crosshair' | 'grabbing'>('crosshair')
   const dragRef = useRef<{ id: string } | null>(null)
   const didDragRef = useRef(false)
+
+  // ── Prediction state ──────────────────────────────────────────────────────
+  const [scoreThresh, setScoreThresh] = useState<number>(0.4)
+  const [minDist, setMinDist] = useState<number>(50)
+  const [predicting, setPredicting] = useState<boolean>(false)
+  const [predictError, setPredictError] = useState<string | null>(null)
+  const [rawPredictions, setRawPredictions] = useState<PredictedPoint[]>([])
+  const [isPreviewing, setIsPreviewing] = useState<boolean>(false)
+  const [showClearConfirm, setShowClearConfirm] = useState<boolean>(false)
+  const [originalPointsBeforePredict, setOriginalPointsBeforePredict] = useState<Point[]>([])
+  const [copiedError, setCopiedError] = useState<boolean>(false)
+  const [showSlowPredictionWarning, setShowSlowPredictionWarning] = useState<boolean>(false)
+
+  const filteredPredictions = useMemo(() => {
+    // 1. Filter by confidence score
+    const thresholded = rawPredictions.filter(p => p.score >= scoreThresh)
+    
+    // 2. Sort by confidence score descending
+    const sorted = [...thresholded].sort((a, b) => b.score - a.score)
+    
+    // 3. Perform NMS based on minimum Euclidean distance
+    const accepted: PredictedPoint[] = []
+    
+    for (const p of sorted) {
+      const px = isVideo ? p.x : p.crop_x
+      const py = isVideo ? p.y : p.crop_y
+      
+      let tooClose = false
+      for (const acc of accepted) {
+        const accX = isVideo ? acc.x : acc.crop_x
+        const accY = isVideo ? acc.y : acc.crop_y
+        const dist = Math.sqrt((px - accX) ** 2 + (py - accY) ** 2)
+        if (dist < minDist) {
+          tooClose = true
+          break
+        }
+      }
+      
+      if (!tooClose) {
+        accepted.push(p)
+      }
+    }
+    
+    return accepted
+  }, [rawPredictions, scoreThresh, minDist, isVideo])
 
   // ── Image state ───────────────────────────────────────────────────────────
   const [imageUrl, setImageUrl] = useState<string | null>(null)
@@ -399,6 +453,114 @@ export default function QueueAnnotator({
     return !!res.ok
   }, [task.id, points])
 
+  // ── Prediction logic ──────────────────────────────────────────────────────
+  const handlePredict = useCallback(async (options?: { forceClear?: boolean }) => {
+    if (!canWrite) return
+    if (points.length > 0 && !options?.forceClear) {
+      setShowClearConfirm(true)
+      return
+    }
+
+    setOriginalPointsBeforePredict(points)
+    setPoints([])
+    setPredicting(true)
+    setPredictError(null)
+    setShowClearConfirm(false)
+    setShowSlowPredictionWarning(false)
+
+    let slowTimer: any = null
+    slowTimer = setTimeout(() => {
+      setShowSlowPredictionWarning(true)
+    }, 3500)
+
+    try {
+      let presignedUrl = videoUrl
+      if (isVideo) {
+        try {
+          const presignRes = await fetch(`/api/files/presign?key=${encodeURIComponent(task.fileKey)}`)
+          if (presignRes.ok) {
+            const presignData = await presignRes.json()
+            presignedUrl = presignData.url
+          }
+        } catch (e) {
+          console.error('Failed to retrieve fresh presigned URL for prediction, falling back to cached:', e)
+        }
+      }
+
+      const response = await fetch('https://michaelthoreau--salmon-prediction-api-salmoninferenceser-6e48b3.modal.run/predict', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          task: {
+            fileId: task.fileId,
+            frame: task.frame,
+            x1: task.x1,
+            y1: task.y1,
+            x2: task.x2,
+            y2: task.y2,
+            ...(isVideo && presignedUrl ? { presignedUrl } : {}),
+          },
+          score_thresh: 0.05,
+        }),
+      })
+
+      if (!response.ok) {
+        throw new Error(`Prediction API returned status ${response.status}`)
+      }
+
+      const data = await response.json()
+      if (!data || !Array.isArray(data.points)) {
+        throw new Error('Invalid response format from prediction API')
+      }
+
+      setRawPredictions(data.points)
+      setIsPreviewing(true)
+    } catch (err: any) {
+      console.error('Prediction error:', err)
+      setPredictError(err.message || 'Prediction failed')
+      // Restore original points if prediction failed
+      setPoints(points)
+    } finally {
+      if (slowTimer) {
+        clearTimeout(slowTimer)
+      }
+      setShowSlowPredictionWarning(false)
+      setPredicting(false)
+    }
+  }, [canWrite, points, task, isVideo, videoUrl])
+
+  const handleLockIn = useCallback(() => {
+    const finalPoints = filteredPredictions.map(p => ({
+      id: crypto.randomUUID(),
+      x: isVideo ? p.x : p.crop_x,
+      y: isVideo ? p.y : p.crop_y,
+    }))
+
+    setPoints(finalPoints)
+    setIsPreviewing(false)
+    setRawPredictions([])
+    setOriginalPointsBeforePredict([])
+    setDirty(true)
+    setSaveStatus('idle')
+  }, [filteredPredictions, isVideo])
+
+  const handleCancelPreview = useCallback(() => {
+    setIsPreviewing(false)
+    setRawPredictions([])
+    setPoints(originalPointsBeforePredict)
+    setOriginalPointsBeforePredict([])
+    setPredictError(null)
+  }, [originalPointsBeforePredict])
+
+  const handleCopyError = useCallback(() => {
+    if (!predictError) return
+    navigator.clipboard.writeText(predictError)
+    setCopiedError(true)
+    setTimeout(() => setCopiedError(false), 2000)
+  }, [predictError])
+
   const handlePrev = useCallback(() => {
     if (!prevTaskId) return
     router.push(queueTaskUrl(projectId, queueId, prevTaskId))
@@ -459,7 +621,7 @@ export default function QueueAnnotator({
 
   // ── Canvas interaction ────────────────────────────────────────────────────
   const handleMouseDown = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
-    if (e.button !== 0 || !canWrite) return
+    if (e.button !== 0 || !canWrite || isPreviewing) return
     const rect = e.currentTarget.getBoundingClientRect()
     const px = (e.clientX - rect.left) / scale
     const py = (e.clientY - rect.top) / scale
@@ -470,20 +632,20 @@ export default function QueueAnnotator({
       setCursor('grabbing')
       e.preventDefault()
     }
-  }, [canWrite, points, scale])
+  }, [canWrite, points, scale, isPreviewing])
 
   const handleMouseMove = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
-    if (!dragRef.current || !canWrite) return
+    if (!dragRef.current || !canWrite || isPreviewing) return
     didDragRef.current = true
     const rect = e.currentTarget.getBoundingClientRect()
     const px = Math.max(0, Math.min(frameW, (e.clientX - rect.left) / scale))
     const py = Math.max(0, Math.min(frameH, (e.clientY - rect.top) / scale))
     const id = dragRef.current.id
     setPoints(prev => prev.map(p => p.id === id ? { ...p, x: px, y: py } : p))
-  }, [canWrite, scale, frameW, frameH])
+  }, [canWrite, scale, frameW, frameH, isPreviewing])
 
   const handleCanvasClick = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
-    if (!canWrite) return
+    if (!canWrite || isPreviewing) return
     if (didDragRef.current) { didDragRef.current = false; return }
     const rect = e.currentTarget.getBoundingClientRect()
     const px = (e.clientX - rect.left) / scale
@@ -493,10 +655,10 @@ export default function QueueAnnotator({
     setPoints(prev => [...prev, { id: crypto.randomUUID(), x: px, y: py }])
     setDirty(true)
     setSaveStatus('idle')
-  }, [canWrite, points, scale])
+  }, [canWrite, points, scale, isPreviewing])
 
   const handleContextMenu = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
-    if (!canWrite) return
+    if (!canWrite || isPreviewing) return
     const rect = e.currentTarget.getBoundingClientRect()
     const px = (e.clientX - rect.left) / scale
     const py = (e.clientY - rect.top) / scale
@@ -507,7 +669,7 @@ export default function QueueAnnotator({
       setDirty(true)
       setSaveStatus('idle')
     }
-  }, [canWrite, points, scale])
+  }, [canWrite, points, scale, isPreviewing])
 
   const progressPct = totalInQueue > 0 ? Math.round((completeCount / totalInQueue) * 100) : 0
   const filename = task.fileKey.split('/').pop() ?? task.fileKey
@@ -539,6 +701,42 @@ export default function QueueAnnotator({
         )
       })}
     </svg>
+  )
+
+  const previewDots = (
+    <>
+      {isPreviewing && (
+        <svg
+          className="absolute inset-0 pointer-events-none"
+          width={displayW}
+          height={displayH}
+          viewBox={`0 0 ${displayW} ${displayH}`}
+        >
+          {filteredPredictions.map((p, idx) => {
+            const px = isVideo ? p.x : p.crop_x
+            const py = isVideo ? p.y : p.crop_y
+            const cx = px * scale
+            const cy = py * scale
+            return (
+              <g key={`preview-image-${idx}`}>
+                <circle
+                  cx={cx}
+                  cy={cy}
+                  r={POINT_RADIUS + 3}
+                  fill="none"
+                  stroke="#f59e0b"
+                  strokeWidth={1}
+                  className="animate-ping"
+                  style={{ transformOrigin: `${cx}px ${cy}px`, animationDuration: '2s' }}
+                />
+                <circle cx={cx} cy={cy} r={POINT_RADIUS + 1} fill="none" stroke="rgba(0,0,0,0.6)" strokeWidth={1.5} />
+                <circle cx={cx} cy={cy} r={POINT_RADIUS} fill="#f59e0b" stroke="white" strokeWidth={1.5} />
+              </g>
+            )
+          })}
+        </svg>
+      )}
+    </>
   )
 
   return (
@@ -663,6 +861,103 @@ export default function QueueAnnotator({
             <span className="text-gray-700 select-none">|</span>
           </div>
         )}
+
+        {/* Predict Panel */}
+        {canWrite && (
+          <div className={isPreviewing ? "flex items-center gap-2 shrink-0 bg-gray-900 border border-gray-800 rounded-lg px-2.5 py-1" : "flex items-center gap-2 shrink-0"}>
+            {isPreviewing ? (
+              <>
+                <span className="text-[11px] text-gray-400 font-medium">Thresh: {scoreThresh.toFixed(2)}</span>
+                <input
+                  type="range"
+                  min="0.05"
+                  max="0.95"
+                  step="0.05"
+                  value={scoreThresh}
+                  onChange={(e) => setScoreThresh(parseFloat(e.target.value))}
+                  className="w-20 h-1 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-blue-500"
+                />
+                <span className="text-[11px] text-gray-400 font-medium ml-2">Min Dist:</span>
+                <input
+                  type="number"
+                  min="0"
+                  max="500"
+                  step="5"
+                  value={minDist}
+                  onChange={(e) => {
+                    const val = parseInt(e.target.value, 10)
+                    setMinDist(isNaN(val) ? 0 : val)
+                  }}
+                  className="w-12 h-5 bg-gray-800 border border-gray-700 rounded text-center text-[11px] text-white font-medium focus:outline-none focus:border-blue-500"
+                />
+                <span className="text-[11px] text-gray-400 font-medium mr-1">px</span>
+                <span className="text-[11px] text-amber-400 font-bold tabular-nums">
+                  {filteredPredictions.length} fish
+                </span>
+                <button
+                  onClick={handleLockIn}
+                  className="flex items-center gap-1 px-2 py-1 rounded bg-green-600 hover:bg-green-500 text-white text-[11px] font-bold transition-colors"
+                >
+                  <Check className="w-3 h-3" />
+                  Proceed to Cleanup
+                </button>
+                <button
+                  onClick={handleCancelPreview}
+                  className="flex items-center gap-1 px-2 py-1 rounded bg-gray-800 hover:bg-gray-700 text-gray-300 text-[11px] font-bold border border-gray-700 transition-colors"
+                >
+                  <X className="w-3 h-3" />
+                  Cancel
+                </button>
+              </>
+            ) : (
+              <>
+                <button
+                  onClick={() => handlePredict()}
+                  disabled={predicting}
+                  className="flex items-center gap-1.5 px-2.5 py-1 rounded bg-blue-600 hover:bg-blue-500 text-white text-[11px] font-bold transition-colors disabled:opacity-50 disabled:cursor-not-allowed focus:outline-none"
+                >
+                  {predicting ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin text-white" />
+                  ) : (
+                    <div className="relative w-3.5 h-3.5">
+                      <Fish className="w-3.5 h-3.5 text-blue-100" />
+                      <Zap className="absolute -top-1 -right-1 w-2.5 h-2.5 text-yellow-400 fill-yellow-400 stroke-blue-600 stroke-[1.5px]" />
+                    </div>
+                  )}
+                  {predicting ? 'Predicting...' : (
+                    <span className="flex items-center gap-1">
+                      Predict
+                      <span className="text-[8px] bg-blue-500 text-blue-100 px-1 py-0.5 rounded font-black tracking-wider uppercase leading-none scale-95 border border-blue-400/25">Beta</span>
+                    </span>
+                  )}
+                </button>
+                {predictError && (
+                  <div className="flex items-center gap-1 bg-red-950/80 border border-red-800 rounded px-1.5 py-0.5 text-[10px] text-red-300">
+                    <span className="truncate max-w-[150px]" title={predictError}>
+                      {predictError}
+                    </span>
+                    <button
+                      onClick={handleCopyError}
+                      type="button"
+                      className="text-red-400 hover:text-red-200 underline font-semibold cursor-pointer shrink-0 ml-1"
+                    >
+                      {copiedError ? 'Copied!' : 'Copy'}
+                    </button>
+                    <button
+                      onClick={() => setPredictError(null)}
+                      type="button"
+                      className="text-red-400 hover:text-red-200 font-black cursor-pointer shrink-0 ml-1"
+                    >
+                      ×
+                    </button>
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        )}
+        <span className="text-gray-700 select-none">|</span>
+
         {/* Status */}
         <div className="flex items-center gap-2 shrink-0">
           {dirty && <span className="text-[11px] text-amber-400 font-medium">Unsaved</span>}
@@ -751,7 +1046,7 @@ export default function QueueAnnotator({
                   const rect = e.currentTarget.getBoundingClientRect()
                   const px = (e.clientX - rect.left) / zoom / overlayScale
                   const py = (e.clientY - rect.top) / zoom / overlayScale
-                  const idx = canWrite ? points.findIndex(p => Math.hypot(p.x - px, p.y - py) < HIT_RADIUS / overlayScale) : -1
+                  const idx = canWrite && !isPreviewing ? points.findIndex(p => Math.hypot(p.x - px, p.y - py) < HIT_RADIUS / overlayScale) : -1
                   if (idx >= 0) {
                     dragRef.current = { id: points[idx].id }
                     didDragRef.current = false
@@ -765,7 +1060,7 @@ export default function QueueAnnotator({
                   }
                 }}
                 onClick={(e) => {
-                  if (!canWrite) return
+                  if (!canWrite || isPreviewing) return
                   if (didDragRef.current) { didDragRef.current = false; return }
                   if (didPanRef.current) { didPanRef.current = false; return }
                   const rect = e.currentTarget.getBoundingClientRect()
@@ -778,7 +1073,7 @@ export default function QueueAnnotator({
                   setSaveStatus('idle')
                 }}
                 onMouseMove={(e) => {
-                  if (!dragRef.current || !canWrite || !videoDims) return
+                  if (!dragRef.current || !canWrite || !videoDims || isPreviewing) return
                   didDragRef.current = true
                   const rect = e.currentTarget.getBoundingClientRect()
                   const px = Math.max(0, Math.min(videoDims.w, (e.clientX - rect.left) / zoom / overlayScale))
@@ -787,7 +1082,7 @@ export default function QueueAnnotator({
                   setPoints(prev => prev.map(p => p.id === id ? { ...p, x: px, y: py } : p))
                 }}
                 onContextMenu={(e) => {
-                  if (!canWrite) return
+                  if (!canWrite || isPreviewing) return
                   const rect = e.currentTarget.getBoundingClientRect()
                   const px = (e.clientX - rect.left) / zoom / overlayScale
                   const py = (e.clientY - rect.top) / zoom / overlayScale
@@ -829,6 +1124,26 @@ export default function QueueAnnotator({
                       <g key={p.id}>
                         <circle cx={cx} cy={cy} r={POINT_RADIUS + 1} fill="rgba(0,0,0,0.5)" />
                         <circle cx={cx} cy={cy} r={POINT_RADIUS} fill="#ef4444" stroke="white" strokeWidth={1.5} />
+                      </g>
+                    )
+                  })}
+                  {frameReady && isPreviewing && filteredPredictions.map((p, idx) => {
+                    const cx = p.x * overlayScale
+                    const cy = p.y * overlayScale
+                    return (
+                      <g key={`preview-video-${idx}`}>
+                        <circle
+                          cx={cx}
+                          cy={cy}
+                          r={POINT_RADIUS + 3}
+                          fill="none"
+                          stroke="#f59e0b"
+                          strokeWidth={1}
+                          className="animate-ping"
+                          style={{ transformOrigin: `${cx}px ${cy}px`, animationDuration: '2s' }}
+                        />
+                        <circle cx={cx} cy={cy} r={POINT_RADIUS + 1} fill="none" stroke="rgba(0,0,0,0.6)" strokeWidth={1.5} />
+                        <circle cx={cx} cy={cy} r={POINT_RADIUS} fill="#f59e0b" stroke="white" strokeWidth={1.5} />
                       </g>
                     )
                   })}
@@ -879,6 +1194,7 @@ export default function QueueAnnotator({
             {imageError && <div className="absolute inset-0 flex items-center justify-center text-sm text-gray-400">Failed to load image</div>}
             {!imageUrl && !imageError && <div className="absolute inset-0 flex items-center justify-center text-sm text-gray-400 animate-pulse">Loading…</div>}
             {annotationDots}
+            {previewDots}
           </div>
           {canWrite && (
             <div className="flex items-center gap-4 text-xs text-gray-500">
@@ -932,6 +1248,67 @@ export default function QueueAnnotator({
               </button>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* ── Clear existing points confirmation modal ─────────────────────────────── */}
+      {showClearConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+          <div className="bg-gray-900 border border-gray-700 rounded-2xl shadow-2xl w-full max-w-md mx-4 overflow-hidden">
+            <div className="flex items-center justify-between px-6 pt-5 pb-3">
+              <h2 className="text-base font-bold text-white flex items-center gap-2">
+                <Brain className="w-5 h-5 text-amber-500" />
+                Clear existing annotations?
+              </h2>
+              <button onClick={() => setShowClearConfirm(false)} className="text-gray-500 hover:text-white transition-colors p-1">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="px-6 pb-5 space-y-4">
+              <p className="text-sm text-gray-300">
+                You have {points.length} existing annotation{points.length !== 1 ? 's' : ''} on this frame. Running prediction will clear them.
+              </p>
+              <p className="text-xs text-gray-500">
+                You will be able to review the predictions in preview mode and can cancel to restore your original annotations if needed.
+              </p>
+            </div>
+            <div className="px-6 pb-5 flex gap-3">
+              <button
+                onClick={() => setShowClearConfirm(false)}
+                className="flex-1 py-2 rounded-xl bg-gray-800 hover:bg-gray-700 text-white text-sm font-semibold border border-gray-700 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => handlePredict({ forceClear: true })}
+                className="flex-1 py-2 rounded-xl bg-red-600 hover:bg-red-500 text-white text-sm font-semibold transition-colors"
+              >
+                Clear & Predict
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Slow prediction warning toast ─────────────────────────────── */}
+      {showSlowPredictionWarning && (
+        <div className="fixed bottom-4 right-4 z-50 flex items-center gap-3 bg-amber-950/95 border border-amber-800 rounded-xl px-4 py-3 shadow-2xl text-amber-200 animate-in fade-in slide-in-from-bottom-4 duration-300 max-w-sm">
+          <div className="w-5 h-5 rounded-full bg-amber-500/20 flex items-center justify-center shrink-0">
+            <Sparkles className="w-3.5 h-3.5 text-amber-400 animate-pulse" />
+          </div>
+          <div className="flex flex-col gap-0.5 min-w-0">
+            <span className="text-xs font-bold text-white">Prediction is taking a moment...</span>
+            <span className="text-[10px] text-amber-300/80 leading-normal">
+              The deep learning model server may be starting up. First-time cold starts can take up to 20 seconds.
+            </span>
+          </div>
+          <button
+            onClick={() => setShowSlowPredictionWarning(false)}
+            type="button"
+            className="text-amber-400 hover:text-amber-200 shrink-0 font-bold ml-2 text-sm cursor-pointer"
+          >
+            ×
+          </button>
         </div>
       )}
     </div>

@@ -94,6 +94,7 @@ export default async function QueueLabelingPage({ params, searchParams }: PagePr
       queueName={queue.name}
       task={{
         id: task.id,
+        fileId: task.fileId,
         fileKey: task.fileKey,
         x1: task.x1,
         y1: task.y1,

@@ -37,7 +37,7 @@ const nextConfig: NextConfig = {
               `img-src 'self' data: blob: ${s3Host} https://server.arcgisonline.com`,
               `media-src 'self' blob: ${s3Host}`,
               "font-src 'self'",
-              `connect-src 'self' ${s3Host} ${s3AccelerateHost} https://tiles.openfreemap.org https://server.arcgisonline.com`,
+              `connect-src 'self' ${s3Host} ${s3AccelerateHost} https://tiles.openfreemap.org https://server.arcgisonline.com https://michaelthoreau--salmon-prediction-api-salmoninferenceser-6e48b3.modal.run`,
               "worker-src blob: 'self'",
 
               "frame-ancestors 'none'",
