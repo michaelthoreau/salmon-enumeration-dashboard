@@ -26,6 +26,9 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'key and flightId are required' }, { status: 400 })
   }
 
+  const lower = key.toLowerCase()
+  const isVideo = lower.endsWith('.mp4') || lower.endsWith('.mov')
+
   const [flight] = await db.select().from(flights).where(eq(flights.id, flightId))
   if (!flight || flight.deletedAt) {
     return NextResponse.json({ error: 'Flight not found' }, { status: 404 })
@@ -47,6 +50,7 @@ export async function POST(request: NextRequest) {
       latitude: coords?.latitude ?? null,
       longitude: coords?.longitude ?? null,
       durationSeconds: coords?.durationSeconds ?? null,
+      ...(isVideo && { compressionStatus: 'done' }),
     })
     .onConflictDoUpdate({
       target: files.key,
@@ -58,6 +62,7 @@ export async function POST(request: NextRequest) {
         latitude: coords?.latitude ?? null,
         longitude: coords?.longitude ?? null,
         durationSeconds: coords?.durationSeconds ?? null,
+        ...(isVideo && { compressionStatus: 'done' }),
       },
     })
 
