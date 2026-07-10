@@ -78,7 +78,7 @@ def handler(event, _context):
                 "-i", INPUT_PATH,
                 "-c:v", "libx264",
                 "-crf", "22",
-                "-preset", "veryfast",
+                "-preset", "ultrafast",
                 "-vf", "scale=-2:1080",
                 "-r", "30",
                 "-an",
