@@ -86,6 +86,12 @@ def handler(event, context):
         _notify_frontend(key, None, "pending")
 
         try:
+            # Check file size to pick resolution before downloading
+            head = s3.head_object(Bucket=BUCKET_NAME, Key=key)
+            file_size_gb = head["ContentLength"] / (1024 ** 3)
+            resolution = "scale=-2:720" if file_size_gb > 3.0 else "scale=-2:1080"
+            print(f"File size: {file_size_gb:.2f} GB → {resolution}")
+
             print(f"Downloading s3://{BUCKET_NAME}/{key}")
             s3.download_file(BUCKET_NAME, key, INPUT_PATH)
 
@@ -94,12 +100,14 @@ def handler(event, context):
             ffmpeg_timeout = max(60, remaining_s - 90)
 
             try:
-                _run_ffmpeg("scale=-2:1080", ffmpeg_timeout)
+                _run_ffmpeg(resolution, ffmpeg_timeout)
             except subprocess.TimeoutExpired:
-                print(f"1080p timed out for {key}, retrying at 720p")
-                remaining_s = context.get_remaining_time_in_millis() / 1000
-                ffmpeg_timeout = max(60, remaining_s - 90)
-                _run_ffmpeg("scale=-2:720", ffmpeg_timeout)
+                if resolution == "scale=-2:1080":
+                    print(f"1080p timed out for {key}, retrying at 720p")
+                    remaining_s = context.get_remaining_time_in_millis() / 1000
+                    _run_ffmpeg("scale=-2:720", max(60, remaining_s - 90))
+                else:
+                    raise RuntimeError("FFmpeg timed out at 720p — video may be too long")
 
             print(f"Uploading compressed video to s3://{BUCKET_NAME}/{compressed}")
             s3.upload_file(
