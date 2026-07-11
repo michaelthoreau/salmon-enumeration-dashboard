@@ -18,16 +18,13 @@ s3 = boto3.client("s3")
 
 
 def _is_compressible(key: str) -> bool:
-    """Returns True for raw video files that should be compressed."""
     lower = key.lower()
     if not any(lower.endswith(ext) for ext in VIDEO_EXTS):
         return False
-    skip_prefixes = ["/compressed/", "/odm/", "/outputs/", "/georef/"]
     return not any(f"/{seg}/" in f"/{key}" for seg in ["compressed", "odm", "outputs", "georef"])
 
 
 def _compressed_key(original_key: str) -> str:
-    """Insert 'compressed/' before the filename in the S3 key."""
     parts = original_key.rsplit("/", 1)
     if len(parts) == 2:
         return f"{parts[0]}/compressed/{parts[1]}"
@@ -55,7 +52,27 @@ def _notify_frontend(original_key: str, compressed_key: str | None, status: str)
         print(f"[WARN] Failed to notify frontend: {e}")
 
 
-def handler(event, _context):
+def _run_ffmpeg(resolution: str, ffmpeg_timeout: float) -> None:
+    cmd = [
+        FFMPEG_PATH,
+        "-i", INPUT_PATH,
+        "-c:v", "libx264",
+        "-crf", "22",
+        "-preset", "ultrafast",
+        "-vf", resolution,
+        "-r", "30",
+        "-an",
+        "-movflags", "+faststart",
+        "-map_metadata", "0",
+        "-y", OUTPUT_PATH,
+    ]
+    print(f"Running FFmpeg ({resolution}): {' '.join(cmd)}")
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=ffmpeg_timeout)
+    if result.returncode != 0:
+        raise RuntimeError(f"FFmpeg exited {result.returncode}:\n{result.stderr[-2000:]}")
+
+
+def handler(event, context):
     for record in event.get("Records", []):
         key = record["s3"]["object"]["key"]
 
@@ -66,31 +83,23 @@ def handler(event, _context):
         compressed = _compressed_key(key)
         print(f"Compressing: {key} → {compressed}")
 
-        # Mark as pending so the UI can show a status indicator
         _notify_frontend(key, None, "pending")
 
         try:
             print(f"Downloading s3://{BUCKET_NAME}/{key}")
             s3.download_file(BUCKET_NAME, key, INPUT_PATH)
 
-            cmd = [
-                FFMPEG_PATH,
-                "-i", INPUT_PATH,
-                "-c:v", "libx264",
-                "-crf", "22",
-                "-preset", "ultrafast",
-                "-vf", "scale=-2:1080",
-                "-r", "30",
-                "-an",
-                "-movflags", "+faststart",
-                "-map_metadata", "0",
-                "-y", OUTPUT_PATH,
-            ]
-            print(f"Running FFmpeg: {' '.join(cmd)}")
-            result = subprocess.run(cmd, capture_output=True, text=True)
+            # Reserve 90s for upload + notify; remaining time drives FFmpeg timeout
+            remaining_s = context.get_remaining_time_in_millis() / 1000
+            ffmpeg_timeout = max(60, remaining_s - 90)
 
-            if result.returncode != 0:
-                raise RuntimeError(f"FFmpeg exited {result.returncode}:\n{result.stderr[-2000:]}")
+            try:
+                _run_ffmpeg("scale=-2:1080", ffmpeg_timeout)
+            except subprocess.TimeoutExpired:
+                print(f"1080p timed out for {key}, retrying at 720p")
+                remaining_s = context.get_remaining_time_in_millis() / 1000
+                ffmpeg_timeout = max(60, remaining_s - 90)
+                _run_ffmpeg("scale=-2:720", ffmpeg_timeout)
 
             print(f"Uploading compressed video to s3://{BUCKET_NAME}/{compressed}")
             s3.upload_file(
