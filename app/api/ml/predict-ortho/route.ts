@@ -37,9 +37,6 @@ export async function POST(request: NextRequest) {
   if (!task) {
     return NextResponse.json({ error: `No task found for outputKey: ${outputKey}` }, { status: 404 })
   }
-  if (!task.tilesKey) {
-    return NextResponse.json({ error: 'Task found but tilesKey is null — static tiles not generated for this ortho' }, { status: 404 })
-  }
 
   // Parse cached bounds JSON: { bounds: [minlng, minlat, maxlng, maxlat], minzoom, maxzoom }
   let bounds = [-180, -85, 180, 85]
@@ -52,10 +49,27 @@ export async function POST(request: NextRequest) {
     } catch {}
   }
 
+  const tileServerUrl = process.env.MODAL_TILE_SERVER_URL
+  const tileServerToken = process.env.MODAL_TILE_TOKEN
+  const bucket = process.env.S3_BUCKET_NAME
+
+  if (!tileServerUrl || !tileServerToken) {
+    return NextResponse.json({ error: 'Tile server not configured' }, { status: 500 })
+  }
+
   const modalRes = await fetch(`${MODAL_URL}/predict_ortho`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ tiles_key: task.tilesKey, bounds, zoom, score_thresh: score_thresh ?? 0.25 }),
+    body: JSON.stringify({
+      tiles_key: task.tilesKey ?? null,
+      tile_server_url: tileServerUrl,
+      tile_server_token: tileServerToken,
+      ortho_key: outputKey,
+      bucket: bucket ?? '',
+      bounds,
+      zoom,
+      score_thresh: score_thresh ?? 0.25,
+    }),
   })
 
   if (!modalRes.ok) {
