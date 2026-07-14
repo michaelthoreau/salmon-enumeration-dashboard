@@ -14,24 +14,31 @@ export async function POST(request: NextRequest) {
   const { outputKey, score_thresh } = await request.json()
   if (!outputKey) return NextResponse.json({ error: 'Missing outputKey' }, { status: 400 })
 
-  // Find the most recent completed task with tiles for this outputKey
+  // Find the most recent task for this outputKey (with or without tilesKey)
   const [odmTask] = await db
     .select({ tilesKey: odmTasks.tilesKey, bounds: odmTasks.bounds })
     .from(odmTasks)
-    .where(and(eq(odmTasks.outputKey, outputKey), isNotNull(odmTasks.tilesKey)))
+    .where(eq(odmTasks.outputKey, outputKey))
     .orderBy(desc(odmTasks.createdAt))
     .limit(1)
 
   const [georefTask] = await db
     .select({ tilesKey: georefTasks.tilesKey, bounds: georefTasks.bounds })
     .from(georefTasks)
-    .where(and(eq(georefTasks.outputKey, outputKey), isNotNull(georefTasks.tilesKey)))
+    .where(eq(georefTasks.outputKey, outputKey))
     .orderBy(desc(georefTasks.createdAt))
     .limit(1)
 
+  console.log('[predict-ortho] outputKey:', outputKey)
+  console.log('[predict-ortho] odmTask:', odmTask)
+  console.log('[predict-ortho] georefTask:', georefTask)
+
   const task = odmTask ?? georefTask
-  if (!task?.tilesKey) {
-    return NextResponse.json({ error: 'No tiles found for this ortho' }, { status: 404 })
+  if (!task) {
+    return NextResponse.json({ error: `No task found for outputKey: ${outputKey}` }, { status: 404 })
+  }
+  if (!task.tilesKey) {
+    return NextResponse.json({ error: 'Task found but tilesKey is null — static tiles not generated for this ortho' }, { status: 404 })
   }
 
   // Parse cached bounds JSON: { bounds: [minlng, minlat, maxlng, maxlat], minzoom, maxzoom }
