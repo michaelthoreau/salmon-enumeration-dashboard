@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { cn } from '@/lib/utils'
-import { MapPin, Map, Check, X, RotateCcw, Trash2, Edit, ChevronDown, Image as ImageIcon, Layers, Ruler, Loader2, Plus, Minus } from 'lucide-react'
+import { MapPin, Map, Check, X, RotateCcw, Trash2, Edit, ChevronDown, Image as ImageIcon, Layers, Ruler, Loader2, Plus, Minus, Sparkles } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import 'maplibre-gl/dist/maplibre-gl.css'
 
@@ -194,6 +194,12 @@ export default function OrthoMap({
   const isMeasuringRef = useRef(false)
   // Refs for callbacks used inside stale-closure map handlers
   const onDeleteAnnotationRef = useRef(onDeleteAnnotation)
+
+  // ── Prediction states ───────────────────────────────────────────────────────
+  const [isPredicting, setIsPredicting] = useState(false)
+  const [isPreviewing, setIsPreviewing] = useState(false)
+  const [predictedPoints, setPredictedPoints] = useState<{ lng: number; lat: number; score: number }[]>([])
+  const [predictError, setPredictError] = useState<string | null>(null)
 
   // ── Measurement states ──────────────────────────────────────────────────────
   const [isMeasuring, setIsMeasuring] = useState(false)
@@ -448,6 +454,24 @@ export default function OrthoMap({
               'circle-opacity': 0.9,
             },
             filter: ['==', 'id', ''],
+          })
+
+          // Add predictions source and layer (orange, preview mode)
+          map.addSource('predictions-source', {
+            type: 'geojson',
+            data: { type: 'FeatureCollection', features: [] },
+          })
+
+          map.addLayer({
+            id: 'predictions-layer',
+            type: 'circle',
+            source: 'predictions-source',
+            paint: {
+              'circle-color': '#f97316',
+              'circle-radius': 7,
+              'circle-stroke-color': '#ffffff',
+              'circle-stroke-width': 2,
+            },
           })
 
           // Add measure source and layers
@@ -1208,6 +1232,62 @@ export default function OrthoMap({
     }
   }, [annotations, status])
 
+  // Sync predicted points to the predictions MapLibre source
+  useEffect(() => {
+    if (!mapRef.current || !mapReadyRef.current) return
+    const source = mapRef.current.getSource('predictions-source')
+    if (!source) return
+    source.setData({
+      type: 'FeatureCollection',
+      features: predictedPoints.map((p, i) => ({
+        type: 'Feature' as const,
+        geometry: { type: 'Point' as const, coordinates: [p.lng, p.lat] },
+        properties: { score: p.score, index: i },
+      })),
+    })
+  }, [predictedPoints, status])
+
+  async function handlePredict() {
+    if (!outputKey) return
+    setIsPredicting(true)
+    setPredictError(null)
+    try {
+      const res = await fetch('/api/ml/predict-ortho', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ outputKey, score_thresh: 0.25 }),
+      })
+      if (!res.ok) throw new Error(`Prediction failed (${res.status})`)
+      const data = await res.json()
+      if (!Array.isArray(data.points)) throw new Error('Invalid response from prediction API')
+      setPredictedPoints(data.points)
+      setIsPreviewing(true)
+    } catch (err: any) {
+      setPredictError(err.message || 'Prediction failed')
+    } finally {
+      setIsPredicting(false)
+    }
+  }
+
+  async function handleAcceptPredictions() {
+    for (const p of predictedPoints) {
+      await onAddAnnotation?.({
+        shape: 'point',
+        geometry: JSON.stringify({ type: 'Point', coordinates: [p.lng, p.lat] }),
+        fishCount: 1,
+        confidence: p.score,
+      })
+    }
+    setPredictedPoints([])
+    setIsPreviewing(false)
+  }
+
+  function handleDiscardPredictions() {
+    setPredictedPoints([])
+    setIsPreviewing(false)
+    setPredictError(null)
+  }
+
   // ── Save/Cancel handlers ───────────────────────────────────────────────────
   async function handleSave() {
     if (!onSaveLocation) return
@@ -1349,6 +1429,53 @@ export default function OrthoMap({
                     <span className="text-[10px] font-normal opacity-75">Right-click marker to remove</span>
                   </span>
                 </Button>
+              )}
+
+              {/* Predict Fish Button */}
+              {editable && outputKey && !isPreviewing && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={isPredicting}
+                  className="bg-white/95 border border-gray-200/80 hover:bg-orange-50 text-xs font-semibold gap-2 h-auto py-1.5 rounded-xl shadow-md"
+                  onClick={handlePredict}
+                >
+                  {isPredicting ? (
+                    <Loader2 className="w-4 h-4 text-orange-500 animate-spin" />
+                  ) : (
+                    <Sparkles className="w-4 h-4 text-orange-500" />
+                  )}
+                  <span>{isPredicting ? 'Predicting…' : 'Predict Fish'}</span>
+                </Button>
+              )}
+
+              {/* Accept / Discard panel when previewing predictions */}
+              {isPreviewing && (
+                <div className="bg-white/95 backdrop-blur-sm px-3 py-2 rounded-xl shadow-md border border-orange-200 flex items-center gap-2 text-xs font-semibold">
+                  <span className="text-orange-600">🐟 {predictedPoints.length} predicted</span>
+                  <Button
+                    size="sm"
+                    className="h-7 px-2.5 text-xs bg-green-600 hover:bg-green-700 text-white rounded-lg"
+                    onClick={handleAcceptPredictions}
+                  >
+                    <Check className="w-3.5 h-3.5 mr-1" /> Accept
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-7 px-2.5 text-xs rounded-lg border-gray-300"
+                    onClick={handleDiscardPredictions}
+                  >
+                    <X className="w-3.5 h-3.5 mr-1" /> Discard
+                  </Button>
+                </div>
+              )}
+
+              {/* Prediction error toast */}
+              {predictError && !isPreviewing && (
+                <div className="bg-red-50 border border-red-200 text-red-600 text-[10px] px-3 py-1.5 rounded-xl shadow-sm max-w-[200px] truncate" title={predictError}>
+                  {predictError}
+                </div>
               )}
 
               <Button
