@@ -143,8 +143,7 @@ export default function VideosView({
     if (isLoadingMore || !hasMore) return
     setIsLoadingMore(true)
     const dates = allVideos.map((v) => getDateKey(v.flightTimestamp, timezone)).sort()
-    const cursor = dates[0]
-    if (!cursor) { setIsLoadingMore(false); return }
+    const cursor = dates[0] ?? getDateKey(new Date().toISOString(), timezone)
     const result = await loadVideosBefore(projectId, cursor, timezone)
     setAllVideos((prev) => [...prev, ...result.videos])
     setHasMore(result.hasMore)

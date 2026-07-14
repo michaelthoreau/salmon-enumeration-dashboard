@@ -62,19 +62,6 @@ export default async function VideosPage({ params }: PageProps) {
     ))
   const hasMore = (olderCheck?.count ?? 0) > 0
 
-  if (allFlights.length === 0) {
-    return (
-      <VideosView
-        projectId={projectId}
-        timezone={project.timezone}
-        videos={[]}
-        canWrite={canWrite}
-      />
-    )
-  }
-
-  const flightIds = allFlights.map((f) => f.id)
-
   // All-time flight IDs for accurate queue count (no date filter)
   const allFlightIds = planIds.length > 0
     ? (await db.select({ id: flights.id }).from(flights)
@@ -91,6 +78,21 @@ export default async function VideosPage({ params }: PageProps) {
         ))
     : [{ count: 0 }]
   const totalQueueCount = totalQueueRow?.count ?? 0
+
+  if (allFlights.length === 0) {
+    return (
+      <VideosView
+        projectId={projectId}
+        timezone={project.timezone}
+        videos={[]}
+        canWrite={canWrite}
+        hasMore={hasMore}
+        totalQueueCount={totalQueueCount}
+      />
+    )
+  }
+
+  const flightIds = allFlights.map((f) => f.id)
 
   const allFiles = await db
     .select()
