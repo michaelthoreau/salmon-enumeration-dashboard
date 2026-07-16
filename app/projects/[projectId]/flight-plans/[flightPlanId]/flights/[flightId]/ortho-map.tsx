@@ -1255,7 +1255,7 @@ export default function OrthoMap({
       const res = await fetch('/api/ml/predict-ortho', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ outputKey, score_thresh: 0.25 }),
+        body: JSON.stringify({ outputKey, score_thresh: 0.01 }),
       })
       if (!res.ok) throw new Error(`Prediction failed (${res.status})`)
       const data = await res.json()
