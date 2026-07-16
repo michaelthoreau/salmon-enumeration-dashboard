@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
+
+export const maxDuration = 300
 import { getSession } from '@/lib/session'
 import { db } from '@/lib/db'
 import { odmTasks, georefTasks } from '@/lib/schema'
