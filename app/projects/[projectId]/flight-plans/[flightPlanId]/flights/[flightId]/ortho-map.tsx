@@ -1262,6 +1262,14 @@ export default function OrthoMap({
       if (!Array.isArray(data.points)) throw new Error('Invalid response from prediction API')
       setPredictedPoints(data.points)
       setIsPreviewing(true)
+      if (data.points.length > 0 && mapRef.current) {
+        const lngs = data.points.map((p: any) => p.lng)
+        const lats = data.points.map((p: any) => p.lat)
+        mapRef.current.fitBounds(
+          [[Math.min(...lngs), Math.min(...lats)], [Math.max(...lngs), Math.max(...lats)]],
+          { padding: 80, maxZoom: 22, duration: 800 }
+        )
+      }
     } catch (err: any) {
       setPredictError(err.message || 'Prediction failed')
     } finally {
