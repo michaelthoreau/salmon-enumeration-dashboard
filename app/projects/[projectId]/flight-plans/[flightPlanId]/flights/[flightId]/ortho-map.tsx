@@ -825,7 +825,7 @@ export default function OrthoMap({
         map.addLayer({ id: 'ortho-layer', type: 'raster', source: 'ortho' })
 
         // Re-order layers above the orthophoto layer.
-        // Stack order (bottom → top): annotations → location → photos → measure
+        // Stack order (bottom → top): annotations → predictions → location → photos → measure
         console.log('[OrthoMap] Re-ordering layers to keep photos/locations/measurements on top')
 
         // Annotations sit just above the ortho raster but below photo markers
@@ -834,6 +834,11 @@ export default function OrthoMap({
         }
         if (map.getLayer('annotations-hover-layer')) {
           map.moveLayer('annotations-hover-layer')
+        }
+
+        // Predicted points sit alongside annotations, above the ortho raster
+        if (map.getLayer('predictions-layer')) {
+          map.moveLayer('predictions-layer')
         }
 
         // Move location layers above annotations
@@ -1255,7 +1260,7 @@ export default function OrthoMap({
       const res = await fetch('/api/ml/predict-ortho', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ outputKey, score_thresh: 0.01 }),
+        body: JSON.stringify({ outputKey, score_thresh: 0.25 }),
       })
       if (!res.ok) throw new Error(`Prediction failed (${res.status})`)
       const data = await res.json()
