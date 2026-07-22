@@ -156,7 +156,6 @@ export default function QueueAnnotator({
   const [rawPredictions, setRawPredictions] = useState<PredictedPoint[]>([])
   const [isPreviewing, setIsPreviewing] = useState<boolean>(false)
   const [showClearConfirm, setShowClearConfirm] = useState<boolean>(false)
-  const [originalPointsBeforePredict, setOriginalPointsBeforePredict] = useState<Point[]>([])
   const [copiedError, setCopiedError] = useState<boolean>(false)
   const [showSlowPredictionWarning, setShowSlowPredictionWarning] = useState<boolean>(false)
 
@@ -461,7 +460,6 @@ export default function QueueAnnotator({
       return
     }
 
-    setOriginalPointsBeforePredict(points)
     setPoints([])
     setPredicting(true)
     setPredictError(null)
@@ -531,28 +529,41 @@ export default function QueueAnnotator({
     }
   }, [canWrite, points, task, isVideo, videoUrl])
 
-  const handleLockIn = useCallback(() => {
-    const finalPoints = filteredPredictions.map(p => ({
+  // Approve a single predicted point: turns it into a manual (red) point and
+  // removes it from the pending prediction set.
+  const handleApprovePredictedPoint = useCallback((pred: PredictedPoint) => {
+    const px = isVideo ? pred.x : pred.crop_x
+    const py = isVideo ? pred.y : pred.crop_y
+    setPoints(prev => [...prev, { id: crypto.randomUUID(), x: px, y: py }])
+    setRawPredictions(prev => prev.filter(p => p !== pred))
+    setDirty(true)
+    setSaveStatus('idle')
+  }, [isVideo])
+
+  // Reject a single predicted point: just drops it from the pending prediction set.
+  const handleRejectPredictedPoint = useCallback((pred: PredictedPoint) => {
+    setRawPredictions(prev => prev.filter(p => p !== pred))
+  }, [])
+
+  const handleApproveRemaining = useCallback(() => {
+    const remaining = filteredPredictions.map(p => ({
       id: crypto.randomUUID(),
       x: isVideo ? p.x : p.crop_x,
       y: isVideo ? p.y : p.crop_y,
     }))
 
-    setPoints(finalPoints)
+    setPoints(prev => [...prev, ...remaining])
     setIsPreviewing(false)
     setRawPredictions([])
-    setOriginalPointsBeforePredict([])
     setDirty(true)
     setSaveStatus('idle')
   }, [filteredPredictions, isVideo])
 
-  const handleCancelPreview = useCallback(() => {
+  const handleDeleteRemaining = useCallback(() => {
     setIsPreviewing(false)
     setRawPredictions([])
-    setPoints(originalPointsBeforePredict)
-    setOriginalPointsBeforePredict([])
     setPredictError(null)
-  }, [originalPointsBeforePredict])
+  }, [])
 
   const handleCopyError = useCallback(() => {
     if (!predictError) return
@@ -645,23 +656,48 @@ export default function QueueAnnotator({
   }, [canWrite, scale, frameW, frameH, isPreviewing])
 
   const handleCanvasClick = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
-    if (!canWrite || isPreviewing) return
+    if (!canWrite) return
     if (didDragRef.current) { didDragRef.current = false; return }
     const rect = e.currentTarget.getBoundingClientRect()
     const px = (e.clientX - rect.left) / scale
     const py = (e.clientY - rect.top) / scale
+
+    if (isPreviewing) {
+      const predHit = filteredPredictions.find(p => {
+        const ppx = isVideo ? p.x : p.crop_x
+        const ppy = isVideo ? p.y : p.crop_y
+        return Math.hypot(ppx - px, ppy - py) < HIT_RADIUS / scale
+      })
+      if (predHit) handleApprovePredictedPoint(predHit)
+      return
+    }
+
     const hit = points.findIndex(p => Math.hypot(p.x - px, p.y - py) < HIT_RADIUS / scale)
     if (hit >= 0) return
     setPoints(prev => [...prev, { id: crypto.randomUUID(), x: px, y: py }])
     setDirty(true)
     setSaveStatus('idle')
-  }, [canWrite, points, scale, isPreviewing])
+  }, [canWrite, points, scale, isPreviewing, filteredPredictions, isVideo, handleApprovePredictedPoint])
 
   const handleContextMenu = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
-    if (!canWrite || isPreviewing) return
+    if (!canWrite) return
     const rect = e.currentTarget.getBoundingClientRect()
     const px = (e.clientX - rect.left) / scale
     const py = (e.clientY - rect.top) / scale
+
+    if (isPreviewing) {
+      const predHit = filteredPredictions.find(p => {
+        const ppx = isVideo ? p.x : p.crop_x
+        const ppy = isVideo ? p.y : p.crop_y
+        return Math.hypot(ppx - px, ppy - py) < HIT_RADIUS / scale
+      })
+      if (predHit) {
+        e.preventDefault()
+        handleRejectPredictedPoint(predHit)
+      }
+      return
+    }
+
     const hitIdx = points.findIndex(p => Math.hypot(p.x - px, p.y - py) < HIT_RADIUS / scale)
     if (hitIdx >= 0) {
       e.preventDefault()
@@ -669,7 +705,7 @@ export default function QueueAnnotator({
       setDirty(true)
       setSaveStatus('idle')
     }
-  }, [canWrite, points, scale, isPreviewing])
+  }, [canWrite, points, scale, isPreviewing, filteredPredictions, isVideo, handleRejectPredictedPoint])
 
   const progressPct = totalInQueue > 0 ? Math.round((completeCount / totalInQueue) * 100) : 0
   const filename = task.fileKey.split('/').pop() ?? task.fileKey
@@ -895,18 +931,20 @@ export default function QueueAnnotator({
                   {filteredPredictions.length} fish
                 </span>
                 <button
-                  onClick={handleLockIn}
+                  onClick={handleApproveRemaining}
+                  title="Add all remaining pending predictions as points"
                   className="flex items-center gap-1 px-2 py-1 rounded bg-green-600 hover:bg-green-500 text-white text-[11px] font-bold transition-colors"
                 >
                   <Check className="w-3 h-3" />
-                  Proceed to Cleanup
+                  Approve Remaining
                 </button>
                 <button
-                  onClick={handleCancelPreview}
+                  onClick={handleDeleteRemaining}
+                  title="Discard all remaining pending predictions"
                   className="flex items-center gap-1 px-2 py-1 rounded bg-gray-800 hover:bg-gray-700 text-gray-300 text-[11px] font-bold border border-gray-700 transition-colors"
                 >
                   <X className="w-3 h-3" />
-                  Cancel
+                  Delete Remaining
                 </button>
               </>
             ) : (
@@ -1060,12 +1098,23 @@ export default function QueueAnnotator({
                   }
                 }}
                 onClick={(e) => {
-                  if (!canWrite || isPreviewing) return
+                  if (!canWrite) return
                   if (didDragRef.current) { didDragRef.current = false; return }
                   if (didPanRef.current) { didPanRef.current = false; return }
                   const rect = e.currentTarget.getBoundingClientRect()
                   const px = (e.clientX - rect.left) / zoom / overlayScale
                   const py = (e.clientY - rect.top) / zoom / overlayScale
+
+                  if (isPreviewing) {
+                    const predHit = filteredPredictions.find(p => {
+                      const ppx = isVideo ? p.x : p.crop_x
+                      const ppy = isVideo ? p.y : p.crop_y
+                      return Math.hypot(ppx - px, ppy - py) < HIT_RADIUS / overlayScale
+                    })
+                    if (predHit) handleApprovePredictedPoint(predHit)
+                    return
+                  }
+
                   const hit = points.findIndex(p => Math.hypot(p.x - px, p.y - py) < HIT_RADIUS / overlayScale)
                   if (hit >= 0) return
                   setPoints(prev => [...prev, { id: crypto.randomUUID(), x: px, y: py }])
@@ -1082,10 +1131,24 @@ export default function QueueAnnotator({
                   setPoints(prev => prev.map(p => p.id === id ? { ...p, x: px, y: py } : p))
                 }}
                 onContextMenu={(e) => {
-                  if (!canWrite || isPreviewing) return
+                  if (!canWrite) return
                   const rect = e.currentTarget.getBoundingClientRect()
                   const px = (e.clientX - rect.left) / zoom / overlayScale
                   const py = (e.clientY - rect.top) / zoom / overlayScale
+
+                  if (isPreviewing) {
+                    const predHit = filteredPredictions.find(p => {
+                      const ppx = isVideo ? p.x : p.crop_x
+                      const ppy = isVideo ? p.y : p.crop_y
+                      return Math.hypot(ppx - px, ppy - py) < HIT_RADIUS / overlayScale
+                    })
+                    if (predHit) {
+                      e.preventDefault()
+                      handleRejectPredictedPoint(predHit)
+                    }
+                    return
+                  }
+
                   const hitIdx = points.findIndex(p => Math.hypot(p.x - px, p.y - py) < HIT_RADIUS / overlayScale)
                   if (hitIdx >= 0) {
                     e.preventDefault()
@@ -1160,9 +1223,18 @@ export default function QueueAnnotator({
           <div className="absolute bottom-0 left-0 right-0 flex items-center justify-end px-4 py-2 pointer-events-none">
             {canWrite && (
               <div className="flex items-center gap-3 text-[11px] text-white/40 pointer-events-none select-none">
-                <span><kbd className="font-mono bg-white/10 rounded px-1 py-0.5 text-white/60">click</kbd> add</span>
-                <span><kbd className="font-mono bg-white/10 rounded px-1 py-0.5 text-white/60">drag</kbd> move</span>
-                <span><kbd className="font-mono bg-white/10 rounded px-1 py-0.5 text-white/60">right-click</kbd> remove</span>
+                {isPreviewing ? (
+                  <>
+                    <span><kbd className="font-mono bg-white/10 rounded px-1 py-0.5 text-white/60">click</kbd> approve point</span>
+                    <span><kbd className="font-mono bg-white/10 rounded px-1 py-0.5 text-white/60">right-click</kbd> reject point</span>
+                  </>
+                ) : (
+                  <>
+                    <span><kbd className="font-mono bg-white/10 rounded px-1 py-0.5 text-white/60">click</kbd> add</span>
+                    <span><kbd className="font-mono bg-white/10 rounded px-1 py-0.5 text-white/60">drag</kbd> move</span>
+                    <span><kbd className="font-mono bg-white/10 rounded px-1 py-0.5 text-white/60">right-click</kbd> remove</span>
+                  </>
+                )}
                 <span><kbd className="font-mono bg-white/10 rounded px-1 py-0.5 text-white/60">C / Enter</kbd> complete</span>
               </div>
             )}
@@ -1198,9 +1270,18 @@ export default function QueueAnnotator({
           </div>
           {canWrite && (
             <div className="flex items-center gap-4 text-xs text-gray-500">
-              <span><kbd className="font-mono bg-gray-800 border border-gray-700 text-gray-300 rounded px-1 py-0.5">click</kbd> add</span>
-              <span><kbd className="font-mono bg-gray-800 border border-gray-700 text-gray-300 rounded px-1 py-0.5">drag</kbd> move</span>
-              <span><kbd className="font-mono bg-gray-800 border border-gray-700 text-gray-300 rounded px-1 py-0.5">right-click</kbd> remove</span>
+              {isPreviewing ? (
+                <>
+                  <span><kbd className="font-mono bg-gray-800 border border-gray-700 text-gray-300 rounded px-1 py-0.5">click</kbd> approve point</span>
+                  <span><kbd className="font-mono bg-gray-800 border border-gray-700 text-gray-300 rounded px-1 py-0.5">right-click</kbd> reject point</span>
+                </>
+              ) : (
+                <>
+                  <span><kbd className="font-mono bg-gray-800 border border-gray-700 text-gray-300 rounded px-1 py-0.5">click</kbd> add</span>
+                  <span><kbd className="font-mono bg-gray-800 border border-gray-700 text-gray-300 rounded px-1 py-0.5">drag</kbd> move</span>
+                  <span><kbd className="font-mono bg-gray-800 border border-gray-700 text-gray-300 rounded px-1 py-0.5">right-click</kbd> remove</span>
+                </>
+              )}
               <span><kbd className="font-mono bg-gray-800 border border-gray-700 text-gray-300 rounded px-1 py-0.5">C / Enter</kbd> complete</span>
             </div>
           )}
