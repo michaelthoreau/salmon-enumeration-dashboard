@@ -194,6 +194,7 @@ export default function OrthoMap({
   const isMeasuringRef = useRef(false)
   // Refs for callbacks used inside stale-closure map handlers
   const onDeleteAnnotationRef = useRef(onDeleteAnnotation)
+  const onAddAnnotationRef = useRef(onAddAnnotation)
 
   // ── Prediction states ───────────────────────────────────────────────────────
   const [isPredicting, setIsPredicting] = useState(false)
@@ -654,6 +655,44 @@ export default function OrthoMap({
             }
           })
 
+          // Hover handler for predicted points
+          map.on('mouseenter', 'predictions-layer', () => {
+            map.getCanvas().style.cursor = 'pointer'
+          })
+
+          map.on('mouseleave', 'predictions-layer', () => {
+            map.getCanvas().style.cursor = (isAnnotatingRef.current || isMeasuringRef.current) ? 'crosshair' : ''
+          })
+
+          // Left-click a predicted point = approve it (becomes a real red annotation)
+          map.on('click', 'predictions-layer', async (e: any) => {
+            const features = map.queryRenderedFeatures(e.point, { layers: ['predictions-layer'] })
+            if (features.length === 0) return
+            const feature = features[0]
+            const [lng, lat] = (feature.geometry as any).coordinates
+            const score = feature.properties?.score
+            const index = feature.properties?.index
+
+            if (onAddAnnotationRef.current) {
+              await onAddAnnotationRef.current({
+                shape: 'point',
+                geometry: JSON.stringify({ type: 'Point', coordinates: [lng, lat] }),
+                fishCount: 1,
+                confidence: score,
+              })
+            }
+            setPredictedPoints(prev => prev.filter((_, i) => i !== index))
+          })
+
+          // Right-click a predicted point = reject it (just drop it, no annotation created)
+          map.on('contextmenu', 'predictions-layer', (e: any) => {
+            e.preventDefault()
+            const features = map.queryRenderedFeatures(e.point, { layers: ['predictions-layer'] })
+            if (features.length === 0) return
+            const index = features[0].properties?.index
+            setPredictedPoints(prev => prev.filter((_, i) => i !== index))
+          })
+
           // Click handler for photos showing a thumbnail popup with an navigation link
           map.on('click', 'photo-layer', (e: any) => {
             const features = map.queryRenderedFeatures(e.point, { layers: ['photo-layer'] })
@@ -1023,9 +1062,9 @@ export default function OrthoMap({
       }
 
       if (isAnnotating && onAddAnnotation) {
-        // Don't place a new annotation if we clicked an existing one or a photo dot
+        // Don't place a new annotation if we clicked an existing one, a photo dot, or a predicted point
         const hits = map.queryRenderedFeatures(e.point, {
-          layers: ['annotations-layer', 'photo-layer'],
+          layers: ['annotations-layer', 'photo-layer', 'predictions-layer'],
         })
         if (hits.length > 0) return
 
@@ -1098,6 +1137,7 @@ export default function OrthoMap({
   useEffect(() => { isAnnotatingRef.current = isAnnotating }, [isAnnotating])
   useEffect(() => { isMeasuringRef.current = isMeasuring }, [isMeasuring])
   useEffect(() => { onDeleteAnnotationRef.current = onDeleteAnnotation }, [onDeleteAnnotation])
+  useEffect(() => { onAddAnnotationRef.current = onAddAnnotation }, [onAddAnnotation])
 
   // Toggle crosshair cursor during edit, measure, or annotate mode
   useEffect(() => {
@@ -1282,7 +1322,7 @@ export default function OrthoMap({
     }
   }
 
-  async function handleAcceptPredictions() {
+  async function handleApproveRemaining() {
     for (const p of predictedPoints) {
       await onAddAnnotation?.({
         shape: 'point',
@@ -1295,7 +1335,7 @@ export default function OrthoMap({
     setIsPreviewing(false)
   }
 
-  function handleDiscardPredictions() {
+  function handleDeleteRemaining() {
     setPredictedPoints([])
     setIsPreviewing(false)
     setPredictError(null)
@@ -1462,25 +1502,30 @@ export default function OrthoMap({
                 </Button>
               )}
 
-              {/* Accept / Discard panel when previewing predictions */}
+              {/* Approve Remaining / Delete Remaining panel when previewing predictions */}
               {isPreviewing && (
-                <div className="bg-white/95 backdrop-blur-sm px-3 py-2 rounded-xl shadow-md border border-orange-200 flex items-center gap-2 text-xs font-semibold">
-                  <span className="text-orange-600">🐟 {predictedPoints.length} predicted</span>
-                  <Button
-                    size="sm"
-                    className="h-7 px-2.5 text-xs bg-green-600 hover:bg-green-700 text-white rounded-lg"
-                    onClick={handleAcceptPredictions}
-                  >
-                    <Check className="w-3.5 h-3.5 mr-1" /> Accept
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className="h-7 px-2.5 text-xs rounded-lg border-gray-300"
-                    onClick={handleDiscardPredictions}
-                  >
-                    <X className="w-3.5 h-3.5 mr-1" /> Discard
-                  </Button>
+                <div className="bg-white/95 backdrop-blur-sm px-3 py-2 rounded-xl shadow-md border border-orange-200 flex flex-col gap-1.5 text-xs font-semibold">
+                  <div className="flex items-center gap-2">
+                    <span className="text-orange-600">🐟 {predictedPoints.length} predicted</span>
+                    <Button
+                      size="sm"
+                      className="h-7 px-2.5 text-xs bg-green-600 hover:bg-green-700 text-white rounded-lg"
+                      onClick={handleApproveRemaining}
+                      title="Add all remaining pending predictions as annotations"
+                    >
+                      <Check className="w-3.5 h-3.5 mr-1" /> Approve Remaining
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="h-7 px-2.5 text-xs rounded-lg border-gray-300"
+                      onClick={handleDeleteRemaining}
+                      title="Discard all remaining pending predictions"
+                    >
+                      <X className="w-3.5 h-3.5 mr-1" /> Delete Remaining
+                    </Button>
+                  </div>
+                  <span className="text-[10px] font-normal text-gray-500">Click a point to approve it · right-click to reject it</span>
                 </div>
               )}
 
