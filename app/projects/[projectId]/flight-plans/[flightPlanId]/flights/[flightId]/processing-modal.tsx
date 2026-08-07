@@ -102,8 +102,14 @@ export default function ProcessingModal({
 
   // GeoTIFF Upload state
   const geotiffInputRef = useRef<HTMLInputElement>(null)
+  const tfwInputRef = useRef<HTMLInputElement>(null)
   const uploadXhrRef = useRef<XMLHttpRequest | null>(null)
   const [selectedGeotiffFile, setSelectedGeotiffFile] = useState<File | null>(null)
+  // Optional world-file sidecar, for orthos with no (or unusable) embedded GeoTIFF
+  // tags — e.g. a plain TIFF + .tfw pair from a photogrammetry tool. A world file
+  // never carries a CRS, so an EPSG code must be supplied alongside it.
+  const [selectedTfwFile, setSelectedTfwFile] = useState<File | null>(null)
+  const [epsgCode, setEpsgCode] = useState<string>('')
 
   // Task processing state
   const [task, setTask] = useState<TaskState | null>(null)
@@ -118,6 +124,8 @@ export default function ProcessingModal({
   useEffect(() => {
     if (!isOpen) {
       setSelectedGeotiffFile(null)
+      setSelectedTfwFile(null)
+      setEpsgCode('')
     }
   }, [isOpen])
 
@@ -132,8 +140,56 @@ export default function ProcessingModal({
     setSelectedGeotiffFile(file)
   }
 
+  const handleTfwFileSelected = (file: File) => {
+    const ext = file.name.split('.').pop()?.toLowerCase()
+    if (ext !== 'tfw') {
+      setStartError('Please select a valid world file (.tfw)')
+      setSelectedTfwFile(null)
+      return
+    }
+    setStartError(null)
+    setSelectedTfwFile(file)
+  }
+
+  /** Uploads a single file via presign-geotiff + direct S3 POST. Returns the S3 key. */
+  async function uploadViaPresign(file: File, fileName: string): Promise<string> {
+    const res = await fetch('/api/upload/presign-geotiff', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ flightId, contentType: file.type || 'application/octet-stream', size: file.size, fileName }),
+    })
+    if (!res.ok) {
+      const errData = await res.json()
+      throw new Error(errData.error ?? `Failed to get presigned upload URL for ${fileName}`)
+    }
+    const { upload } = await res.json()
+    const { url, fields } = upload
+
+    await new Promise<void>((resolve, reject) => {
+      const formData = new FormData()
+      for (const [k, v] of Object.entries(fields)) {
+        formData.append(k, v as string)
+      }
+      formData.append('file', file)
+      const xhr = new XMLHttpRequest()
+      xhr.open('POST', url)
+      xhr.onload = () => {
+        if (xhr.status >= 200 && xhr.status < 300) resolve()
+        else reject(new Error(`S3 upload failed for ${fileName}: status ${xhr.status}`))
+      }
+      xhr.onerror = () => reject(new Error(`Network error uploading ${fileName}`))
+      xhr.send(formData)
+    })
+
+    return fields.key
+  }
+
   async function startGeotiffUpload() {
     if (!selectedGeotiffFile) return
+    if (selectedTfwFile && !epsgCode.trim()) {
+      setStartError('An EPSG code is required when attaching a world file (.tfw) — a world file alone does not specify a coordinate system.')
+      return
+    }
     setStarting(true)
     setStartError(null)
     outputLineRef.current = 0
@@ -214,13 +270,28 @@ export default function ProcessingModal({
       setStarting(false)
       await uploadPromise
 
+      // Optionally also upload the .tfw sidecar, if one was attached.
+      let tfwKey: string | undefined
+      if (selectedTfwFile) {
+        setTask((prev) => {
+          if (!prev) return null
+          return { ...prev, output: [...prev.output, 'Uploading world file (.tfw)...'] }
+        })
+        tfwKey = await uploadViaPresign(selectedTfwFile, 'outputs/orthophoto.tfw')
+      }
+
       setTask((prev) => {
         if (!prev) return null
         return {
           ...prev,
           status: 'running',
           progress: 99,
-          output: [...prev.output, 'S3 upload complete. Registering orthomap and pre-fetching map bounds...'],
+          output: [
+            ...prev.output,
+            tfwKey
+              ? 'Uploads complete. Applying world-file georeferencing and generating map tiles...'
+              : 'S3 upload complete. Registering orthomap and pre-fetching map bounds...',
+          ],
         }
       })
 
@@ -230,6 +301,7 @@ export default function ProcessingModal({
         body: JSON.stringify({
           key: fields.key,
           flightId,
+          ...(tfwKey ? { tfwKey, epsg: Number(epsgCode.trim()) } : {}),
         }),
       })
 
@@ -882,6 +954,74 @@ export default function ProcessingModal({
                       >
                         <X className="w-4 h-4" />
                       </button>
+                    </div>
+                  )}
+
+                  {/* Optional world-file sidecar — only needed if the TIFF above has no
+                      (or unusable) embedded coordinate system tags. */}
+                  {selectedGeotiffFile && (
+                    <div className="pt-1 space-y-3">
+                      <div className="flex items-center gap-2">
+                        <div className="h-px flex-1 bg-slate-200 dark:bg-slate-800" />
+                        <p className="text-[10px] font-medium text-slate-400 dark:text-slate-500 uppercase tracking-wide">
+                          Optional — world file
+                        </p>
+                        <div className="h-px flex-1 bg-slate-200 dark:bg-slate-800" />
+                      </div>
+                      <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed">
+                        Only needed if this TIFF has no embedded coordinate system (e.g. a plain
+                        TIFF + separate .tfw world file from a photogrammetry tool). If your file
+                        already has embedded GeoTIFF tags, skip this.
+                      </p>
+
+                      {!selectedTfwFile ? (
+                        <button
+                          type="button"
+                          onClick={() => tfwInputRef.current?.click()}
+                          className="w-full flex items-center justify-center gap-2 rounded-lg border border-dashed border-slate-300 dark:border-slate-700 px-4 py-2.5 text-[11px] font-medium text-slate-500 dark:text-slate-400 hover:border-purple-400 hover:text-purple-600 transition-colors"
+                        >
+                          Attach .tfw world file
+                          <input
+                            ref={tfwInputRef}
+                            type="file"
+                            accept=".tfw"
+                            className="hidden"
+                            onChange={(e) => {
+                              const file = e.target.files?.[0]
+                              if (file) handleTfwFileSelected(file)
+                            }}
+                          />
+                        </button>
+                      ) : (
+                        <div className="flex items-center justify-between p-2.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg">
+                          <p className="text-xs font-semibold text-slate-800 dark:text-slate-200 truncate max-w-[280px]">
+                            🗺️ {selectedTfwFile.name}
+                          </p>
+                          <button
+                            type="button"
+                            onClick={() => { setSelectedTfwFile(null); setEpsgCode('') }}
+                            className="p-1 text-slate-400 hover:text-red-500 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+                          >
+                            <X className="w-4 h-4" />
+                          </button>
+                        </div>
+                      )}
+
+                      {selectedTfwFile && (
+                        <div className="space-y-1.5">
+                          <label className="text-[11px] font-medium text-slate-600 dark:text-slate-300">
+                            EPSG code <span className="text-slate-400">(coordinate system — a world file alone doesn&apos;t specify one)</span>
+                          </label>
+                          <input
+                            type="text"
+                            inputMode="numeric"
+                            value={epsgCode}
+                            onChange={(e) => setEpsgCode(e.target.value)}
+                            placeholder="e.g. 26904 for NAD83 / UTM zone 4N"
+                            className="w-full text-xs rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-3 py-2 text-slate-800 dark:text-slate-200 placeholder:text-slate-400"
+                          />
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>

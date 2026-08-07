@@ -55,6 +55,8 @@ export const flightPlans = sqliteTable('flight_plans', {
   location: text('location'), // JSON string representing GeoJSON Geometry (Point or Polygon)
 })
 
+export type SurveyType = 'migration' | 'spawning'
+
 export const flights = sqliteTable('flights', {
   id: text('id').primaryKey(), // UUID used in S3 path
   flightPlanId: text('flight_plan_id').notNull(), // FK → flight_plans.id (no cascade)
@@ -64,6 +66,10 @@ export const flights = sqliteTable('flights', {
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
   deletedAt: integer('deleted_at', { mode: 'timestamp' }),
   lowPriority: integer('low_priority', { mode: 'boolean' }).notNull().default(false),
+  // What this flight's ortho actually surveys — gates which "Predict" model/button
+  // applies (e.g. spawning-salmon detection only makes sense for 'spawning' surveys,
+  // not the swimming/migration-count flights the original model targets).
+  surveyType: text('survey_type').$type<SurveyType>().notNull().default('migration'),
 })
 
 // ─── Files ────────────────────────────────────────────────────────────────────

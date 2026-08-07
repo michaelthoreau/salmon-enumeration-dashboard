@@ -11,14 +11,14 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 403 })
   }
 
-  let body: { flightId: string; contentType: string; size: number }
+  let body: { flightId: string; contentType: string; size: number; fileName?: string }
   try {
     body = await request.json()
   } catch {
     return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 })
   }
 
-  const { flightId, contentType, size } = body
+  const { flightId, contentType, size, fileName } = body
   if (!flightId || !contentType || !size) {
     return NextResponse.json({ error: 'flightId, contentType, and size are required' }, { status: 400 })
   }
@@ -46,12 +46,13 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    // Generate a presigned POST policy directly to outputs/orthophoto.tif
+    // Generate a presigned POST policy directly to outputs/orthophoto.tif (or
+    // outputs/orthophoto.tfw when uploading a world-file sidecar alongside it).
     const post = await createPresignedUploadPost(
       project.id,
       flightPlan.id,
       flight.id,
-      'outputs/orthophoto.tif',
+      fileName ?? 'outputs/orthophoto.tif',
       contentType,
       size
     )

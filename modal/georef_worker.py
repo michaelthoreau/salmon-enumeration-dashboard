@@ -684,6 +684,89 @@ def _merge_to_cog(tile_paths: list[str], cog_path: str, log_fn=print) -> None:
             raise RuntimeError(f"gdal_translate VRT->COG failed: {res.stderr}")
 
 
+def _apply_worldfile_and_cog(
+    tif_path: str,
+    tfw_path: str,
+    epsg: int,
+    out_path: str,
+    log_fn=print,
+) -> None:
+    """
+    Applies world-file (.tfw) georeferencing plus a given EPSG code to a TIFF
+    that has no (or unusable) embedded GeoTIFF tags, then re-encodes the result
+    as a proper Cloud-Optimized GeoTIFF.
+
+    GDAL auto-detects a same-basename sidecar world file when *opening* a local
+    TIFF for read, but only if the TIFF itself has no embedded geotransform —
+    embedded GeoTIFF tags always take priority over a sidecar .tfw. A world file
+    alone never carries a CRS, so it must be supplied separately (-a_srs).
+    """
+    import subprocess
+    import tempfile
+    import shutil
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        # GDAL only picks up a sidecar world file when it shares the input's
+        # basename in the same directory, so stage a matching pair regardless
+        # of what the uploaded files were originally named.
+        staged_tif = os.path.join(tmpdir, "input.tif")
+        staged_tfw = os.path.join(tmpdir, "input.tfw")
+        shutil.copy(tif_path, staged_tif)
+        shutil.copy(tfw_path, staged_tfw)
+
+        assigned_path = os.path.join(tmpdir, "assigned.tif")
+        cmd_assign = [
+            "gdal_translate",
+            "-a_srs", f"EPSG:{epsg}",
+            staged_tif,
+            assigned_path,
+        ]
+        log_fn(f"[worldfile] Running: {' '.join(cmd_assign)}")
+        res = subprocess.run(cmd_assign, capture_output=True, text=True)
+        if res.stdout.strip():
+            log_fn(f"[worldfile] gdal_translate (assign CRS) stdout:\n{res.stdout.strip()}")
+        if res.stderr.strip():
+            log_fn(f"[worldfile] gdal_translate (assign CRS) stderr:\n{res.stderr.strip()}")
+        if res.returncode != 0:
+            raise RuntimeError(f"gdal_translate (assign CRS) failed: {res.stderr}")
+
+        # Sanity-check before spending time on COG conversion — if the world file
+        # didn't apply (e.g. the source TIFF actually had its own embedded, only
+        # possibly-wrong, geotransform that silently took priority), fail loudly
+        # rather than silently producing a mis-georeferenced ortho.
+        import rasterio
+        with rasterio.open(assigned_path) as ds:
+            if ds.crs is None or ds.transform.is_identity:
+                raise RuntimeError(
+                    "World file did not apply — resulting dataset has no valid "
+                    "CRS/geotransform. Check the .tfw contents and EPSG code, and "
+                    "confirm the source TIFF doesn't already have its own embedded "
+                    "(possibly incorrect) georeferencing, which takes priority over "
+                    "a sidecar world file."
+                )
+            log_fn(f"[worldfile] Assigned CRS={ds.crs}, transform={ds.transform}, bounds={ds.bounds}")
+
+        cmd_cog = [
+            "gdal_translate",
+            "-of", "COG",
+            assigned_path,
+            out_path,
+            "-co", "COMPRESS=WEBP",
+            "-co", "QUALITY=85",
+            "-co", "NUM_THREADS=ALL_CPUS",
+            "-co", "BIGTIFF=IF_SAFER",
+            "-co", "BLOCKSIZE=512",
+        ]
+        log_fn(f"[worldfile] Running: {' '.join(cmd_cog)}")
+        res = subprocess.run(cmd_cog, capture_output=True, text=True)
+        if res.stdout.strip():
+            log_fn(f"[worldfile] gdal_translate (COG) stdout:\n{res.stdout.strip()}")
+        if res.stderr.strip():
+            log_fn(f"[worldfile] gdal_translate (COG) stderr:\n{res.stderr.strip()}")
+        if res.returncode != 0:
+            raise RuntimeError(f"gdal_translate (COG) failed: {res.stderr}")
+
+
 # ── Main processing function ──────────────────────────────────────────────────
 
 async def _process_images(
@@ -1088,6 +1171,117 @@ async def _process_direct_tiling(task_id: str, key: str, bucket: str, output_pre
                 print(f"[tile] Failed to upload logs to S3: {exc}")
 
 
+class WorldfileRequest(BaseModel):
+    task_id: str
+    tif_key: str      # S3 key of the raw uploaded TIFF (no/unusable embedded georeferencing)
+    tfw_key: str      # S3 key of the uploaded .tfw world file
+    epsg: int         # CRS for the world file's coordinates (a .tfw never carries a projection)
+    bucket: str
+    output_prefix: str
+
+
+async def _process_apply_worldfile(
+    task_id: str, tif_key: str, tfw_key: str, epsg: int, bucket: str, output_prefix: str
+) -> None:
+    """Downloads a raw TIFF + its .tfw sidecar, bakes in the world-file georeferencing
+    plus the given EPSG as a proper COG, uploads it, then tiles it — mirrors
+    _process_direct_tiling but for orthos that only have world-file (not embedded)
+    georeferencing, e.g. a pre-built orthomosaic uploaded directly for training data."""
+    import boto3
+    import tempfile
+    import os
+    import asyncio
+
+    log_task(
+        task_id,
+        f"[worldfile] Starting for task_id={task_id} tif_key={tif_key} tfw_key={tfw_key} "
+        f"epsg={epsg} bucket={bucket} prefix={output_prefix}",
+    )
+    s3 = None
+    loop = None
+    output_key = f"{output_prefix.rstrip('/')}/orthophoto_georeferenced.tif"
+
+    try:
+        s3 = boto3.client(
+            "s3",
+            region_name=os.environ["AWS_REGION"],
+            aws_access_key_id=os.environ["AWS_ACCESS_KEY_ID"],
+            aws_secret_access_key=os.environ["AWS_SECRET_ACCESS_KEY"],
+        )
+        loop = asyncio.get_event_loop()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            raw_tif_path = os.path.join(tmpdir, "raw.tif")
+            raw_tfw_path = os.path.join(tmpdir, "raw.tfw")
+            cog_path = os.path.join(tmpdir, "georeferenced.tif")
+
+            log_task(task_id, "[worldfile] Downloading raw TIFF + world file from S3...")
+            await loop.run_in_executor(None, lambda: s3.download_file(bucket, tif_key, raw_tif_path))
+            await loop.run_in_executor(None, lambda: s3.download_file(bucket, tfw_key, raw_tfw_path))
+
+            log_task(task_id, "[worldfile] Applying world-file georeferencing + converting to COG...")
+            await loop.run_in_executor(
+                None,
+                lambda: _apply_worldfile_and_cog(
+                    raw_tif_path, raw_tfw_path, epsg, cog_path,
+                    log_fn=lambda msg: log_task(task_id, msg),
+                ),
+            )
+
+            log_task(task_id, f"[worldfile] Uploading georeferenced COG to s3://{bucket}/{output_key}")
+            await loop.run_in_executor(
+                None,
+                lambda: s3.upload_file(cog_path, bucket, output_key, ExtraArgs={"ContentType": "image/tiff"}),
+            )
+
+            tiles_key, max_zoom = await loop.run_in_executor(
+                None,
+                lambda: _tile_and_upload_geotiff(
+                    task_id=task_id,
+                    cog_path=cog_path,
+                    bucket=bucket,
+                    output_prefix=output_prefix,
+                    s3=s3,
+                    loop=loop,
+                    base_processed=0,
+                    virtual_total=100,
+                ),
+            )
+
+            log_task(
+                task_id,
+                f"[worldfile] COMPLETED task_id={task_id} output_key={output_key} "
+                f"tiles_key={tiles_key} max_zoom={max_zoom}",
+            )
+            cur_state = dict(_tasks.get(task_id, {}))
+            cur_state["output_key"] = output_key
+            cur_state["tiles_key"] = tiles_key
+            cur_state["max_zoom"] = max_zoom
+            cur_state["status"] = "completed"
+            _tasks[task_id] = cur_state
+
+    except Exception as e:
+        log_task(task_id, f"[worldfile] ERROR: {e}")
+        cur_state = dict(_tasks.get(task_id, {}))
+        cur_state["status"] = "failed"
+        cur_state["error"] = str(e)
+        _tasks[task_id] = cur_state
+
+    finally:
+        log_key = f"{output_prefix.rstrip('/')}/orthophoto.log"
+        logs_text = "\n".join(_task_logs.get(task_id, []))
+        if s3 is not None and loop is not None:
+            try:
+                await loop.run_in_executor(
+                    None,
+                    lambda: s3.put_object(
+                        Bucket=bucket, Key=log_key, Body=logs_text.encode("utf-8"), ContentType="text/plain",
+                    ),
+                )
+                log_task(task_id, f"[worldfile] Uploaded task logs to s3://{bucket}/{log_key}")
+            except Exception as exc:
+                print(f"[worldfile] Failed to upload logs to S3: {exc}")
+
+
 # ── ASGI app ───────────────────────────────────────────────────────────────────
 
 web_app = FastAPI(title="Salmon Georef Worker")
@@ -1152,6 +1346,39 @@ async def tile_endpoint(
         _process_direct_tiling,
         req.task_id,
         req.key,
+        req.bucket,
+        req.output_prefix,
+    )
+    return {"task_id": req.task_id}
+
+
+@web_app.post("/apply_worldfile")
+async def apply_worldfile_endpoint(
+    req: WorldfileRequest,
+    background_tasks: BackgroundTasks,
+    _: None = Depends(_require_auth),
+) -> dict:
+    print(
+        f"[apply_worldfile] task_id={req.task_id} tif_key={req.tif_key} tfw_key={req.tfw_key} "
+        f"epsg={req.epsg} bucket={req.bucket} prefix={req.output_prefix}"
+    )
+    if req.task_id in _tasks:
+        return {"task_id": req.task_id, "status": _tasks[req.task_id]["status"]}
+
+    _tasks[req.task_id] = {
+        "status": "running",
+        "processed": 0,
+        "total": 100,
+        "output_key": None,
+        "tiles_key": None,
+        "error": None,
+    }
+    background_tasks.add_task(
+        _process_apply_worldfile,
+        req.task_id,
+        req.tif_key,
+        req.tfw_key,
+        req.epsg,
         req.bucket,
         req.output_prefix,
     )

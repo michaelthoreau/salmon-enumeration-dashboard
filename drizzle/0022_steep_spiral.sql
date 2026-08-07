@@ -1,0 +1,1 @@
+ALTER TABLE `flights` ADD `survey_type` text DEFAULT 'migration' NOT NULL;
