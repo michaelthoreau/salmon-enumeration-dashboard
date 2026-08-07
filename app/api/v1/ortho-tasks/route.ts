@@ -4,11 +4,14 @@ import { db } from '@/lib/db'
 import { annotations, odmTasks, georefTasks } from '@/lib/schema'
 import { eq, and, isNull, desc, gt } from 'drizzle-orm'
 
-// Exports ground-truth fish points already placed/approved directly on the
+// Exports ground-truth points already placed/approved directly on the
 // orthomosaic map (annotations.fileId IS NULL) as synthetic "tasks" shaped
 // exactly like /api/v1/labeling-tasks output, so the training pipeline can
 // consume both without a separate data loader. Each task's fileId encodes an
 // ortho tile ("ortho:{flightId}:{z}:{x}:{y}") instead of a real files.id.
+// The `label` query param selects which annotation label to export — 'fish'
+// (default, migration/swimming counts) or 'spawning_salmon' — since the two
+// train separate models and must never be mixed into one export.
 
 const TILE_SIZE = 256
 const MAX_TILES_PER_FLIGHT = 2000
@@ -120,6 +123,11 @@ export async function GET(request: NextRequest) {
 
   const searchParams = request.nextUrl.searchParams
   const flightIdParam = searchParams.get('flightId')
+  // 'fish' (migration/swimming-salmon counts) is the default to preserve
+  // existing training-pipeline behavior; pass ?label=spawning_salmon to
+  // export the stationary spawning-ground ground truth instead. The two
+  // are never mixed into the same export.
+  const label = searchParams.get('label') ?? 'fish'
   const limit = Math.min(5000, Math.max(1, Number(searchParams.get('limit') ?? '2000')))
   const offset = Math.max(0, Number(searchParams.get('offset') ?? '0'))
 
@@ -132,7 +140,7 @@ export async function GET(request: NextRequest) {
     const rows = await db
       .selectDistinct({ flightId: annotations.flightId })
       .from(annotations)
-      .where(and(isNull(annotations.deletedAt), isNull(annotations.fileId), eq(annotations.shape, 'point')))
+      .where(and(isNull(annotations.deletedAt), isNull(annotations.fileId), eq(annotations.shape, 'point'), eq(annotations.label, label)))
     flightIds = rows.map((r) => r.flightId)
   }
 
@@ -172,6 +180,7 @@ export async function GET(request: NextRequest) {
           isNull(annotations.deletedAt),
           isNull(annotations.fileId),
           eq(annotations.shape, 'point'),
+          eq(annotations.label, label),
           gt(annotations.modifiedAt, ortho.completedAt)
         )
       )
@@ -231,7 +240,7 @@ export async function GET(request: NextRequest) {
   }
 
   console.log(
-    `[ortho-tasks] flights=${flightIds.length} tiles=${tileTasks.size} ` +
+    `[ortho-tasks] label=${label} flights=${flightIds.length} tiles=${tileTasks.size} ` +
     `skipped(no-ortho)=${skippedNoOrtho} skipped(multi-fish)=${skippedMultiFish} skipped(stale-geometry)=${skippedStaleGeometry}`
   )
 
