@@ -220,14 +220,16 @@ export default async function MapPage({ params }: PageProps) {
     }
   }
 
-  // Fish annotation points from ortho labeling (map annotations with GPS geometry)
+  // Fish annotation points from ortho labeling (map annotations with GPS geometry).
+  // Includes both migration-count ('fish') and spawning-ground ('spawning_salmon')
+  // labels — both are real fish locations and belong on the map either way.
   const rawFishAnnotations = flightIds.length > 0
     ? await db
         .select({ id: annotations.id, flightId: annotations.flightId, fishCount: annotations.fishCount, geometry: annotations.geometry })
         .from(annotations)
         .where(and(
           inArray(annotations.flightId, flightIds),
-          eq(annotations.label, 'fish'),
+          inArray(annotations.label, ['fish', 'spawning_salmon']),
           isNull(annotations.fileId),
           isNull(annotations.deletedAt),
         ))

@@ -1,7 +1,7 @@
 'use server'
 
 import { db } from '@/lib/db'
-import { flights, flightPlans, files as filesTable, odmTasks, georefTasks, annotations, geofences, fileGeofenceTags } from '@/lib/schema'
+import { flights, flightPlans, files as filesTable, odmTasks, georefTasks, annotations, geofences, fileGeofenceTags, type SurveyType } from '@/lib/schema'
 import { eq, and, isNull, inArray, desc, sql, lt, gte } from 'drizzle-orm'
 import { getSession } from '@/lib/session'
 import { randomUUID } from 'crypto'
@@ -124,14 +124,19 @@ export async function updateFlight(_prev: State, formData: FormData): Promise<St
   const timestampRaw = formData.get('timestamp') as string | null
   const timezone = (formData.get('timezone') as string | null)?.trim() || 'UTC'
   const notes = (formData.get('notes') as string | null)?.trim() || null
+  const surveyTypeRaw = (formData.get('surveyType') as string | null)?.trim()
 
   if (!id) return { error: 'Flight ID is required.' }
   if (!timestampRaw) return { error: 'Timestamp is required.' }
+  if (surveyTypeRaw && surveyTypeRaw !== 'migration' && surveyTypeRaw !== 'spawning') {
+    return { error: 'Invalid survey type.' }
+  }
+  const surveyType = surveyTypeRaw as SurveyType | undefined
 
   const timestamp = parseInTimezone(timestampRaw, timezone)
   if (isNaN(timestamp.getTime())) return { error: 'Invalid timestamp.' }
 
-  await db.update(flights).set({ timestamp, notes }).where(eq(flights.id, id))
+  await db.update(flights).set({ timestamp, notes, ...(surveyType ? { surveyType } : {}) }).where(eq(flights.id, id))
 
   revalidatePath(`/projects/${projectId}/flight-plans/${flightPlanId}/flights`)
   revalidatePath(`/projects/${projectId}/flight-plans/${flightPlanId}/flights/${id}`)

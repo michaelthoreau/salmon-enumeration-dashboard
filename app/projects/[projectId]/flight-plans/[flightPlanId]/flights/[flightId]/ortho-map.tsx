@@ -8,6 +8,11 @@ import 'maplibre-gl/dist/maplibre-gl.css'
 
 interface OrthoMapProps {
   outputKey?: string | null
+  /** Gates which label new annotation points get tagged with — 'spawning' flights
+   * tag points as 'spawning_salmon' instead of the default 'fish', so this
+   * flight's data stays distinct from migration-count annotations without
+   * requiring a manual label picker per click. */
+  surveyType?: 'migration' | 'spawning'
   cacheBuster?: string | null
   photos?: { key: string; name: string; latitude: number | null; longitude: number | null; etag: string; size: number }[]
   onSelectPhoto?: (key: string) => void
@@ -19,7 +24,7 @@ interface OrthoMapProps {
   initialLocation?: string | null
   onSaveLocation?: (locationJson: string | null) => Promise<void>
   annotations?: any[]
-  onAddAnnotation?: (anno: { shape: 'point' | 'polygon' | 'linestring'; geometry: string; fishCount: number; confidence: number }) => Promise<void>
+  onAddAnnotation?: (anno: { shape: 'point' | 'polygon' | 'linestring'; geometry: string; fishCount: number; confidence: number; label: string }) => Promise<void>
   onUpdateAnnotation?: (id: string, updates: { fishCount?: number; confidence?: number; geometry?: string }) => Promise<void>
   onDeleteAnnotation?: (id: string) => Promise<void>
 }
@@ -156,6 +161,7 @@ function getGeoJSON(pin: [number, number] | null, points: [number, number][]) {
 
 export default function OrthoMap({
   outputKey = null,
+  surveyType = 'migration',
   cacheBuster = null,
   photos = [],
   onSelectPhoto,
@@ -170,6 +176,9 @@ export default function OrthoMap({
   onUpdateAnnotation,
   onDeleteAnnotation,
 }: OrthoMapProps) {
+  // New annotation points get tagged with this automatically — keeps spawning-ground
+  // data separate from migration-count data without a per-click label picker.
+  const annotationLabel = surveyType === 'spawning' ? 'spawning_salmon' : 'fish'
   const containerRef = useRef<HTMLDivElement>(null)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const mapRef = useRef<any | null>(null)
@@ -679,6 +688,7 @@ export default function OrthoMap({
                 geometry: JSON.stringify({ type: 'Point', coordinates: [lng, lat] }),
                 fishCount: 1,
                 confidence: score,
+                label: annotationLabel,
               })
             }
             setPredictedPoints(prev => prev.filter((_, i) => i !== index))
@@ -1074,6 +1084,7 @@ export default function OrthoMap({
           geometry: JSON.stringify({ type: 'Point', coordinates: lngLat }),
           fishCount: 1,
           confidence: 1.0,
+          label: annotationLabel,
         })
         return
       }
@@ -1094,7 +1105,7 @@ export default function OrthoMap({
     return () => {
       map.off('click', handleClick)
     }
-  }, [isEditing, isMeasuring, isAnnotating, onAddAnnotation])
+  }, [isEditing, isMeasuring, isAnnotating, onAddAnnotation, annotationLabel])
 
   // ── Handle Map Mouse Move for live measurement preview ──────────────────────
   useEffect(() => {
@@ -1329,6 +1340,7 @@ export default function OrthoMap({
         geometry: JSON.stringify({ type: 'Point', coordinates: [p.lng, p.lat] }),
         fishCount: 1,
         confidence: p.score,
+        label: annotationLabel,
       })
     }
     setPredictedPoints([])

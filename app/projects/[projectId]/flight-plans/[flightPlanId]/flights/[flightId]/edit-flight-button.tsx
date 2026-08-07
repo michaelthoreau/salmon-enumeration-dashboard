@@ -6,12 +6,20 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import {
+  Select,
+  SelectTrigger,
+  SelectValue,
+  SelectContent,
+  SelectItem,
+} from '@/components/ui/select'
+import {
   Dialog,
   DialogContent,
   DialogHeader,
   DialogTitle,
   DialogFooter,
 } from '@/components/ui/dialog'
+import type { SurveyType } from '@/lib/schema'
 
 interface Props {
   flightId: string
@@ -21,6 +29,7 @@ interface Props {
   /** Current flight timestamp formatted as YYYY-MM-DDTHH:mm in project timezone */
   localTimestamp: string
   currentNotes: string | null
+  currentSurveyType: SurveyType
 }
 
 export default function EditFlightButton({
@@ -30,18 +39,21 @@ export default function EditFlightButton({
   timezone,
   localTimestamp,
   currentNotes,
+  currentSurveyType,
 }: Props) {
   const [open, setOpen] = useState(false)
   const [timestamp, setTimestamp] = useState(localTimestamp)
   const [notes, setNotes] = useState(currentNotes ?? '')
+  const [surveyType, setSurveyType] = useState<SurveyType>(currentSurveyType)
   const [state, action, pending] = useActionState(updateFlight, null)
 
   useEffect(() => {
     if (open) {
       setTimestamp(localTimestamp)
       setNotes(currentNotes ?? '')
+      setSurveyType(currentSurveyType)
     }
-  }, [open, localTimestamp, currentNotes])
+  }, [open, localTimestamp, currentNotes, currentSurveyType])
 
   useEffect(() => {
     if (state?.success) setOpen(false)
@@ -84,6 +96,25 @@ export default function EditFlightButton({
                 value={notes}
                 onChange={e => setNotes(e.target.value)}
               />
+            </div>
+            <div className="space-y-1.5">
+              <Label>
+                Survey type{' '}
+                <span className="font-normal text-muted-foreground">
+                  (gates which detection model applies — e.g. spawning-salmon detection only
+                  makes sense for spawning-ground orthos, not migration counts)
+                </span>
+              </Label>
+              <input type="hidden" name="surveyType" value={surveyType} />
+              <Select value={surveyType} onValueChange={(v) => setSurveyType(v as SurveyType)}>
+                <SelectTrigger className="w-full">
+                  <SelectValue placeholder="Survey type" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="migration">Migration (swimming salmon count)</SelectItem>
+                  <SelectItem value="spawning">Spawning grounds (stationary red salmon)</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
             {state?.error && <p className="text-sm text-destructive">{state.error}</p>}
             <DialogFooter>

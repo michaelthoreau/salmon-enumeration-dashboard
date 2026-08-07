@@ -1092,6 +1092,7 @@ export default function FlightSplitView({
                   timezone={project.timezone}
                   localTimestamp={localTimestamp}
                   currentNotes={flight.notes}
+                  currentSurveyType={flight.surveyType}
                 />
               )}
             </div>
@@ -1573,6 +1574,7 @@ export default function FlightSplitView({
               )}
               <OrthoMap
                 outputKey={geotiffKey}
+                surveyType={flight.surveyType}
                 cacheBuster={cacheBuster}
                 photos={images.map((img) => ({
                   key: img.key,
@@ -1607,7 +1609,7 @@ export default function FlightSplitView({
                     geometry: anno.geometry,
                     fishCount: anno.fishCount,
                     confidence: anno.confidence,
-                    label: null,
+                    label: anno.label,
                   }
                   setAnnotations((prev) => [...prev, tempAnno])
 

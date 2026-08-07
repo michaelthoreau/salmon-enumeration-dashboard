@@ -305,6 +305,7 @@ export default function FlightsView({
                               timezone={timezone}
                               localTimestamp={row.localTimestamp}
                               currentNotes={row.flight.notes}
+                              currentSurveyType={row.flight.surveyType}
                             />
                             <DeleteFlightButton
                               flight={row.flight}
