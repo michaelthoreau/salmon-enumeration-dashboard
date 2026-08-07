@@ -1413,7 +1413,7 @@ async def georef_status(
 
 @app.function(
     image=image,
-    secrets=[modal.Secret.from_name("salmon")],
+    secrets=[modal.Secret.from_name("salmon-s3")],
     timeout=3600,
     memory=65536,   # rasterio + GDAL + buffered images can be hungry
     cpu=16,
@@ -1425,7 +1425,7 @@ def web() -> FastAPI:
 
 @app.function(
     image=image,
-    secrets=[modal.Secret.from_name("salmon")],
+    secrets=[modal.Secret.from_name("salmon-s3")],
     timeout=300,
     memory=4096,
     cpu=4,
@@ -1566,7 +1566,7 @@ def georeference_single_image_s3(
 
 @app.function(
     image=image,
-    secrets=[modal.Secret.from_name("salmon")],
+    secrets=[modal.Secret.from_name("salmon-s3")],
     timeout=300,
     memory=4096,
     cpu=4,
@@ -1663,7 +1663,7 @@ def georeference_single_image(
 
 @app.function(
     image=image,
-    secrets=[modal.Secret.from_name("salmon")],
+    secrets=[modal.Secret.from_name("salmon-s3")],
     timeout=1200,
     memory=65536,
     cpu=16,
