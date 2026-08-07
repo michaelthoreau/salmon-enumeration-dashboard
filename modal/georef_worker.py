@@ -746,13 +746,16 @@ def _apply_worldfile_and_cog(
                 )
             log_fn(f"[worldfile] Assigned CRS={ds.crs}, transform={ds.transform}, bounds={ds.bounds}")
 
+        # Lossless DEFLATE, not WEBP/JPEG — this ortho is manually eyeballed pixel-by-pixel
+        # to spot small, subtly-colored spawning salmon, so any lossy compression artifact
+        # directly costs labeling accuracy. File size isn't a constraint here.
         cmd_cog = [
             "gdal_translate",
             "-of", "COG",
             assigned_path,
             out_path,
-            "-co", "COMPRESS=WEBP",
-            "-co", "QUALITY=85",
+            "-co", "COMPRESS=DEFLATE",
+            "-co", "PREDICTOR=2",
             "-co", "NUM_THREADS=ALL_CPUS",
             "-co", "BIGTIFF=IF_SAFER",
             "-co", "BLOCKSIZE=512",
