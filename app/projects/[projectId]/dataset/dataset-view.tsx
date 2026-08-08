@@ -302,10 +302,26 @@ export default function DatasetView({ projectId, entries: initialEntries, taskCo
     })
   }, [])
 
+  // A router.refresh() (e.g. after creating tasks or assigning splits) re-runs the
+  // server query, which only ever fetches the first page — refreshing initialEntries
+  // must NOT wipe out additional pages already loaded here via infinite scroll, or
+  // large datasets (more than one page) visibly "lose" files after every action.
   useEffect(() => {
-    setAllEntries(initialEntries)
-    setSplits(new Map(initialEntries.map(e => [e.key, e.split])))
-    setTaskCounts(taskCountByFileId)
+    setAllEntries(prev => {
+      const freshByKey = new Map(initialEntries.map(e => [e.key, e]))
+      const olderNotInFreshPage = prev.filter(e => !freshByKey.has(e.key))
+      return [...initialEntries, ...olderNotInFreshPage]
+    })
+    setSplits(prev => {
+      const n = new Map(prev)
+      for (const e of initialEntries) n.set(e.key, e.split)
+      return n
+    })
+    setTaskCounts(prev => {
+      const n = new Map(prev)
+      for (const [fileId, count] of taskCountByFileId) n.set(fileId, count)
+      return n
+    })
     setHasMore(initialHasMore)
   }, [initialEntries, taskCountByFileId, initialHasMore])
 
