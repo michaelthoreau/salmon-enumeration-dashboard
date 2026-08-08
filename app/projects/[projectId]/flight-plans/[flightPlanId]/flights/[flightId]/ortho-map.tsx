@@ -8,6 +8,9 @@ import 'maplibre-gl/dist/maplibre-gl.css'
 
 interface OrthoMapProps {
   outputKey?: string | null
+  /** Needed only for the spawning raw-photo predict flow, which looks up the
+   * flight's raw source photos rather than an ortho output. */
+  flightId?: string
   /** Gates which label new annotation points get tagged with — 'spawning' flights
    * tag points as 'spawning_salmon' instead of the default 'fish', so this
    * flight's data stays distinct from migration-count annotations without
@@ -161,6 +164,7 @@ function getGeoJSON(pin: [number, number] | null, points: [number, number][]) {
 
 export default function OrthoMap({
   outputKey = null,
+  flightId,
   surveyType = 'migration',
   cacheBuster = null,
   photos = [],
@@ -1304,14 +1308,18 @@ export default function OrthoMap({
   }, [predictedPoints, status])
 
   async function handlePredict() {
-    if (!outputKey) return
+    // Spawning flights run detection on the raw photo roll instead of the ortho —
+    // stitching distortion was hurting detection quality for stationary fish, so
+    // this hits a different endpoint/model and only needs flightId, not outputKey.
+    const isSpawning = surveyType === 'spawning'
+    if (isSpawning ? !flightId : !outputKey) return
     setIsPredicting(true)
     setPredictError(null)
     try {
-      const res = await fetch('/api/ml/predict-ortho', {
+      const res = await fetch(isSpawning ? '/api/ml/predict-spawning-photos' : '/api/ml/predict-ortho', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ outputKey, score_thresh: 0.25 }),
+        body: JSON.stringify(isSpawning ? { flightId, score_thresh: 0.25 } : { outputKey, score_thresh: 0.25 }),
       })
       if (!res.ok) throw new Error(`Prediction failed (${res.status})`)
       const data = await res.json()
@@ -1497,7 +1505,7 @@ export default function OrthoMap({
               )}
 
               {/* Predict Fish Button */}
-              {editable && outputKey && !isPreviewing && (
+              {editable && (surveyType === 'spawning' ? flightId : outputKey) && !isPreviewing && (
                 <Button
                   size="sm"
                   variant="outline"
@@ -1510,7 +1518,7 @@ export default function OrthoMap({
                   ) : (
                     <Sparkles className="w-4 h-4 text-orange-500" />
                   )}
-                  <span>{isPredicting ? 'Predicting…' : 'Predict Fish'}</span>
+                  <span>{isPredicting ? 'Predicting…' : surveyType === 'spawning' ? 'Predict Fish (photos)' : 'Predict Fish'}</span>
                 </Button>
               )}
 

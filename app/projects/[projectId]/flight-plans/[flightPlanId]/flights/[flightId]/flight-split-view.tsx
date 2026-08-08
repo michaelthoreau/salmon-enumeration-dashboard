@@ -1574,6 +1574,7 @@ export default function FlightSplitView({
               )}
               <OrthoMap
                 outputKey={geotiffKey}
+                flightId={flightId}
                 surveyType={flight.surveyType}
                 cacheBuster={cacheBuster}
                 photos={images.map((img) => ({
