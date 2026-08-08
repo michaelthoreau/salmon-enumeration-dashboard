@@ -9,8 +9,8 @@ import { buttonVariants } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { ChevronLeftIcon, ChevronRightIcon, DownloadIcon } from 'lucide-react'
 
-import type { Split } from '@/lib/schema'
-import { assignFileSplit, loadDatasetEntriesBefore } from '@/app/actions/files'
+import type { Split, SurveyType } from '@/lib/schema'
+import { assignFileSplit, loadDatasetEntriesBefore, randomlyAssignSplits } from '@/app/actions/files'
 import type { DatasetEntry } from '@/app/actions/files'
 import { createLabelingTasks, type LabelingTaskInput } from '@/app/actions/labeling-tasks'
 import { createLabelingQueue } from '@/app/actions/labeling-queues'
@@ -194,6 +194,11 @@ export default function DatasetView({ projectId, entries: initialEntries, taskCo
   const [lightboxImages, setLightboxImages] = useState<DatasetEntry[]>([])
   const [excludeWithTasks, setExcludeWithTasks] = useState(false)
   const [showImages, setShowImages] = useState(false)
+  const [surveyTypeFilter, setSurveyTypeFilter] = useState<'all' | SurveyType>('all')
+  const [randomSplitDialogOpen, setRandomSplitDialogOpen] = useState(false)
+  const [randomSplitTrainPct, setRandomSplitTrainPct] = useState(70)
+  const [randomSplitValPct, setRandomSplitValPct] = useState(15)
+  const [randomSplitBusy, setRandomSplitBusy] = useState(false)
 
   // Infinite scroll sentinel
   useEffect(() => {
@@ -236,9 +241,10 @@ export default function DatasetView({ projectId, entries: initialEntries, taskCo
       else { if (s !== activeTab) return false }
       if (!showImages && isImageKey(e.key)) return false
       if (excludeWithTasks && isImageKey(e.key) && (taskCounts.get(e.fileId) ?? 0) > 0) return false
+      if (surveyTypeFilter !== 'all' && e.surveyType !== surveyTypeFilter) return false
       return true
     })
-  }, [allEntries, splits, activeTab, excludeWithTasks, showImages, taskCounts])
+  }, [allEntries, splits, activeTab, excludeWithTasks, showImages, taskCounts, surveyTypeFilter])
 
   const activeEntry = useMemo(() => allEntries.find(e => e.key === activeImageKey) ?? null, [allEntries, activeImageKey])
   const filteredImages = useMemo(() => filtered.filter(e => isImageKey(e.key)), [filtered])
@@ -343,6 +349,19 @@ export default function DatasetView({ projectId, entries: initialEntries, taskCo
     await Promise.all(keys.map(k => assignFileSplit(k, target)))
     router.refresh()
   }, [splitDialog, pendingSplit, router])
+
+  const confirmRandomSplit = useCallback(async () => {
+    const entries = allEntries.filter(e => selected.has(e.key))
+    if (entries.length === 0) return
+    setRandomSplitBusy(true)
+    const fileIds = entries.map(e => e.fileId)
+    const res = await randomlyAssignSplits(fileIds, randomSplitTrainPct, randomSplitValPct)
+    setRandomSplitBusy(false)
+    if (res.error) return
+    setRandomSplitDialogOpen(false)
+    setSelected(new Set())
+    router.refresh()
+  }, [allEntries, selected, randomSplitTrainPct, randomSplitValPct, router])
 
   // ── Image labeling task creation ───────────────────────────────────────────
 
@@ -520,6 +539,16 @@ export default function DatasetView({ projectId, entries: initialEntries, taskCo
               Hide images with tasks
             </label>
           )}
+          {/* Survey type filter — scope the workspace to spawning-ground flights only, etc. */}
+          <select
+            value={surveyTypeFilter}
+            onChange={e => setSurveyTypeFilter(e.target.value as 'all' | SurveyType)}
+            className={cn(buttonVariants({ variant: 'outline', size: 'sm' }), 'ml-3 pr-7 cursor-pointer text-xs pb-1')}
+          >
+            <option value="all">All survey types</option>
+            <option value="migration">Migration only</option>
+            <option value="spawning">Spawning only</option>
+          </select>
         </div>
 
         {/* Actions */}
@@ -549,6 +578,12 @@ export default function DatasetView({ projectId, entries: initialEntries, taskCo
                     ))}
                     {activeTab !== 'unassigned' && <option value="none">Remove from split</option>}
                   </select>
+                  <button
+                    onClick={() => setRandomSplitDialogOpen(true)}
+                    className={cn(buttonVariants({ variant: 'outline', size: 'sm' }))}
+                  >
+                    Randomly split…
+                  </button>
                   {activeTab !== 'unassigned' && selectedImageEntries.length > 0 && (
                     <button
                       onClick={openTaskDialog}
@@ -979,6 +1014,55 @@ export default function DatasetView({ projectId, entries: initialEntries, taskCo
                 </>
               )
             })()}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Random proportional split dialog */}
+      <Dialog open={randomSplitDialogOpen} onOpenChange={o => { if (!o) setRandomSplitDialogOpen(false) }}>
+        <DialogContent showCloseButton>
+          <DialogHeader>
+            <DialogTitle>Randomly split into train/val/test</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-gray-600">
+            Randomly shuffles <strong>{selected.size} selected file{selected.size === 1 ? '' : 's'}</strong> and
+            assigns splits proportionally — overwrites any existing split on these files.
+          </p>
+          <div className="flex flex-col gap-3 mt-1">
+            <label className="flex items-center justify-between gap-3 text-sm">
+              <span className="text-gray-700">Train %</span>
+              <input
+                type="number" min={0} max={100} value={randomSplitTrainPct}
+                onChange={e => setRandomSplitTrainPct(Math.max(0, Math.min(100, Number(e.target.value))))}
+                className="w-20 rounded border border-gray-300 px-2 py-1 text-right"
+              />
+            </label>
+            <label className="flex items-center justify-between gap-3 text-sm">
+              <span className="text-gray-700">Val %</span>
+              <input
+                type="number" min={0} max={100} value={randomSplitValPct}
+                onChange={e => setRandomSplitValPct(Math.max(0, Math.min(100, Number(e.target.value))))}
+                className="w-20 rounded border border-gray-300 px-2 py-1 text-right"
+              />
+            </label>
+            <div className="flex items-center justify-between gap-3 text-sm text-gray-400">
+              <span>Test % (remainder)</span>
+              <span className="w-20 text-right">{Math.max(0, 100 - randomSplitTrainPct - randomSplitValPct)}</span>
+            </div>
+          </div>
+          {randomSplitTrainPct + randomSplitValPct > 100 && (
+            <p className="text-sm text-red-600">Train + Val can't exceed 100%.</p>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setRandomSplitDialogOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              onClick={confirmRandomSplit}
+              disabled={randomSplitBusy || randomSplitTrainPct + randomSplitValPct > 100 || selected.size === 0}
+            >
+              {randomSplitBusy ? 'Splitting…' : 'Randomly split'}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

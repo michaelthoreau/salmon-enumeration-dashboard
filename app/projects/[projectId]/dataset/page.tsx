@@ -36,6 +36,7 @@ export default async function DatasetPage({ params }: PageProps) {
       flightPlanId: flights.flightPlanId,
       flightTimestamp: flights.timestamp,
       flightPlanName: flightPlans.name,
+      surveyType: flights.surveyType,
     })
     .from(files)
     .innerJoin(flights, eq(files.flightId, flights.id))
@@ -61,6 +62,7 @@ export default async function DatasetPage({ params }: PageProps) {
     flightPlanId: r.flightPlanId,
     flightTimestampIso: r.flightTimestamp.toISOString(),
     flightPlanName: r.flightPlanName,
+    surveyType: r.surveyType,
     uploadedAtIso: r.uploadedAt.toISOString(),
   }))
 

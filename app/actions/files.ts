@@ -6,7 +6,7 @@ import { eq, and, isNull, inArray, isNotNull, desc, lt, gte, sql, count } from '
 import { getSession } from '@/lib/session'
 import { headObject, listFlightObjects } from '@/lib/s3'
 import { randomUUID } from 'crypto'
-import type { Split, ReviewStatus } from '@/lib/schema'
+import type { Split, ReviewStatus, SurveyType } from '@/lib/schema'
 import { extractExifGps, extractVideoDurationOnly } from '@/lib/exif'
 import { tagFilesAgainstGeofences } from '@/lib/geofence-tagger'
 
@@ -51,6 +51,52 @@ export async function assignFileSplit(
   }
 
   return { ok: true }
+}
+
+/**
+ * Randomly assigns train/val/test splits proportionally across a set of files —
+ * for scoping a benchmark-ready split across hundreds of files at once, where
+ * assignFileSplit's one-file-at-a-time UI isn't practical. Shuffles fileIds and
+ * cuts by ratio; ratios need not sum to exactly 100 (test gets the remainder).
+ */
+export async function randomlyAssignSplits(
+  fileIds: string[],
+  trainPct: number,
+  valPct: number,
+): Promise<{ ok?: boolean; error?: string; counts?: { train: number; val: number; test: number } }> {
+  const session = await getSession()
+  if (!session || (session.role !== 'read-write' && session.role !== 'admin')) {
+    return { error: 'Unauthorized' }
+  }
+  if (fileIds.length === 0) return { error: 'No files provided' }
+  if (trainPct < 0 || valPct < 0 || trainPct + valPct > 100) {
+    return { error: 'Invalid split percentages' }
+  }
+
+  const shuffled = [...fileIds]
+  for (let i = shuffled.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1))
+    ;[shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]]
+  }
+
+  const trainCount = Math.round(shuffled.length * (trainPct / 100))
+  const valCount = Math.round(shuffled.length * (valPct / 100))
+
+  const trainIds = shuffled.slice(0, trainCount)
+  const valIds = shuffled.slice(trainCount, trainCount + valCount)
+  const testIds = shuffled.slice(trainCount + valCount)
+
+  if (trainIds.length > 0) {
+    await db.update(files).set({ split: 'train' }).where(inArray(files.id, trainIds))
+  }
+  if (valIds.length > 0) {
+    await db.update(files).set({ split: 'val' }).where(inArray(files.id, valIds))
+  }
+  if (testIds.length > 0) {
+    await db.update(files).set({ split: 'test' }).where(inArray(files.id, testIds))
+  }
+
+  return { ok: true, counts: { train: trainIds.length, val: valIds.length, test: testIds.length } }
 }
 
 export async function syncFlightFiles(
@@ -649,6 +695,7 @@ export interface DatasetEntry {
   flightPlanId: string
   flightTimestampIso: string
   flightPlanName: string
+  surveyType: SurveyType
   uploadedAtIso: string
 }
 
@@ -676,6 +723,7 @@ export async function loadDatasetEntriesBefore(
       flightPlanId: sql<string>`${flights.flightPlanId}`.as('flight_plan_id_alias'),
       flightTimestamp: flights.timestamp,
       flightPlanName: flightPlans.name,
+      surveyType: flights.surveyType,
       uploadedAt: files.uploadedAt,
     })
     .from(files)
@@ -705,6 +753,7 @@ export async function loadDatasetEntriesBefore(
     flightPlanId: r.flightPlanId,
     flightTimestampIso: r.flightTimestamp.toISOString(),
     flightPlanName: r.flightPlanName,
+    surveyType: r.surveyType,
     uploadedAtIso: r.uploadedAt.toISOString(),
   }))
 

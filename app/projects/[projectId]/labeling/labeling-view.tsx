@@ -30,6 +30,7 @@ import {
   renameLabelingQueue,
 } from '@/app/actions/labeling-queues'
 import { deleteLabelingTasks } from '@/app/actions/labeling-tasks'
+import type { SurveyType } from '@/lib/schema'
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -45,6 +46,7 @@ type TaskRow = {
   completedBy: string | null
   queueId: string | null
   flightPlanName: string
+  surveyType: SurveyType
   pointCount: number
   createdAtIso: string
 }
@@ -95,6 +97,7 @@ export default function LabelingView({ projectId, tasks: initialTasks, queues: i
 
   const [taskFilter, setTaskFilter] = useState<TaskFilter>('incomplete')
   const [queueFilter, setQueueFilter] = useState<QueueFilter>('__unassigned')
+  const [surveyTypeFilter, setSurveyTypeFilter] = useState<'all' | SurveyType>('all')
   const [selected, setSelected] = useState<Set<string>>(new Set())
 
   // ── Dialog state ─────────────────────────────────────────────────────────
@@ -149,8 +152,9 @@ export default function LabelingView({ projectId, tasks: initialTasks, queues: i
     }
     if (taskFilter === 'incomplete') result = result.filter(t => !t.completedBy)
     else if (taskFilter === 'complete') result = result.filter(t => !!t.completedBy)
+    if (surveyTypeFilter !== 'all') result = result.filter(t => t.surveyType === surveyTypeFilter)
     return result
-  }, [tasks, queueFilter, taskFilter])
+  }, [tasks, queueFilter, taskFilter, surveyTypeFilter])
 
   const allFilteredSelected = filteredTasks.length > 0 && filteredTasks.every(t => selected.has(t.taskId))
   const someFilteredSelected = filteredTasks.some(t => selected.has(t.taskId))
@@ -179,9 +183,12 @@ export default function LabelingView({ projectId, tasks: initialTasks, queues: i
   const handleCreateQueue = useCallback(async () => {
     if (!newQueueName.trim()) return
     setCreateQueueBusy(true)
-    // If addUnassignedToQueue is checked, include all unassigned tasks;
-    // otherwise fall back to whatever is manually selected in the table.
-    const unassignedIds = tasks.filter(t => !t.queueId).map(t => t.taskId)
+    // If addUnassignedToQueue is checked, include all unassigned tasks that match
+    // the active survey-type filter; otherwise fall back to whatever is manually
+    // selected in the table (selection is itself drawn from filteredTasks).
+    const unassignedIds = tasks
+      .filter(t => !t.queueId && (surveyTypeFilter === 'all' || t.surveyType === surveyTypeFilter))
+      .map(t => t.taskId)
     const taskIds = addUnassignedToQueue && unassignedIds.length > 0
       ? unassignedIds
       : Array.from(selected)
@@ -214,7 +221,7 @@ export default function LabelingView({ projectId, tasks: initialTasks, queues: i
     setNewQueueName('')
     setNewQueueAssignee('')
     startTransition(() => router.refresh())
-  }, [newQueueName, newQueueAssignee, addUnassignedToQueue, tasks, selected, projectId, router])
+  }, [newQueueName, newQueueAssignee, addUnassignedToQueue, tasks, selected, surveyTypeFilter, projectId, router])
 
   const handleAssignToQueue = useCallback(async () => {
     if (!assignTargetQueueId) return
@@ -282,15 +289,16 @@ export default function LabelingView({ projectId, tasks: initialTasks, queues: i
 
   // ── Tab counts ────────────────────────────────────────────────────────────
   const tabCounts = useMemo(() => {
-    const base = queueFilter === '__unassigned'
+    let base = queueFilter === '__unassigned'
       ? tasks.filter(t => !t.queueId)
       : tasks.filter(t => t.queueId === queueFilter)
+    if (surveyTypeFilter !== 'all') base = base.filter(t => t.surveyType === surveyTypeFilter)
     return {
       incomplete: base.filter(t => !t.completedBy).length,
       complete: base.filter(t => !!t.completedBy).length,
       all: base.length,
     }
-  }, [tasks, queueFilter])
+  }, [tasks, queueFilter, surveyTypeFilter])
 
   // ── Derived: queues split by completion ──────────────────────────────────
   const { incompleteQueues, completeQueues } = useMemo(() => {
@@ -679,6 +687,16 @@ export default function LabelingView({ projectId, tasks: initialTasks, queues: i
                 </span>
               </button>
             ))}
+            {/* Survey type filter — e.g. scope queue creation to spawning-ground flights only */}
+            <select
+              value={surveyTypeFilter}
+              onChange={e => setSurveyTypeFilter(e.target.value as 'all' | SurveyType)}
+              className="ml-3 mb-1 rounded border border-gray-200 px-2 py-1 text-xs text-gray-600 cursor-pointer"
+            >
+              <option value="all">All survey types</option>
+              <option value="migration">Migration only</option>
+              <option value="spawning">Spawning only</option>
+            </select>
           </div>
 
           {/* Bulk action bar */}

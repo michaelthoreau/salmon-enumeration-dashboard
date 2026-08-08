@@ -17,6 +17,7 @@ vi.mock('next/navigation', () => ({
 vi.mock('@/app/actions/files', () => ({
   assignFileSplit: vi.fn().mockResolvedValue({ success: true }),
   loadDatasetEntriesBefore: vi.fn().mockResolvedValue({ entries: [], taskCounts: {}, hasMore: false }),
+  randomlyAssignSplits: vi.fn().mockResolvedValue({ ok: true, counts: { train: 0, val: 0, test: 0 } }),
 }))
 
 // Mock createLabelingTasks server action
@@ -39,6 +40,7 @@ const mockEntries: DatasetEntry[] = [
     flightPlanId: 'fp1',
     flightTimestampIso: '2026-06-11T20:00:00Z',
     flightPlanName: 'Flight Plan 1',
+    surveyType: 'migration',
     uploadedAtIso: '2026-06-11T20:00:00Z',
   },
   {
@@ -55,6 +57,7 @@ const mockEntries: DatasetEntry[] = [
     flightPlanId: 'fp1',
     flightTimestampIso: '2026-06-11T20:00:00Z',
     flightPlanName: 'Flight Plan 1',
+    surveyType: 'migration',
     uploadedAtIso: '2026-06-11T20:00:00Z',
   },
   {
@@ -71,6 +74,7 @@ const mockEntries: DatasetEntry[] = [
     flightPlanId: 'fp1',
     flightTimestampIso: '2026-06-11T20:00:00Z',
     flightPlanName: 'Flight Plan 1',
+    surveyType: 'migration',
     uploadedAtIso: '2026-06-11T20:00:00Z',
   },
 ]

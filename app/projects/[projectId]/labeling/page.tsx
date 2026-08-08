@@ -33,6 +33,7 @@ export default async function LabelingPage({ params }: PageProps) {
       createdAt: labelingTasks.createdAt,
       queueId: labelingTasks.queueId,
       flightPlanName: flightPlans.name,
+      surveyType: flights.surveyType,
     })
     .from(labelingTasks)
     .innerJoin(files, eq(labelingTasks.fileId, files.id))
