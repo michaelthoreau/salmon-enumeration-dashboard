@@ -13,6 +13,7 @@ import type { Split, SurveyType } from '@/lib/schema'
 import { assignFileSplit, loadDatasetEntriesBefore, randomlyAssignSplits } from '@/app/actions/files'
 import type { DatasetEntry } from '@/app/actions/files'
 import { createLabelingTasks, type LabelingTaskInput } from '@/app/actions/labeling-tasks'
+import { DEFAULT_TILE_SIZE, TILE_SIZE_OPTIONS, countTiles, tileRegion } from '@/lib/tiling'
 import { createLabelingQueue } from '@/app/actions/labeling-queues'
 
 type SplitChoice = Split | 'none'
@@ -184,6 +185,7 @@ export default function DatasetView({ projectId, entries: initialEntries, taskCo
   const [pendingSplit, setPendingSplit] = useState<SplitChoice | null>(null)
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [taskDialog, setTaskDialog] = useState<TaskDialogState | null>(null)
+  const [taskTileSize, setTaskTileSize] = useState<number | null>(DEFAULT_TILE_SIZE)
   const [videoTaskDialog, setVideoTaskDialog] = useState<VideoTaskDialogState | null>(null)
   const [maxFramesPerVideo, setMaxFramesPerVideo] = useState<number | null>(null)
   const [videoCreateQueue, setVideoCreateQueue] = useState(true)
@@ -415,7 +417,16 @@ export default function DatasetView({ projectId, entries: initialEntries, taskCo
     setTaskDialog({ step: 'creating' })
     const allTasks: LabelingTaskInput[] = fileImages
       .filter(f => f.width > 0 && f.height > 0)
-      .map(f => ({ fileId: f.fileId, x1: 0, y1: 0, x2: f.width, y2: f.height, frame: 0 }))
+      .flatMap(f =>
+        tileRegion(0, 0, f.width, f.height, taskTileSize).map(t => ({
+          fileId: f.fileId,
+          x1: t.x1,
+          y1: t.y1,
+          x2: t.x2,
+          y2: t.y2,
+          frame: 0,
+        })),
+      )
     const result = await createLabelingTasks(allTasks)
     if (result.ok) {
       setTaskDialog({ step: 'done', count: result.count ?? 0 })
@@ -424,7 +435,7 @@ export default function DatasetView({ projectId, entries: initialEntries, taskCo
     } else {
       setTaskDialog({ step: 'error', message: result.error ?? 'Unknown error' })
     }
-  }, [taskDialog, router])
+  }, [taskDialog, taskTileSize, router])
 
   // ── Video labeling task creation ───────────────────────────────────────────
 
@@ -851,18 +862,40 @@ export default function DatasetView({ projectId, entries: initialEntries, taskCo
 
           {taskDialog?.step === 'ready' && (() => {
             const imageCount = taskDialog.fileImages.length
-            const validCount = taskDialog.fileImages.filter(f => f.width > 0 && f.height > 0).length
+            const valid = taskDialog.fileImages.filter(f => f.width > 0 && f.height > 0)
+            const taskCount = valid.reduce(
+              (sum, f) => sum + countTiles(0, 0, f.width, f.height, taskTileSize), 0,
+            )
             return (
-              <div className="grid grid-cols-2 gap-3 my-1">
-                <div className="flex flex-col items-center justify-center rounded-xl bg-gray-50 border border-gray-100 px-3 py-4">
-                  <span className="text-2xl font-black text-gray-900">{imageCount}</span>
-                  <span className="text-xs text-gray-500 mt-0.5">image{imageCount !== 1 ? 's' : ''} selected</span>
+              <>
+                <div className="grid grid-cols-2 gap-3 my-1">
+                  <div className="flex flex-col items-center justify-center rounded-xl bg-gray-50 border border-gray-100 px-3 py-4">
+                    <span className="text-2xl font-black text-gray-900">{imageCount}</span>
+                    <span className="text-xs text-gray-500 mt-0.5">image{imageCount !== 1 ? 's' : ''} selected</span>
+                  </div>
+                  <div className="flex flex-col items-center justify-center rounded-xl bg-blue-50 border border-blue-200 px-3 py-4">
+                    <span className="text-2xl font-black text-blue-700">{taskCount}</span>
+                    <span className="text-xs text-blue-600 mt-0.5">task{taskCount !== 1 ? 's' : ''} to create</span>
+                  </div>
                 </div>
-                <div className="flex flex-col items-center justify-center rounded-xl bg-blue-50 border border-blue-200 px-3 py-4">
-                  <span className="text-2xl font-black text-blue-700">{validCount}</span>
-                  <span className="text-xs text-blue-600 mt-0.5">task{validCount !== 1 ? 's' : ''} to create</span>
-                </div>
-              </div>
+                <label className="flex items-center justify-between gap-3 text-sm mt-1">
+                  <span className="text-gray-700">Tile size</span>
+                  <select
+                    value={taskTileSize === null ? 'none' : String(taskTileSize)}
+                    onChange={e => setTaskTileSize(e.target.value === 'none' ? null : Number(e.target.value))}
+                    className="rounded border border-gray-300 px-2 py-1 text-sm cursor-pointer"
+                  >
+                    {TILE_SIZE_OPTIONS.map(o => (
+                      <option key={o.label} value={o.value === null ? 'none' : String(o.value)}>{o.label}</option>
+                    ))}
+                  </select>
+                </label>
+                <p className="text-xs text-gray-500 -mt-1">
+                  Each image is split into a grid of tiles roughly this many pixels a side, so a
+                  labeler sees fewer fish at a time and the annotator can show each tile at full
+                  resolution.
+                </p>
+              </>
             )
           })()}
 
@@ -885,12 +918,14 @@ export default function DatasetView({ projectId, entries: initialEntries, taskCo
               <Button variant="outline" onClick={() => setTaskDialog(null)}>Close</Button>
             )}
             {taskDialog?.step === 'ready' && (() => {
-              const validCount = taskDialog.fileImages.filter(f => f.width > 0 && f.height > 0).length
+              const taskCount = taskDialog.fileImages
+                .filter(f => f.width > 0 && f.height > 0)
+                .reduce((sum, f) => sum + countTiles(0, 0, f.width, f.height, taskTileSize), 0)
               return (
                 <>
                   <Button variant="outline" onClick={() => setTaskDialog(null)}>Cancel</Button>
-                  <Button onClick={confirmCreateTasks} disabled={validCount === 0}>
-                    Create {validCount} task{validCount !== 1 ? 's' : ''}
+                  <Button onClick={confirmCreateTasks} disabled={taskCount === 0}>
+                    Create {taskCount} task{taskCount !== 1 ? 's' : ''}
                   </Button>
                 </>
               )

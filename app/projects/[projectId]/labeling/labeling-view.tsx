@@ -20,6 +20,7 @@ import {
   LayersIcon,
   UserIcon,
   XIcon,
+  GridIcon,
 } from 'lucide-react'
 import {
   createLabelingQueue,
@@ -29,8 +30,9 @@ import {
   updateQueueAssignment,
   renameLabelingQueue,
 } from '@/app/actions/labeling-queues'
-import { deleteLabelingTasks } from '@/app/actions/labeling-tasks'
+import { deleteLabelingTasks, splitLabelingTasksIntoTiles } from '@/app/actions/labeling-tasks'
 import type { SurveyType } from '@/lib/schema'
+import { DEFAULT_TILE_SIZE, TILE_SIZE_OPTIONS, countTiles } from '@/lib/tiling'
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -113,6 +115,10 @@ export default function LabelingView({ projectId, tasks: initialTasks, queues: i
   const [deleteTasksOpen, setDeleteTasksOpen] = useState(false)
   const [deleteTasksBusy, setDeleteTasksBusy] = useState(false)
 
+  const [splitTasksOpen, setSplitTasksOpen] = useState(false)
+  const [splitTasksBusy, setSplitTasksBusy] = useState(false)
+  const [splitTileSize, setSplitTileSize] = useState<number>(DEFAULT_TILE_SIZE)
+
   const [editQueueId, setEditQueueId] = useState<string | null>(null)
   const [editQueueName, setEditQueueName] = useState('')
   const [editQueueAssignee, setEditQueueAssignee] = useState<string>('')
@@ -179,6 +185,55 @@ export default function LabelingView({ projectId, tasks: initialTasks, queues: i
     setDeleteTasksOpen(false)
     startTransition(() => router.refresh())
   }, [selectedInView, router])
+
+  // Tasks in the selection that a re-tile would actually change — image tasks
+  // (non-zero crop) whose region is big enough to come apart into 2+ tiles.
+  const splittableSelected = useMemo(
+    () => selectedInView.filter(t =>
+      t.x2 - t.x1 > 0 && t.y2 - t.y1 > 0 &&
+      countTiles(t.x1, t.y1, t.x2, t.y2, splitTileSize) > 1
+    ),
+    [selectedInView, splitTileSize],
+  )
+  const splitResultCount = useMemo(
+    () => splittableSelected.reduce(
+      (sum, t) => sum + countTiles(t.x1, t.y1, t.x2, t.y2, splitTileSize), 0,
+    ),
+    [splittableSelected, splitTileSize],
+  )
+
+  const handleSplitTasks = useCallback(async () => {
+    if (splittableSelected.length === 0) return
+    setSplitTasksBusy(true)
+    const res = await splitLabelingTasksIntoTiles(
+      splittableSelected.map(t => t.taskId),
+      splitTileSize,
+    )
+    setSplitTasksBusy(false)
+    if (res.ok && res.groups) {
+      // Swap each source row for its tiles in place — everything but the crop,
+      // the id and the point count is inherited from the task being replaced.
+      const byId = new Map(tasks.map(t => [t.taskId, t]))
+      const replacements = new Map(res.groups.map(g => [g.sourceTaskId, g.tiles]))
+      setTasks(prev => prev.flatMap(t => {
+        const tiles = replacements.get(t.taskId)
+        if (!tiles) return [t]
+        const source = byId.get(t.taskId)!
+        return tiles.map(tile => ({
+          ...source,
+          taskId: tile.taskId,
+          x1: tile.x1,
+          y1: tile.y1,
+          x2: tile.x2,
+          y2: tile.y2,
+          pointCount: tile.pointCount,
+        }))
+      }))
+      setSelected(new Set())
+      setSplitTasksOpen(false)
+      startTransition(() => router.refresh())
+    }
+  }, [splittableSelected, splitTileSize, tasks, router])
 
   const handleCreateQueue = useCallback(async () => {
     if (!newQueueName.trim()) return
@@ -721,6 +776,15 @@ export default function LabelingView({ projectId, tasks: initialTasks, queues: i
                       Remove from queue
                     </button>
                   )}
+                  {selectedInView.some(t => t.x2 - t.x1 > 0 && t.y2 - t.y1 > 0) && (
+                    <button
+                      onClick={() => setSplitTasksOpen(true)}
+                      className={cn(buttonVariants({ variant: 'outline', size: 'sm' }))}
+                    >
+                      <GridIcon className="w-3.5 h-3.5 mr-1" />
+                      Split into tiles…
+                    </button>
+                  )}
                   <button
                     onClick={() => setDeleteTasksOpen(true)}
                     className={cn(
@@ -983,6 +1047,48 @@ export default function LabelingView({ projectId, tasks: initialTasks, queues: i
               className="bg-red-600 hover:bg-red-700 text-white border-red-600"
             >
               {deleteQueueBusy ? 'Deleting…' : deleteQueueWithTasks ? 'Delete queue & tasks' : 'Delete queue'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Split Tasks Into Tiles ────────────────────────────────────────── */}
+      <Dialog open={splitTasksOpen} onOpenChange={o => { if (!o) setSplitTasksOpen(false) }}>
+        <DialogContent showCloseButton>
+          <DialogHeader>
+            <DialogTitle>Split tasks into tiles</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-gray-600 mt-1">
+            Cuts each selected image task into a grid of smaller crops, so a labeler sees fewer
+            fish at a time and the annotator can show each tile at full resolution. Tiles stay in
+            the same queue, and existing annotations move to the tile they fall in.
+          </p>
+          <label className="flex items-center justify-between gap-3 text-sm mt-1">
+            <span className="text-gray-700">Tile size</span>
+            <select
+              value={String(splitTileSize)}
+              onChange={e => setSplitTileSize(Number(e.target.value))}
+              className="rounded border border-gray-300 px-2 py-1 text-sm cursor-pointer"
+            >
+              {TILE_SIZE_OPTIONS.filter(o => o.value !== null).map(o => (
+                <option key={o.label} value={String(o.value)}>{o.label}</option>
+              ))}
+            </select>
+          </label>
+          <div className="rounded-lg bg-gray-50 border border-gray-100 px-3 py-2 text-sm text-gray-700">
+            <strong>{splittableSelected.length}</strong> of {selectedInView.length} selected task
+            {selectedInView.length !== 1 ? 's' : ''} will be replaced by{' '}
+            <strong>{splitResultCount}</strong> tile{splitResultCount !== 1 ? 's' : ''}.
+            {splittableSelected.length < selectedInView.length && (
+              <span className="block text-xs text-gray-500 mt-1">
+                The rest are video tasks or already at or below this tile size, and are left as-is.
+              </span>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setSplitTasksOpen(false)}>Cancel</Button>
+            <Button onClick={handleSplitTasks} disabled={splitTasksBusy || splittableSelected.length === 0}>
+              {splitTasksBusy ? 'Splitting…' : `Split into ${splitResultCount} tile${splitResultCount !== 1 ? 's' : ''}`}
             </Button>
           </DialogFooter>
         </DialogContent>

@@ -47,6 +47,7 @@ export default async function QueueLabelingPage({ params, searchParams }: PagePr
       completedByEmail: users.email,
       createdAt: labelingTasks.createdAt,
       flightPlanName: flightPlans.name,
+      surveyType: flights.surveyType,
       pointCount: count(labelingTaskPoints.id),
     })
     .from(labelingTasks)
@@ -103,6 +104,7 @@ export default async function QueueLabelingPage({ params, searchParams }: PagePr
         frame: task.frame,
         completedBy: task.completedBy ?? null,
         flightPlanName: task.flightPlanName,
+        surveyType: task.surveyType,
       }}
       initialPoints={points}
       canWrite={canWrite}

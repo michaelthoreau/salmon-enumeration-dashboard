@@ -3,8 +3,9 @@
 import { useCallback, useEffect, useRef, useState, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
-import { History, X, ChevronDown, Check, Circle, List, MoreHorizontal, Brain, Loader2, Sparkles, Fish, Zap } from 'lucide-react'
+import { History, X, ChevronDown, Check, Circle, List, MoreHorizontal, Brain, Loader2, Sparkles, Fish, Zap, ZoomIn, ZoomOut } from 'lucide-react'
 import { saveTaskPoints, setTaskComplete } from '@/app/actions/labeling-tasks'
+import type { SurveyType } from '@/lib/schema'
 
 interface Point {
   id: string
@@ -31,6 +32,7 @@ interface Task {
   frame: number
   completedBy: string | null
   flightPlanName: string
+  surveyType: SurveyType
 }
 
 interface QueueTaskItem {
@@ -63,8 +65,27 @@ interface Props {
 
 const POINT_RADIUS = 4
 const HIT_RADIUS = 8
+// Fallback display cap for image tiles, used only for the first paint before the
+// container has been measured.
 const IMAGE_MAX_DISPLAY = 800
 const VIDEO_EXTS = new Set(['mp4', 'mov', 'avi', 'mkv'])
+
+const MIN_ZOOM = 0.25
+const MAX_ZOOM = 16
+const ZOOM_STEP = 1.25
+
+// Display scale (CSS px per source pixel) an image task is shown at by default.
+// A fish should end up the same number of screen pixels across whether its crop
+// came off a river (migration) flight or a spawning-ground flight, so the default
+// is native resolution — 1 source pixel per CSS pixel — rather than "shrink the
+// whole crop until it fits", which used to make big spawning photos 5-6× smaller
+// than river imagery. If one platform's imagery turns out to be flown at a
+// different ground sample distance than the river imagery, scale it here: a value
+// of 2 shows that survey type's pixels at double size.
+const DEFAULT_IMAGE_SCALE: Record<SurveyType, number> = {
+  migration: 1,
+  spawning: 1,
+}
 
 function isVideoKey(key: string) {
   return VIDEO_EXTS.has(key.split('.').pop()?.toLowerCase() ?? '')
@@ -224,62 +245,77 @@ export default function QueueAnnotator({
   }, [])
 
   // ── Zoom / pan state ──────────────────────────────────────────────────────
+  //
+  // The media wrapper is laid out centred at its unzoomed size (mw × mh) and then
+  // transformed with `translate(-50%,-50%) translate(pan) scale(zoom)` about its
+  // top-left corner, so a point p in wrapper-local CSS px lands on screen at
+  //     screen = containerCentre - (mw/2, mh/2) + pan + p * zoom
+  // Keeping the origin at the top-left (rather than moving it around) means a
+  // zoom that holds some anchor point still is just a pan adjustment:
+  //     pan' = pan + anchor * (zoom - zoom')
   const [zoom, setZoom] = useState(1)
-  // zoomOrigin is in CSS px relative to the centered video element's top-left
-  const [zoomOrigin, setZoomOrigin] = useState({ x: 0, y: 0 })
   const [pan, setPan] = useState({ x: 0, y: 0 })
   const isPanningRef = useRef(false)
   const didPanRef = useRef(false)
   const panStartRef = useRef({ mx: 0, my: 0, px: 0, py: 0 })
-  // Ref to the centered video+overlay element for wheel events
-  const videoWrapperRef = useRef<HTMLDivElement>(null)
+  // The centred media + overlay element — the thing the zoom transform is on
+  const mediaWrapperRef = useRef<HTMLDivElement>(null)
 
   const resetZoom = useCallback(() => {
     setZoom(1)
-    setZoomOrigin({ x: 0, y: 0 })
     setPan({ x: 0, y: 0 })
   }, [])
 
   // Reset zoom when task changes
   useEffect(() => { resetZoom() }, [task.id, resetZoom])
 
-  // Wheel to zoom around mouse — measure from the video wrapper element
+  /** Zoom to `next`, holding the wrapper-local point `anchor` still on screen. */
+  const zoomTo = useCallback((next: number, anchor: { x: number; y: number }) => {
+    const clamped = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, next))
+    if (clamped === zoom) return
+    const delta = zoom - clamped
+    setPan(p => ({ x: p.x + anchor.x * delta, y: p.y + anchor.y * delta }))
+    setZoom(clamped)
+  }, [zoom])
+
+  /** Zoom by a step, holding the centre of the viewport still. */
+  const zoomByStep = useCallback((factor: number) => {
+    const el = containerRef.current
+    const wrapper = mediaWrapperRef.current
+    if (!el || !wrapper) return
+    const elRect = el.getBoundingClientRect()
+    const wrapRect = wrapper.getBoundingClientRect()
+    // Viewport centre expressed in wrapper-local (unzoomed) coordinates
+    const anchor = {
+      x: (elRect.left + elRect.width / 2 - wrapRect.left) / zoom,
+      y: (elRect.top + elRect.height / 2 - wrapRect.top) / zoom,
+    }
+    zoomTo(zoom * factor, anchor)
+  }, [zoom, zoomTo])
+
+  // Wheel to zoom around the mouse
   useEffect(() => {
-    if (!isVideo) return
     const el = containerRef.current
     if (!el) return
     const onWheel = (e: WheelEvent) => {
       e.preventDefault()
-      const wrapper = videoWrapperRef.current
+      const wrapper = mediaWrapperRef.current
       if (!wrapper) return
+      // getBoundingClientRect is the *transformed* rect, so dividing by the
+      // current zoom recovers untransformed local coordinates.
       const rect = wrapper.getBoundingClientRect()
-      // Mouse relative to the video element's top-left (pre-transform)
-      // getBoundingClientRect gives the transformed rect, so divide by current zoom
-      // to get the untransformed local coordinates.
-      const mouseX = (e.clientX - rect.left) / zoom
-      const mouseY = (e.clientY - rect.top) / zoom
-      // (scale calc uses containerSize.h without offset — pb-8 removed)
       const delta = e.deltaY < 0 ? 1.08 : 1 / 1.08
-      setZoom(prevZoom => {
-        const nextZoom = Math.max(1, Math.min(8, prevZoom * delta))
-        if (nextZoom === prevZoom) return prevZoom
-        if (nextZoom === 1) {
-          setZoomOrigin({ x: 0, y: 0 })
-          setPan({ x: 0, y: 0 })
-          return 1
-        }
-        // Set the transform origin to the mouse position in local (unzoomed) coords
-        setZoomOrigin({ x: mouseX, y: mouseY })
-        return nextZoom
+      zoomTo(zoom * delta, {
+        x: (e.clientX - rect.left) / zoom,
+        y: (e.clientY - rect.top) / zoom,
       })
     }
     el.addEventListener('wheel', onWheel, { passive: false })
     return () => el.removeEventListener('wheel', onWheel)
-  }, [isVideo, zoom])
+  }, [zoom, zoomTo])
 
   // Pan via drag
   useEffect(() => {
-    if (!isVideo) return
     const onMouseMove = (e: MouseEvent) => {
       if (!isPanningRef.current) return
       const dx = e.clientX - panStartRef.current.mx
@@ -297,15 +333,24 @@ export default function QueueAnnotator({
       window.removeEventListener('mousemove', onMouseMove)
       window.removeEventListener('mouseup', onMouseUp)
     }
-  }, [isVideo])
+  }, [])
+
+  const beginPan = useCallback((e: React.MouseEvent) => {
+    isPanningRef.current = true
+    didPanRef.current = false
+    panStartRef.current = { mx: e.clientX, my: e.clientY, px: pan.x, py: pan.y }
+    e.preventDefault()
+  }, [pan])
 
   // ── Display dimensions ────────────────────────────────────────────────────
+  // `scale` is the 100%-zoom display scale (CSS px per source px); the on-screen
+  // magnification is `scale * zoom`.
   const { frameW, frameH, displayW, displayH, scale } = useMemo(() => {
     if (isVideo && videoDims) {
       // Fill the container, preserving aspect ratio
       const maxW = containerSize?.w ?? window.innerWidth
-      const maxH = (containerSize?.h ?? window.innerHeight) - 32 // account for pb-8
-      const s = Math.min(maxW / videoDims.w, maxH / videoDims.h, 1)
+      const maxH = containerSize?.h ?? window.innerHeight
+      const s = Math.min(maxW / videoDims.w, maxH / videoDims.h)
       return {
         frameW: videoDims.w,
         frameH: videoDims.h,
@@ -317,7 +362,14 @@ export default function QueueAnnotator({
     if (!isVideo) {
       const tileW = task.x2 - task.x1
       const tileH = task.y2 - task.y1
-      const s = Math.min(1, IMAGE_MAX_DISPLAY / Math.max(tileW, tileH))
+      // Native resolution by default, so fish are the same on-screen size across
+      // survey types — but never larger than fits, so legacy whole-image tasks
+      // (which are far bigger than a screen) still open usable and can be zoomed.
+      const preferred = DEFAULT_IMAGE_SCALE[task.surveyType] ?? 1
+      const fit = containerSize
+        ? Math.min(containerSize.w / tileW, containerSize.h / tileH)
+        : IMAGE_MAX_DISPLAY / Math.max(tileW, tileH)
+      const s = Math.min(preferred, fit)
       return {
         frameW: tileW,
         frameH: tileH,
@@ -327,7 +379,7 @@ export default function QueueAnnotator({
       }
     }
     return { frameW: 0, frameH: 0, displayW: 0, displayH: 0, scale: 1 }
-  }, [isVideo, videoDims, containerSize, task.x1, task.y1, task.x2, task.y2])
+  }, [isVideo, videoDims, containerSize, task.x1, task.y1, task.x2, task.y2, task.surveyType])
 
   // ── Load image tile ───────────────────────────────────────────────────────
   useEffect(() => {
@@ -402,11 +454,23 @@ export default function QueueAnnotator({
         e.preventDefault()
         handleComplete()
       }
+      if (e.key === '+' || e.key === '=') {
+        e.preventDefault()
+        zoomByStep(ZOOM_STEP)
+      }
+      if (e.key === '-' || e.key === '_') {
+        e.preventDefault()
+        zoomByStep(1 / ZOOM_STEP)
+      }
+      if (e.key === '0') {
+        e.preventDefault()
+        resetZoom()
+      }
     }
     document.addEventListener('keydown', handler)
     return () => document.removeEventListener('keydown', handler)
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isVideo, canWrite])
+  }, [isVideo, canWrite, zoomByStep, resetZoom])
 
   // ── Video controls ────────────────────────────────────────────────────────
   const handlePlayLastSecond = useCallback(() => {
@@ -620,48 +684,58 @@ export default function QueueAnnotator({
   }, [queueTasks, filterTab])
 
   // ── Canvas interaction ────────────────────────────────────────────────────
-  const handleMouseDown = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
-    if (e.button !== 0 || !canWrite || isPreviewing) return
+  // The wrapper's bounding rect is post-transform, so dividing by `zoom` first
+  // gets back to unzoomed CSS px and dividing by `scale` gets to source pixels.
+  // Hit radius is unaffected by zoom — the dots scale with the image.
+  const toSourcePoint = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
     const rect = e.currentTarget.getBoundingClientRect()
-    const px = (e.clientX - rect.left) / scale
-    const py = (e.clientY - rect.top) / scale
-    const idx = points.findIndex(p => Math.hypot(p.x - px, p.y - py) < HIT_RADIUS / scale)
+    return {
+      x: (e.clientX - rect.left) / zoom / scale,
+      y: (e.clientY - rect.top) / zoom / scale,
+    }
+  }, [zoom, scale])
+
+  const handleMouseDown = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    if (e.button !== 0) return
+    const { x: px, y: py } = toSourcePoint(e)
+    const idx = canWrite && !isPreviewing
+      ? points.findIndex(p => Math.hypot(p.x - px, p.y - py) < HIT_RADIUS / scale)
+      : -1
     if (idx >= 0) {
       dragRef.current = { id: points[idx].id }
       didDragRef.current = false
       setCursor('grabbing')
       e.preventDefault()
+    } else {
+      beginPan(e)
     }
-  }, [canWrite, points, scale, isPreviewing])
+  }, [canWrite, points, scale, isPreviewing, toSourcePoint, beginPan])
 
   const handleMouseMove = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
     if (!dragRef.current || !canWrite || isPreviewing) return
     didDragRef.current = true
-    const rect = e.currentTarget.getBoundingClientRect()
-    const px = Math.max(0, Math.min(frameW, (e.clientX - rect.left) / scale))
-    const py = Math.max(0, Math.min(frameH, (e.clientY - rect.top) / scale))
+    const { x, y } = toSourcePoint(e)
+    const px = Math.max(0, Math.min(frameW, x))
+    const py = Math.max(0, Math.min(frameH, y))
     const id = dragRef.current.id
     setPoints(prev => prev.map(p => p.id === id ? { ...p, x: px, y: py } : p))
-  }, [canWrite, scale, frameW, frameH, isPreviewing])
+  }, [canWrite, frameW, frameH, isPreviewing, toSourcePoint])
 
   const handleCanvasClick = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
     if (!canWrite || isPreviewing) return
     if (didDragRef.current) { didDragRef.current = false; return }
-    const rect = e.currentTarget.getBoundingClientRect()
-    const px = (e.clientX - rect.left) / scale
-    const py = (e.clientY - rect.top) / scale
+    if (didPanRef.current) { didPanRef.current = false; return }
+    const { x: px, y: py } = toSourcePoint(e)
     const hit = points.findIndex(p => Math.hypot(p.x - px, p.y - py) < HIT_RADIUS / scale)
     if (hit >= 0) return
     setPoints(prev => [...prev, { id: crypto.randomUUID(), x: px, y: py }])
     setDirty(true)
     setSaveStatus('idle')
-  }, [canWrite, points, scale, isPreviewing])
+  }, [canWrite, points, scale, isPreviewing, toSourcePoint])
 
   const handleContextMenu = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
     if (!canWrite || isPreviewing) return
-    const rect = e.currentTarget.getBoundingClientRect()
-    const px = (e.clientX - rect.left) / scale
-    const py = (e.clientY - rect.top) / scale
+    const { x: px, y: py } = toSourcePoint(e)
     const hitIdx = points.findIndex(p => Math.hypot(p.x - px, p.y - py) < HIT_RADIUS / scale)
     if (hitIdx >= 0) {
       e.preventDefault()
@@ -669,19 +743,10 @@ export default function QueueAnnotator({
       setDirty(true)
       setSaveStatus('idle')
     }
-  }, [canWrite, points, scale, isPreviewing])
+  }, [canWrite, points, scale, isPreviewing, toSourcePoint])
 
   const progressPct = totalInQueue > 0 ? Math.round((completeCount / totalInQueue) * 100) : 0
   const filename = task.fileKey.split('/').pop() ?? task.fileKey
-
-  // ── Shared canvas interaction props ──────────────────────────────────────
-  const canvasProps = {
-    onClick: handleCanvasClick,
-    onMouseDown: handleMouseDown,
-    onMouseMove: handleMouseMove,
-    onContextMenu: handleContextMenu,
-    style: { cursor: canWrite ? cursor : 'default' } as React.CSSProperties,
-  }
 
   const annotationDots = (
     <svg
@@ -841,7 +906,7 @@ export default function QueueAnnotator({
           {filename}{isVideo ? <span className="text-gray-600"> · frame {task.frame}</span> : <span className="text-gray-600"> · {task.x1},{task.y1}–{task.x2},{task.y2}</span>}
         </span>
         <span className="text-gray-700 select-none">|</span>
-        {/* Play last second + zoom reset — video only */}
+        {/* Play last second — video only */}
         {isVideo && (
           <div className="flex items-center gap-1.5 shrink-0">
             <button onClick={handlePlayLastSecond} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gray-800 hover:bg-gray-700 border border-gray-700 text-white text-xs font-semibold transition-colors" title="Play last second (R)">
@@ -849,18 +914,39 @@ export default function QueueAnnotator({
               Play last second
               <kbd className="ml-1 text-[10px] text-gray-500 font-mono bg-gray-900 rounded px-1">R</kbd>
             </button>
-            <button
-              onClick={resetZoom}
-              disabled={zoom === 1}
-              className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg border text-xs font-semibold transition-colors disabled:opacity-30 disabled:cursor-not-allowed bg-blue-900/60 hover:bg-blue-800 border-blue-700 text-blue-300 disabled:hover:bg-blue-900/60"
-              title="Reset zoom"
-            >
-              {Math.round(zoom * 100)}% — Reset
-            </button>
             {isPlaying && <span className="text-[11px] text-white/50 animate-pulse">▶ playing…</span>}
             <span className="text-gray-700 select-none">|</span>
           </div>
         )}
+
+        {/* Zoom controls — images and video alike */}
+        <div className="flex items-center gap-1 shrink-0">
+          <button
+            onClick={() => zoomByStep(1 / ZOOM_STEP)}
+            disabled={zoom <= MIN_ZOOM}
+            className="flex items-center justify-center w-7 h-7 rounded-lg bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-300 hover:text-white transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+            title="Zoom out (−)"
+          >
+            <ZoomOut className="w-3.5 h-3.5" />
+          </button>
+          <button
+            onClick={resetZoom}
+            disabled={zoom === 1 && pan.x === 0 && pan.y === 0}
+            className="px-2 py-1.5 rounded-lg border text-xs font-semibold tabular-nums transition-colors disabled:opacity-40 disabled:cursor-not-allowed bg-blue-900/60 hover:bg-blue-800 border-blue-700 text-blue-300 disabled:hover:bg-blue-900/60"
+            title="Reset zoom (0)"
+          >
+            {Math.round(scale * zoom * 100)}%
+          </button>
+          <button
+            onClick={() => zoomByStep(ZOOM_STEP)}
+            disabled={zoom >= MAX_ZOOM}
+            className="flex items-center justify-center w-7 h-7 rounded-lg bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-300 hover:text-white transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+            title="Zoom in (+)"
+          >
+            <ZoomIn className="w-3.5 h-3.5" />
+          </button>
+        </div>
+        <span className="text-gray-700 select-none">|</span>
 
         {/* Predict Panel */}
         {canWrite && (
@@ -1028,72 +1114,21 @@ export default function QueueAnnotator({
             const overlayScale = s
             return (
               <div
-                ref={videoWrapperRef}
+                ref={mediaWrapperRef}
                 style={{
                   position: 'absolute',
                   width: ow, height: oh,
                   top: '50%', left: '50%',
-                  transform: zoom === 1
-                    ? 'translate(-50%, -50%)'
-                    : `translate(calc(-50% + ${pan.x}px), calc(-50% + ${pan.y}px)) scale(${zoom})`,
-                  transformOrigin: `${zoomOrigin.x}px ${zoomOrigin.y}px`,
+                  transform: `translate(-50%, -50%) translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
+                  transformOrigin: '0 0',
                   willChange: 'transform',
                   visibility: videoDims ? 'visible' : 'hidden',
-                  cursor: cursor === 'grabbing' ? 'grabbing' : canWrite ? 'crosshair' : zoom > 1 ? 'grab' : 'default',
+                  cursor: cursor === 'grabbing' ? 'grabbing' : canWrite ? 'crosshair' : 'grab',
                 }}
-                onMouseDown={(e) => {
-                  if (e.button !== 0) return
-                  const rect = e.currentTarget.getBoundingClientRect()
-                  const px = (e.clientX - rect.left) / zoom / overlayScale
-                  const py = (e.clientY - rect.top) / zoom / overlayScale
-                  const idx = canWrite && !isPreviewing ? points.findIndex(p => Math.hypot(p.x - px, p.y - py) < HIT_RADIUS / overlayScale) : -1
-                  if (idx >= 0) {
-                    dragRef.current = { id: points[idx].id }
-                    didDragRef.current = false
-                    setCursor('grabbing')
-                    e.preventDefault()
-                  } else if (zoom > 1) {
-                    isPanningRef.current = true
-                    didPanRef.current = false
-                    panStartRef.current = { mx: e.clientX, my: e.clientY, px: pan.x, py: pan.y }
-                    e.preventDefault()
-                  }
-                }}
-                onClick={(e) => {
-                  if (!canWrite || isPreviewing) return
-                  if (didDragRef.current) { didDragRef.current = false; return }
-                  if (didPanRef.current) { didPanRef.current = false; return }
-                  const rect = e.currentTarget.getBoundingClientRect()
-                  const px = (e.clientX - rect.left) / zoom / overlayScale
-                  const py = (e.clientY - rect.top) / zoom / overlayScale
-                  const hit = points.findIndex(p => Math.hypot(p.x - px, p.y - py) < HIT_RADIUS / overlayScale)
-                  if (hit >= 0) return
-                  setPoints(prev => [...prev, { id: crypto.randomUUID(), x: px, y: py }])
-                  setDirty(true)
-                  setSaveStatus('idle')
-                }}
-                onMouseMove={(e) => {
-                  if (!dragRef.current || !canWrite || !videoDims || isPreviewing) return
-                  didDragRef.current = true
-                  const rect = e.currentTarget.getBoundingClientRect()
-                  const px = Math.max(0, Math.min(videoDims.w, (e.clientX - rect.left) / zoom / overlayScale))
-                  const py = Math.max(0, Math.min(videoDims.h, (e.clientY - rect.top) / zoom / overlayScale))
-                  const id = dragRef.current.id
-                  setPoints(prev => prev.map(p => p.id === id ? { ...p, x: px, y: py } : p))
-                }}
-                onContextMenu={(e) => {
-                  if (!canWrite || isPreviewing) return
-                  const rect = e.currentTarget.getBoundingClientRect()
-                  const px = (e.clientX - rect.left) / zoom / overlayScale
-                  const py = (e.clientY - rect.top) / zoom / overlayScale
-                  const hitIdx = points.findIndex(p => Math.hypot(p.x - px, p.y - py) < HIT_RADIUS / overlayScale)
-                  if (hitIdx >= 0) {
-                    e.preventDefault()
-                    setPoints(prev => prev.filter((_, i) => i !== hitIdx))
-                    setDirty(true)
-                    setSaveStatus('idle')
-                  }
-                }}
+                onMouseDown={handleMouseDown}
+                onClick={handleCanvasClick}
+                onMouseMove={handleMouseMove}
+                onContextMenu={handleContextMenu}
               >
                 {/* Single video element — ref, metadata, seek, and playback all here */}
                 <video
@@ -1161,19 +1196,29 @@ export default function QueueAnnotator({
             {canWrite && (
               <div className="flex items-center gap-3 text-[11px] text-white/40 pointer-events-none select-none">
                 <span><kbd className="font-mono bg-white/10 rounded px-1 py-0.5 text-white/60">click</kbd> add</span>
-                <span><kbd className="font-mono bg-white/10 rounded px-1 py-0.5 text-white/60">drag</kbd> move</span>
+                <span><kbd className="font-mono bg-white/10 rounded px-1 py-0.5 text-white/60">drag</kbd> move / pan</span>
                 <span><kbd className="font-mono bg-white/10 rounded px-1 py-0.5 text-white/60">right-click</kbd> remove</span>
+                <span><kbd className="font-mono bg-white/10 rounded px-1 py-0.5 text-white/60">scroll · + / −</kbd> zoom</span>
                 <span><kbd className="font-mono bg-white/10 rounded px-1 py-0.5 text-white/60">C / Enter</kbd> complete</span>
               </div>
             )}
           </div>
         </div>
       ) : (
-        /* ── Image mode: centered canvas on dark bg ── */
-        <div className="flex-1 min-h-0 flex flex-col items-center justify-center gap-3 bg-gray-950 p-6">
+        /* ── Image mode: centered, zoomable canvas filling the area ── */
+        <div ref={containerRef} className="flex-1 min-h-0 relative bg-gray-950 overflow-hidden">
           <div
-            className="relative select-none bg-gray-900 rounded-xl overflow-hidden shadow-2xl"
-            style={{ width: displayW, height: displayH, cursor: canWrite ? cursor : 'default' }}
+            ref={mediaWrapperRef}
+            className="select-none bg-gray-900 shadow-2xl"
+            style={{
+              position: 'absolute',
+              width: displayW, height: displayH,
+              top: '50%', left: '50%',
+              transform: `translate(-50%, -50%) translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
+              transformOrigin: '0 0',
+              willChange: 'transform',
+              cursor: cursor === 'grabbing' ? 'grabbing' : canWrite ? 'crosshair' : 'grab',
+            }}
             onClick={handleCanvasClick}
             onMouseDown={handleMouseDown}
             onMouseMove={handleMouseMove}
@@ -1197,11 +1242,14 @@ export default function QueueAnnotator({
             {previewDots}
           </div>
           {canWrite && (
-            <div className="flex items-center gap-4 text-xs text-gray-500">
-              <span><kbd className="font-mono bg-gray-800 border border-gray-700 text-gray-300 rounded px-1 py-0.5">click</kbd> add</span>
-              <span><kbd className="font-mono bg-gray-800 border border-gray-700 text-gray-300 rounded px-1 py-0.5">drag</kbd> move</span>
-              <span><kbd className="font-mono bg-gray-800 border border-gray-700 text-gray-300 rounded px-1 py-0.5">right-click</kbd> remove</span>
-              <span><kbd className="font-mono bg-gray-800 border border-gray-700 text-gray-300 rounded px-1 py-0.5">C / Enter</kbd> complete</span>
+            <div className="absolute bottom-0 left-0 right-0 flex items-center justify-center px-4 py-2 pointer-events-none">
+              <div className="flex items-center gap-3 text-[11px] text-white/40 select-none">
+                <span><kbd className="font-mono bg-white/10 rounded px-1 py-0.5 text-white/60">click</kbd> add</span>
+                <span><kbd className="font-mono bg-white/10 rounded px-1 py-0.5 text-white/60">drag</kbd> move / pan</span>
+                <span><kbd className="font-mono bg-white/10 rounded px-1 py-0.5 text-white/60">right-click</kbd> remove</span>
+                <span><kbd className="font-mono bg-white/10 rounded px-1 py-0.5 text-white/60">scroll · + / −</kbd> zoom</span>
+                <span><kbd className="font-mono bg-white/10 rounded px-1 py-0.5 text-white/60">C / Enter</kbd> complete</span>
+              </div>
             </div>
           )}
         </div>
