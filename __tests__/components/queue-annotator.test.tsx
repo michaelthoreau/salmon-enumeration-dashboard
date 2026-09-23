@@ -188,3 +188,95 @@ describe('QueueAnnotator — image tasks', () => {
     ])
   })
 })
+
+describe('QueueAnnotator — dense fish', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    stubLayout()
+    localStorage.clear()
+    localStorage.setItem('labeling-instructions-seen-q1', '1')
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, blob: async () => new Blob() }))
+    global.URL.createObjectURL = vi.fn(() => 'blob:image')
+  })
+
+  /** Click `dx` screen px right of the tile centre. */
+  function clickAt(dx: number) {
+    const r = wrapper().getBoundingClientRect()
+    fireEvent.click(wrapper(), { clientX: r.left + r.width / 2 + dx, clientY: r.top + r.height / 2 })
+  }
+
+  async function savedPoints() {
+    await act(async () => { fireEvent.click(screen.getByText('Save')) })
+    return saveTaskPoints.mock.calls.at(-1)![1] as { x: number; y: number }[]
+  }
+
+  it('refuses a second point placed on top of an existing one', async () => {
+    await act(async () => { render(<QueueAnnotator {...baseProps()} />) })
+    markContainer()
+    clickAt(0)
+    clickAt(1) // inside the hit radius — grabs the existing dot instead of adding
+    expect(await savedPoints()).toHaveLength(1)
+  })
+
+  it('lets a smaller dot size place points closer together', async () => {
+    await act(async () => { render(<QueueAnnotator {...baseProps()} />) })
+    markContainer()
+
+    // 5 screen px apart is inside 'L' (hit radius 9) but outside 'XS' (radius 3).
+    fireEvent.click(screen.getByText('L'))
+    clickAt(0)
+    clickAt(5)
+    expect(await savedPoints()).toHaveLength(1)
+
+    fireEvent.click(screen.getByText('Clear'))
+    fireEvent.click(screen.getByText('XS'))
+    clickAt(0)
+    clickAt(5)
+    expect(await savedPoints()).toHaveLength(2)
+  })
+
+  it('zooming in lets fish be labelled closer together in source pixels', async () => {
+    await act(async () => { render(<QueueAnnotator {...baseProps()} />) })
+    markContainer()
+    fireEvent.click(screen.getByText('M')) // hit radius 6 screen px
+
+    // At 100%, two clicks 5 source px apart collapse to one point.
+    clickAt(0)
+    clickAt(5)
+    expect(await savedPoints()).toHaveLength(1)
+
+    // Zoom to 8×, where those same 5 source px are 40 screen px apart.
+    fireEvent.click(screen.getByText('Clear'))
+    for (let i = 0; i < 10; i++) fireEvent.click(screen.getByTitle(/zoom in/i))
+    clickAt(0)
+    clickAt(40)
+    const pts = await savedPoints()
+    expect(pts).toHaveLength(2)
+    // The pair really is ~5 source px apart — tighter than the 6 px floor at 100%.
+    expect(Math.abs(pts[1].x - pts[0].x)).toBeLessThan(6)
+  })
+
+  it('remembers the dot size across tasks', async () => {
+    const { unmount } = await act(async () => render(<QueueAnnotator {...baseProps()} />))
+    fireEvent.click(screen.getByText('XS'))
+    expect(localStorage.getItem('labeling-point-size')).toBe('xs')
+    unmount()
+
+    await act(async () => { render(<QueueAnnotator {...baseProps()} />) })
+    expect(screen.getByText('XS').className).toContain('bg-blue-600')
+  })
+
+  it('keeps dots a constant size on screen as the image zooms', async () => {
+    await act(async () => { render(<QueueAnnotator {...baseProps()} />) })
+    markContainer()
+    clickAt(0)
+
+    const drawnRadius = () =>
+      parseFloat(document.querySelector('circle[fill="#ef4444"]')!.getAttribute('r')!)
+    const atRest = drawnRadius()
+    fireEvent.click(screen.getByTitle(/zoom in/i)) // 1.25×
+    // Radius shrinks in local units by exactly the zoom, so the rendered size —
+    // radius × zoom — is unchanged.
+    expect(drawnRadius() * 1.25).toBeCloseTo(atRest, 5)
+  })
+})

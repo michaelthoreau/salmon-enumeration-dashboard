@@ -63,8 +63,26 @@ interface Props {
   queueTasks?: QueueTaskItem[]
 }
 
-const POINT_RADIUS = 4
-const HIT_RADIUS = 8
+// Annotation dot radius in *screen* pixels. Purely a display choice — a point is
+// stored as an (x, y) in source pixels and carries no size — so shrinking the dot
+// only changes what you can see under it, never what is saved.
+const POINT_SIZES = [
+  { key: 'xs', label: 'XS', radius: 1.5 },
+  { key: 's', label: 'S', radius: 2.5 },
+  { key: 'm', label: 'M', radius: 4 },
+  { key: 'l', label: 'L', radius: 6 },
+] as const
+type PointSizeKey = typeof POINT_SIZES[number]['key']
+const DEFAULT_POINT_SIZE: PointSizeKey = 's'
+const POINT_SIZE_STORAGE_KEY = 'labeling-point-size'
+
+// How close (in screen px) a click has to land to count as hitting an existing
+// point. This is what caps how tightly fish can be labelled: a click inside the
+// radius of a point grabs it instead of adding a neighbour. Tied to the dot size
+// so that shrinking the dots also lets you place them closer together.
+function hitRadiusFor(dotRadius: number) {
+  return Math.max(dotRadius * 1.5, 3)
+}
 // Fallback display cap for image tiles, used only for the first paint before the
 // container has been measured.
 const IMAGE_MAX_DISPLAY = 800
@@ -168,6 +186,20 @@ export default function QueueAnnotator({
   const [cursor, setCursor] = useState<'crosshair' | 'grabbing'>('crosshair')
   const dragRef = useRef<{ id: string } | null>(null)
   const didDragRef = useRef(false)
+
+  // ── Dot size preference (per-user, remembered across tasks) ───────────────
+  const [pointSize, setPointSize] = useState<PointSizeKey>(DEFAULT_POINT_SIZE)
+  useEffect(() => {
+    const stored = localStorage.getItem(POINT_SIZE_STORAGE_KEY)
+    if (stored && POINT_SIZES.some(s => s.key === stored)) {
+      setPointSize(stored as PointSizeKey)
+    }
+  }, [])
+  const choosePointSize = useCallback((key: PointSizeKey) => {
+    setPointSize(key)
+    localStorage.setItem(POINT_SIZE_STORAGE_KEY, key)
+  }, [])
+  const dotRadius = (POINT_SIZES.find(s => s.key === pointSize) ?? POINT_SIZES[1]).radius
 
   // ── Prediction state ──────────────────────────────────────────────────────
   const [scoreThresh, setScoreThresh] = useState<number>(0.4)
@@ -686,7 +718,6 @@ export default function QueueAnnotator({
   // ── Canvas interaction ────────────────────────────────────────────────────
   // The wrapper's bounding rect is post-transform, so dividing by `zoom` first
   // gets back to unzoomed CSS px and dividing by `scale` gets to source pixels.
-  // Hit radius is unaffected by zoom — the dots scale with the image.
   const toSourcePoint = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
     const rect = e.currentTarget.getBoundingClientRect()
     return {
@@ -695,12 +726,19 @@ export default function QueueAnnotator({
     }
   }, [zoom, scale])
 
+  // The hit radius is a screen-space distance, so it has to be divided by the
+  // zoom as well as the base scale. Without the zoom term the minimum spacing
+  // between two points is fixed in source pixels no matter how far you zoom in —
+  // which is what made densely packed fish impossible to label individually.
+  const hitRadiusSource = hitRadiusFor(dotRadius) / (scale * zoom)
+  const findPointAt = useCallback((px: number, py: number) =>
+    points.findIndex(p => Math.hypot(p.x - px, p.y - py) < hitRadiusSource),
+    [points, hitRadiusSource])
+
   const handleMouseDown = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
     if (e.button !== 0) return
     const { x: px, y: py } = toSourcePoint(e)
-    const idx = canWrite && !isPreviewing
-      ? points.findIndex(p => Math.hypot(p.x - px, p.y - py) < HIT_RADIUS / scale)
-      : -1
+    const idx = canWrite && !isPreviewing ? findPointAt(px, py) : -1
     if (idx >= 0) {
       dragRef.current = { id: points[idx].id }
       didDragRef.current = false
@@ -726,7 +764,7 @@ export default function QueueAnnotator({
     if (didDragRef.current) { didDragRef.current = false; return }
     if (didPanRef.current) { didPanRef.current = false; return }
     const { x: px, y: py } = toSourcePoint(e)
-    const hit = points.findIndex(p => Math.hypot(p.x - px, p.y - py) < HIT_RADIUS / scale)
+    const hit = findPointAt(px, py)
     if (hit >= 0) return
     setPoints(prev => [...prev, { id: crypto.randomUUID(), x: px, y: py }])
     setDirty(true)
@@ -736,7 +774,7 @@ export default function QueueAnnotator({
   const handleContextMenu = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
     if (!canWrite || isPreviewing) return
     const { x: px, y: py } = toSourcePoint(e)
-    const hitIdx = points.findIndex(p => Math.hypot(p.x - px, p.y - py) < HIT_RADIUS / scale)
+    const hitIdx = findPointAt(px, py)
     if (hitIdx >= 0) {
       e.preventDefault()
       setPoints(prev => prev.filter((_, i) => i !== hitIdx))
@@ -760,8 +798,8 @@ export default function QueueAnnotator({
         const cy = p.y * scale
         return (
           <g key={p.id}>
-            <circle cx={cx} cy={cy} r={POINT_RADIUS + 1} fill="rgba(0,0,0,0.5)" />
-            <circle cx={cx} cy={cy} r={POINT_RADIUS} fill="#ef4444" stroke="white" strokeWidth={1.5} />
+            <circle cx={cx} cy={cy} r={(dotRadius + 1) / zoom} fill="rgba(0,0,0,0.5)" />
+            <circle cx={cx} cy={cy} r={dotRadius / zoom} fill="#ef4444" stroke="white" strokeWidth={1.5 / zoom} />
           </g>
         )
       })}
@@ -787,15 +825,15 @@ export default function QueueAnnotator({
                 <circle
                   cx={cx}
                   cy={cy}
-                  r={POINT_RADIUS + 3}
+                  r={(dotRadius + 3) / zoom}
                   fill="none"
                   stroke="#f59e0b"
-                  strokeWidth={1}
+                  strokeWidth={1 / zoom}
                   className="animate-ping"
                   style={{ transformOrigin: `${cx}px ${cy}px`, animationDuration: '2s' }}
                 />
-                <circle cx={cx} cy={cy} r={POINT_RADIUS + 1} fill="none" stroke="rgba(0,0,0,0.6)" strokeWidth={1.5} />
-                <circle cx={cx} cy={cy} r={POINT_RADIUS} fill="#f59e0b" stroke="white" strokeWidth={1.5} />
+                <circle cx={cx} cy={cy} r={(dotRadius + 1) / zoom} fill="none" stroke="rgba(0,0,0,0.6)" strokeWidth={1.5 / zoom} />
+                <circle cx={cx} cy={cy} r={dotRadius / zoom} fill="#f59e0b" stroke="white" strokeWidth={1.5 / zoom} />
               </g>
             )
           })}
@@ -945,6 +983,25 @@ export default function QueueAnnotator({
           >
             <ZoomIn className="w-3.5 h-3.5" />
           </button>
+        </div>
+        <span className="text-gray-700 select-none">|</span>
+
+        {/* Dot size — smaller dots hide less of the fish and can sit closer together */}
+        <div className="flex items-center gap-1 shrink-0" title="Annotation dot size — display only, never changes saved points">
+          <span className="text-[11px] text-gray-500 font-medium">Dots</span>
+          <div className="flex items-center rounded-lg border border-gray-700 bg-gray-800 overflow-hidden">
+            {POINT_SIZES.map(s => (
+              <button
+                key={s.key}
+                onClick={() => choosePointSize(s.key)}
+                className={`px-1.5 py-1 text-[10px] font-bold transition-colors ${
+                  pointSize === s.key ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-white hover:bg-gray-700'
+                }`}
+              >
+                {s.label}
+              </button>
+            ))}
+          </div>
         </div>
         <span className="text-gray-700 select-none">|</span>
 
@@ -1157,8 +1214,8 @@ export default function QueueAnnotator({
                     const cy = p.y * overlayScale
                     return (
                       <g key={p.id}>
-                        <circle cx={cx} cy={cy} r={POINT_RADIUS + 1} fill="rgba(0,0,0,0.5)" />
-                        <circle cx={cx} cy={cy} r={POINT_RADIUS} fill="#ef4444" stroke="white" strokeWidth={1.5} />
+                        <circle cx={cx} cy={cy} r={(dotRadius + 1) / zoom} fill="rgba(0,0,0,0.5)" />
+                        <circle cx={cx} cy={cy} r={dotRadius / zoom} fill="#ef4444" stroke="white" strokeWidth={1.5 / zoom} />
                       </g>
                     )
                   })}
@@ -1170,15 +1227,15 @@ export default function QueueAnnotator({
                         <circle
                           cx={cx}
                           cy={cy}
-                          r={POINT_RADIUS + 3}
+                          r={(dotRadius + 3) / zoom}
                           fill="none"
                           stroke="#f59e0b"
-                          strokeWidth={1}
+                          strokeWidth={1 / zoom}
                           className="animate-ping"
                           style={{ transformOrigin: `${cx}px ${cy}px`, animationDuration: '2s' }}
                         />
-                        <circle cx={cx} cy={cy} r={POINT_RADIUS + 1} fill="none" stroke="rgba(0,0,0,0.6)" strokeWidth={1.5} />
-                        <circle cx={cx} cy={cy} r={POINT_RADIUS} fill="#f59e0b" stroke="white" strokeWidth={1.5} />
+                        <circle cx={cx} cy={cy} r={(dotRadius + 1) / zoom} fill="none" stroke="rgba(0,0,0,0.6)" strokeWidth={1.5 / zoom} />
+                        <circle cx={cx} cy={cy} r={dotRadius / zoom} fill="#f59e0b" stroke="white" strokeWidth={1.5 / zoom} />
                       </g>
                     )
                   })}
