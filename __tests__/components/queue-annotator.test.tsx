@@ -271,12 +271,41 @@ describe('QueueAnnotator — dense fish', () => {
     markContainer()
     clickAt(0)
 
-    const drawnRadius = () =>
-      parseFloat(document.querySelector('circle[fill="#ef4444"]')!.getAttribute('r')!)
+    const dot = () => document.querySelector('circle[fill="#ef4444"]')!
+    const drawnRadius = () => parseFloat(dot().getAttribute('r')!)
     const atRest = drawnRadius()
-    fireEvent.click(screen.getByTitle(/zoom in/i)) // 1.25×
-    // Radius shrinks in local units by exactly the zoom, so the rendered size —
-    // radius × zoom — is unchanged.
-    expect(drawnRadius() * 1.25).toBeCloseTo(atRest, 5)
+
+    // Drawn in screen space, so the radius is a true screen-pixel value that does
+    // not change with zoom — no sub-pixel geometry to go soft at high zoom.
+    for (let i = 0; i < 8; i++) fireEvent.click(screen.getByTitle(/zoom in/i))
+    expect(drawnRadius()).toBe(atRest)
+    expect(atRest).toBeGreaterThanOrEqual(1.5)
+  })
+
+  it('keeps the overlay registered with the image through zoom and pan', async () => {
+    await act(async () => { render(<QueueAnnotator {...baseProps()} />) })
+    markContainer()
+
+    // A point at the tile centre starts at the viewport centre.
+    clickAt(0)
+    const dotCentre = () => {
+      const c = document.querySelector('circle[fill="#ef4444"]')!
+      return { x: parseFloat(c.getAttribute('cx')!), y: parseFloat(c.getAttribute('cy')!) }
+    }
+    expect(dotCentre().x).toBeCloseTo(CONTAINER.w / 2, 4)
+
+    // Centre-anchored zoom holds the tile centre still, so the dot must not move.
+    fireEvent.click(screen.getByTitle(/zoom in/i))
+    expect(dotCentre().x).toBeCloseTo(CONTAINER.w / 2, 4)
+    expect(dotCentre().y).toBeCloseTo(CONTAINER.h / 2, 4)
+
+    // Panning the image must carry the dot with it, one-for-one. Grab well clear
+    // of the dot, or the drag moves the point instead of the image.
+    const before = dotCentre()
+    fireEvent.mouseDown(wrapper(), { clientX: 300, clientY: 250, button: 0 })
+    fireEvent.mouseMove(window, { clientX: 360, clientY: 280 })
+    fireEvent.mouseUp(window)
+    expect(dotCentre().x).toBeCloseTo(before.x + 60, 4)
+    expect(dotCentre().y).toBeCloseTo(before.y + 30, 4)
   })
 })

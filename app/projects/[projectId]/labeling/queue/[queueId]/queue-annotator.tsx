@@ -786,61 +786,62 @@ export default function QueueAnnotator({
   const progressPct = totalInQueue > 0 ? Math.round((completeCount / totalInQueue) * 100) : 0
   const filename = task.fileKey.split('/').pop() ?? task.fileKey
 
-  const annotationDots = (
+  // ── Annotation overlay ────────────────────────────────────────────────────
+  // Drawn in container (screen) coordinates as a sibling of the media, NOT inside
+  // the zoom-transformed wrapper. A transformed layer gets rasterised once at its
+  // untransformed size and the bitmap is then magnified, so an SVG living inside
+  // it goes soft as you zoom — and the radii had to be divided by the zoom, which
+  // made the circles sub-pixel geometry at high magnification. Projecting to
+  // screen space instead keeps dots pixel-crisp at any zoom and lets the radius be
+  // a true screen-pixel value.
+  const overlayOrigin = containerSize
+    ? {
+        x: containerSize.w / 2 - displayW / 2 + pan.x,
+        y: containerSize.h / 2 - displayH / 2 + pan.y,
+      }
+    : { x: 0, y: 0 }
+  const toScreen = (x: number, y: number) => ({
+    cx: overlayOrigin.x + x * scale * zoom,
+    cy: overlayOrigin.y + y * scale * zoom,
+  })
+
+  const annotationOverlay = (visible: boolean) => containerSize && (
     <svg
       className="absolute inset-0 pointer-events-none"
-      width={displayW}
-      height={displayH}
-      viewBox={`0 0 ${displayW} ${displayH}`}
+      width={containerSize.w}
+      height={containerSize.h}
     >
-      {points.map(p => {
-        const cx = p.x * scale
-        const cy = p.y * scale
+      {visible && points.map(p => {
+        const { cx, cy } = toScreen(p.x, p.y)
         return (
           <g key={p.id}>
-            <circle cx={cx} cy={cy} r={(dotRadius + 1) / zoom} fill="rgba(0,0,0,0.5)" />
-            <circle cx={cx} cy={cy} r={dotRadius / zoom} fill="#ef4444" stroke="white" strokeWidth={1.5 / zoom} />
+            <circle cx={cx} cy={cy} r={dotRadius + 1} fill="rgba(0,0,0,0.5)" />
+            <circle cx={cx} cy={cy} r={dotRadius} fill="#ef4444" stroke="white" strokeWidth={1.5} />
+          </g>
+        )
+      })}
+      {visible && isPreviewing && filteredPredictions.map((p, idx) => {
+        const { cx, cy } = toScreen(isVideo ? p.x : p.crop_x, isVideo ? p.y : p.crop_y)
+        return (
+          <g key={`preview-${idx}`}>
+            <circle
+              cx={cx}
+              cy={cy}
+              r={dotRadius + 3}
+              fill="none"
+              stroke="#f59e0b"
+              strokeWidth={1}
+              className="animate-ping"
+              style={{ transformOrigin: `${cx}px ${cy}px`, animationDuration: '2s' }}
+            />
+            <circle cx={cx} cy={cy} r={dotRadius + 1} fill="none" stroke="rgba(0,0,0,0.6)" strokeWidth={1.5} />
+            <circle cx={cx} cy={cy} r={dotRadius} fill="#f59e0b" stroke="white" strokeWidth={1.5} />
           </g>
         )
       })}
     </svg>
   )
 
-  const previewDots = (
-    <>
-      {isPreviewing && (
-        <svg
-          className="absolute inset-0 pointer-events-none"
-          width={displayW}
-          height={displayH}
-          viewBox={`0 0 ${displayW} ${displayH}`}
-        >
-          {filteredPredictions.map((p, idx) => {
-            const px = isVideo ? p.x : p.crop_x
-            const py = isVideo ? p.y : p.crop_y
-            const cx = px * scale
-            const cy = py * scale
-            return (
-              <g key={`preview-image-${idx}`}>
-                <circle
-                  cx={cx}
-                  cy={cy}
-                  r={(dotRadius + 3) / zoom}
-                  fill="none"
-                  stroke="#f59e0b"
-                  strokeWidth={1 / zoom}
-                  className="animate-ping"
-                  style={{ transformOrigin: `${cx}px ${cy}px`, animationDuration: '2s' }}
-                />
-                <circle cx={cx} cy={cy} r={(dotRadius + 1) / zoom} fill="none" stroke="rgba(0,0,0,0.6)" strokeWidth={1.5 / zoom} />
-                <circle cx={cx} cy={cy} r={dotRadius / zoom} fill="#f59e0b" stroke="white" strokeWidth={1.5 / zoom} />
-              </g>
-            )
-          })}
-        </svg>
-      )}
-    </>
-  )
 
   return (
     <div className="fixed top-[100px] bottom-0 left-0 right-0 z-10 bg-gray-950 flex flex-col overflow-hidden">
@@ -1168,7 +1169,6 @@ export default function QueueAnnotator({
             const s = Math.min(containerSize.w / dims.w, containerSize.h / dims.h)
             const ow = Math.round(dims.w * s)
             const oh = Math.round(dims.h * s)
-            const overlayScale = s
             return (
               <div
                 ref={mediaWrapperRef}
@@ -1178,8 +1178,7 @@ export default function QueueAnnotator({
                   top: '50%', left: '50%',
                   transform: `translate(-50%, -50%) translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
                   transformOrigin: '0 0',
-                  willChange: 'transform',
-                  visibility: videoDims ? 'visible' : 'hidden',
+                      visibility: videoDims ? 'visible' : 'hidden',
                   cursor: cursor === 'grabbing' ? 'grabbing' : canWrite ? 'crosshair' : 'grab',
                 }}
                 onMouseDown={handleMouseDown}
@@ -1203,46 +1202,10 @@ export default function QueueAnnotator({
                   onSeeked={() => setFrameReady(true)}
                   style={{ position: 'absolute', inset: 0, width: ow, height: oh, pointerEvents: 'none', opacity: frameReady ? 1 : 0, transition: 'opacity 0.15s' }}
                 />
-                {/* Annotation dots */}
-                <svg
-                  className="absolute inset-0 pointer-events-none"
-                  width={ow} height={oh}
-                  viewBox={`0 0 ${ow} ${oh}`}
-                >
-                  {frameReady && points.map(p => {
-                    const cx = p.x * overlayScale
-                    const cy = p.y * overlayScale
-                    return (
-                      <g key={p.id}>
-                        <circle cx={cx} cy={cy} r={(dotRadius + 1) / zoom} fill="rgba(0,0,0,0.5)" />
-                        <circle cx={cx} cy={cy} r={dotRadius / zoom} fill="#ef4444" stroke="white" strokeWidth={1.5 / zoom} />
-                      </g>
-                    )
-                  })}
-                  {frameReady && isPreviewing && filteredPredictions.map((p, idx) => {
-                    const cx = p.x * overlayScale
-                    const cy = p.y * overlayScale
-                    return (
-                      <g key={`preview-video-${idx}`}>
-                        <circle
-                          cx={cx}
-                          cy={cy}
-                          r={(dotRadius + 3) / zoom}
-                          fill="none"
-                          stroke="#f59e0b"
-                          strokeWidth={1 / zoom}
-                          className="animate-ping"
-                          style={{ transformOrigin: `${cx}px ${cy}px`, animationDuration: '2s' }}
-                        />
-                        <circle cx={cx} cy={cy} r={(dotRadius + 1) / zoom} fill="none" stroke="rgba(0,0,0,0.6)" strokeWidth={1.5 / zoom} />
-                        <circle cx={cx} cy={cy} r={dotRadius / zoom} fill="#f59e0b" stroke="white" strokeWidth={1.5 / zoom} />
-                      </g>
-                    )
-                  })}
-                </svg>
               </div>
             )
           })()}
+          {annotationOverlay(frameReady)}
 
           {(!frameReady || !videoUrl) && (
             <div className="absolute inset-0 flex items-center justify-center text-sm text-gray-500 animate-pulse pointer-events-none">Loading…</div>
@@ -1273,7 +1236,6 @@ export default function QueueAnnotator({
               top: '50%', left: '50%',
               transform: `translate(-50%, -50%) translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
               transformOrigin: '0 0',
-              willChange: 'transform',
               cursor: cursor === 'grabbing' ? 'grabbing' : canWrite ? 'crosshair' : 'grab',
             }}
             onClick={handleCanvasClick}
@@ -1295,9 +1257,8 @@ export default function QueueAnnotator({
             )}
             {imageError && <div className="absolute inset-0 flex items-center justify-center text-sm text-gray-400">Failed to load image</div>}
             {!imageUrl && !imageError && <div className="absolute inset-0 flex items-center justify-center text-sm text-gray-400 animate-pulse">Loading…</div>}
-            {annotationDots}
-            {previewDots}
           </div>
+          {annotationOverlay(true)}
           {canWrite && (
             <div className="absolute bottom-0 left-0 right-0 flex items-center justify-center px-4 py-2 pointer-events-none">
               <div className="flex items-center gap-3 text-[11px] text-white/40 select-none">
