@@ -48,6 +48,7 @@ next-env.d.ts
 .env*.local
 *__pycache__*
 *.JPG
+!public/example_image.jpg
 AGENTS.md
 CLAUDE.md
 data.db
